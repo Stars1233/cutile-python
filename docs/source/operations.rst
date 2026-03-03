@@ -189,6 +189,7 @@ Utility
    :nosignatures:
 
    printf
+   print
    assert_
 
 

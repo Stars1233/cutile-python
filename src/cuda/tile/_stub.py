@@ -2036,6 +2036,38 @@ def printf(format, *args) -> None:
 
 
 @function
+def print(*args, sep: str = ' ', end: str = '\n') -> None:
+    """Print values at runtime from the device using Python-style syntax.
+
+    Supports Python f-strings and positional arguments similar to Python's
+    built-in ``print()`` function.
+
+    Args:
+        *args: Values to print. Each argument can be:
+            - A string literal or f-string
+            - A tile value (format inferred from dtype: int→``%d``, float→``%f``)
+        sep (str): Separator inserted between arguments (default: ``' '``)
+        end (str): String appended after the last argument (default: ``'\\n'``)
+
+    Examples:
+
+        >>> tile = ct.arange(4, dtype=ct.int32)
+        >>> ct.print(f"tile={tile}")
+        >>> ct.print(f"x={tile:.5f}", end='')
+        >>> ct.print("tile:", tile, sep='=')
+
+    Notes:
+        This operation has significant overhead, and should only be used
+        for debugging purposes.
+
+        F-string expressions must evaluate to tile values. Constant compile-time
+        values are supported as string-formatted segments.
+
+        Use ``opt_level=0`` to prevent block-level output interleaving.
+    """
+
+
+@function
 def assert_(cond, /, message=None) -> None:
     """Assert that all elements of the given tile are True.
 

@@ -428,19 +428,36 @@ class PrintfValidator:
         else:
             return False
 
+    # Placeholder emitted by ast2hir for type-inferred format specifiers
+    _TYPE_INFER = '\x01'
+
     @classmethod
     def parse_format(cls, format: str, arg_types: Tuple[Union[TileTy, DType], ...]) -> str:
         last_pos = pos = 0
         arg_idx = 0
         tokens = []
         while pos < len(format):
-            if format[pos] == "%":
+            ch = format[pos]
+            if ch == cls._TYPE_INFER:
+                tokens.append(format[last_pos:pos])
+                if arg_idx >= len(arg_types):
+                    raise TileTypeError("Not enough arguments for format string")
+                dtype = get_dtype(arg_types[arg_idx])
+                if is_boolean(dtype) or is_integral(dtype):
+                    tokens.append('%d')
+                elif is_float(dtype) or is_restricted_float(dtype):
+                    tokens.append('%f')
+                else:
+                    raise TileTypeError(f"Cannot infer format for dtype {dtype}")
+                arg_idx += 1
+                pos += 1
+                last_pos = pos
+            elif ch == "%":
                 tokens.append(format[last_pos:pos])
                 last_pos = pos
                 # escape "%%"
                 if (pos + 1 < len(format) and format[pos + 1] == "%"):
                     pos += 2
-                    continue
                 elif (m := cls.pattern.match(format, pos)):
                     # get a format match
                     _, _, _, _, sp = m.groups()
@@ -458,10 +475,10 @@ class PrintfValidator:
                     pos = m.end()
                     tokens.append(format[last_pos:pos])
                     last_pos = pos
-                    continue
                 else:
                     raise TileTypeError("Invalid format string")
-            pos += 1
+            else:
+                pos += 1
         tokens.append(format[last_pos:pos])
         if arg_idx < len(arg_types):
             raise TileTypeError("Too many arguments for format string")
