@@ -1006,6 +1006,61 @@ def mma(x, y, /, acc) -> Tile:
 
 
 @function
+def mma_scaled(x, x_scale, y, y_scale, /, acc) -> Tile:
+    """Block-scaled matrix multiply-accumulate.
+
+    Computes a matrix multiply-accumulate where inputs are scaled by block scales
+    along the K dimension before the mma::
+
+        result[i, j] = sum(x[i, k] * x_scale[i, k // B] * y[k, j] * y_scale[k // B, j]
+                           for k in range(K)) + acc[i, j]
+
+    The scaling block size is ``B = K // K_s``, where ``K_s`` is the K dimension of the scale tile.
+    ``K`` must be divisible by ``K_s``, and ``B`` must be one of the allowed values listed
+    in the table below.
+
+    Args:
+        x (Tile): LHS input, 2D or 3D ``[..., M, K]``.
+        x_scale (Tile): Scale factors for x, shape ``[..., M, K_s]``.
+            All dimensions except K_s must match x exactly.
+        y (Tile): RHS input, 2D or 3D ``[..., K, N]``.
+        y_scale (Tile): Scale factors for y, shape ``[..., K_s, N]``.
+            All dimensions except K_s must match y exactly.
+        acc (Tile): Accumulator ``[..., M, N]``.
+
+    Supported datatypes and scaling block sizes:
+
+    +----------------------------+------------+---------+--------+
+    | Input (x/y)                | Scale      | Acc/Out | B      |
+    +============================+============+=========+========+
+    | f8e4m3fn, f8e5m2           | f8e8m0fnu  | f32     | 32     |
+    +----------------------------+------------+---------+--------+
+    | f4e2m1fn                   | f8e8m0fnu  | f32     | 16, 32 |
+    +----------------------------+------------+---------+--------+
+    | f4e2m1fn                   | f8e4m3fn   | f32     | 16     |
+    +----------------------------+------------+---------+--------+
+
+    Batch dimensions of x and y are broadcast against each other (same as
+    :func:`mma`). x_scale's batch dimension must match x's batch exactly,
+    and y_scale's batch dimension must match y's batch exactly; both are
+    then broadcast to the output batch shape.
+
+    Returns:
+        Tile:
+
+    Example:
+
+        >>> # B = K // K_s = 64 // 2 = 32
+        >>> tx = ct.ones((16, 64), ct.float8_e4m3fn)
+        >>> sx = ct.ones((16, 2), ct.float8_e8m0fnu)
+        >>> ty = ct.ones((64, 16), ct.float8_e4m3fn)
+        >>> sy = ct.ones((2, 16), ct.float8_e8m0fnu)
+        >>> acc = ct.zeros((16, 16), ct.float32)
+        >>> tz = ct.mma_scaled(tx, sx, ty, sy, acc)
+    """
+
+
+@function
 def matmul(x, y, /) -> Tile:
     """Performs matrix multiply on the given tiles.
 

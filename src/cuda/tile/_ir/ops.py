@@ -2786,7 +2786,7 @@ class TileMma(Operation, opcode="tile_mma"):
 
 
 @impl(ct.mma)
-def mma(x: Var, y: Var, acc: Var) -> Var:
+def mma_impl(x: Var, y: Var, acc: Var) -> Var:
     x_tile_type = require_tile_type(x)
     y_tile_type = require_tile_type(y)
     acc_tile_type = require_tile_type(acc)
@@ -2808,7 +2808,7 @@ def mma(x: Var, y: Var, acc: Var) -> Var:
 
 @impl(ct.matmul)
 @impl(operator.matmul)
-def matmul(x: Var, y: Var) -> Var:
+def matmul_impl(x: Var, y: Var) -> Var:
     x_tile_type = require_tile_type(x)
     y_tile_type = require_tile_type(y)
     x_shape_orig = x_tile_type.shape
@@ -2831,6 +2831,89 @@ def matmul(x: Var, y: Var) -> Var:
     matmul_result = astype(matmul_result, common_dtype)
     ret = reshape(matmul_result, tuple(dim.value for dim in output_shape))
     return ret
+
+
+@dataclass(eq=False)
+class TileMmaScaled(Operation, opcode="tile_mma_scaled"):
+    x: Var = operand()
+    x_scale: Var = operand()
+    y: Var = operand()
+    y_scale: Var = operand()
+    acc: Var = operand()
+
+    @override
+    def generate_bytecode(self, ctx: BytecodeContext) -> bc.Value:
+        x_value = ctx.get_value(self.x)
+        x_scale_value = ctx.get_value(self.x_scale)
+        y_value = ctx.get_value(self.y)
+        y_scale_value = ctx.get_value(self.y_scale)
+        acc_value = ctx.get_value(self.acc)
+        res_typeid = ctx.typeid_of(self.result_var)
+        return bc.encode_MmaFScaledOp(ctx.builder, res_typeid, x_value, y_value,
+                                      acc_value, x_scale_value, y_scale_value)
+
+
+def _verify_scaling_block_size(ty: TileTy, scale_ty: TileTy, k_axis: int,
+                               name: str, scale_name: str):
+    shape = ty.shape_value
+    dtype = ty.dtype
+    scale_shape = scale_ty.shape_value
+    scale_dtype = scale_ty.dtype
+    k_axis = normalize_axis(k_axis, len(shape))
+    if any(x != y for i, (x, y) in enumerate(zip(shape, scale_shape, strict=True)) if i != k_axis):
+        raise TileTypeError(
+            f"{scale_name} shape {scale_shape} is not compatible with {name} shape {shape}. "
+            f"All dimensions except K axis {k_axis} must match")
+
+    allowed = datatype._get_mma_scaled_scaling_block_sizes(ty.dtype, scale_ty.dtype)
+    scaling_block_size, rem = divmod(shape[k_axis], scale_shape[k_axis])
+    if rem != 0 or scaling_block_size not in allowed:
+        raise TileTypeError(
+            f"For mma_scaled with dtype={dtype}, scale_dtype={scale_dtype}: "
+            f"{name}.shape[{k_axis}] must be an exact multiple of {scale_name}.shape[{k_axis}] "
+            f"with scaling block size B = K // K_s in {set(allowed)}, "
+            f"got {name}.shape[{k_axis}] = {shape[k_axis]} and "
+            f"{scale_name}.shape[{k_axis}] = {scale_shape[k_axis]}")
+
+
+@impl(ct.mma_scaled, min_version=BytecodeVersion.V_13_3)
+def mma_scaled_impl(x: Var, x_scale: Var, y: Var, y_scale: Var, acc: Var) -> Var:
+    x_ty = require_tile_type(x)
+    y_ty = require_tile_type(y)
+    acc_ty = require_tile_type(acc)
+    x_scale_ty = require_tile_type(x_scale)
+    y_scale_ty = require_tile_type(y_scale)
+
+    for name, shape in [("x", x_ty.shape), ("y", y_ty.shape),
+                        ("acc", acc_ty.shape),
+                        ("x_scale", x_scale_ty.shape),
+                        ("y_scale", y_scale_ty.shape)]:
+        if len(shape) not in [2, 3]:
+            raise TileTypeError(
+                f'Expect shape of `{name}` to be 2D or 3D, got {shape}')
+
+    datatype._resolve_mma_scaled_supported_dtype(
+        x_ty.dtype, x_scale_ty.dtype,
+        y_ty.dtype, y_scale_ty.dtype,
+        acc_ty.dtype)
+    _verify_scaling_block_size(x_ty, x_scale_ty, k_axis=-1, name="x", scale_name="x_scale")
+    _verify_scaling_block_size(y_ty, y_scale_ty, k_axis=-2, name="y", scale_name="y_scale")
+
+    x_shape, y_shape, _, output_shape = _matmul_broadcast_shape(x_ty.shape, y_ty.shape)
+    if acc_ty.shape != output_shape:
+        raise TileTypeError(f'Expect acc shape to be {output_shape}, got {acc_ty.shape}')
+
+    # Broadcast scale batch dims to match the broadcasted x/y batch dims
+    batch = x_shape.value_types[:-2]
+    x_scale_shape = TupleTy(batch + x_scale_ty.shape.value_types[-2:])
+    y_scale_shape = TupleTy(batch + y_scale_ty.shape.value_types[-2:])
+
+    x = _promote_and_broadcast_to(x, TileTy(x_ty.dtype, x_shape))
+    y = _promote_and_broadcast_to(y, TileTy(y_ty.dtype, y_shape))
+    x_scale = _promote_and_broadcast_to(x_scale, TileTy(x_scale_ty.dtype, x_scale_shape))
+    y_scale = _promote_and_broadcast_to(y_scale, TileTy(y_scale_ty.dtype, y_scale_shape))
+    return add_operation(TileMmaScaled, acc_ty,
+                         x=x, x_scale=x_scale, y=y, y_scale=y_scale, acc=acc)
 
 
 @dataclass(eq=False)

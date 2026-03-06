@@ -436,6 +436,53 @@ def _resolve_mma_supported_dtype(x_dtype: DType,
     return acc_dtype
 
 
+_mma_scaled_supported_dtypes = {
+    # operand dtype -> {scale dtype: (result dtype, scaling block sizes)}
+    float8_e4m3fn: {float8_e8m0fnu: (float32, (32,))},
+    float8_e5m2:   {float8_e8m0fnu: (float32, (32,))},
+    float4_e2m1fn: {float8_e8m0fnu: (float32, (16, 32)),
+                    float8_e4m3fn:  (float32, (16,))},
+}
+
+
+def _resolve_mma_scaled_supported_dtype(x_dtype: DType,
+                                        x_scale_dtype: DType,
+                                        y_dtype: DType,
+                                        y_scale_dtype: DType,
+                                        acc_dtype: DType):
+    if x_dtype != y_dtype:
+        raise TileTypeError(
+            f"x and y must have the same dtype, got {x_dtype} and {y_dtype}")
+    if x_scale_dtype != y_scale_dtype:
+        raise TileTypeError(
+            f"x_scale and y_scale must have the same dtype, "
+            f"got {x_scale_dtype} and {y_scale_dtype}")
+    if x_dtype not in _mma_scaled_supported_dtypes:
+        candidates = ", ".join(str(d) for d in _mma_scaled_supported_dtypes.keys())
+        raise TileTypeError(
+            f"Unsupported input dtype {x_dtype} for mma_scaled, "
+            f"supported input dtypes are {candidates}")
+    scale_candidates = _mma_scaled_supported_dtypes[x_dtype]
+    if x_scale_dtype not in scale_candidates:
+        candidate_names = ", ".join(str(s) for s in scale_candidates.keys())
+        raise TileTypeError(
+            f"Unsupported scale dtype {x_scale_dtype} for input dtype {x_dtype}, "
+            f"supported scale dtypes are {candidate_names}")
+    expected_acc, _ = scale_candidates[x_scale_dtype]
+    if acc_dtype != expected_acc:
+        raise TileTypeError(
+            f"Unsupported acc dtype {acc_dtype} for mma_scaled, "
+            f"expected {expected_acc}")
+
+
+def _get_mma_scaled_scaling_block_sizes(data_dtype, scale_dtype) -> Tuple[int, ...]:
+    assert data_dtype in _mma_scaled_supported_dtypes
+    scale_candidates = _mma_scaled_supported_dtypes[data_dtype]
+    assert scale_dtype in scale_candidates
+    _, scaling_block_sizes = scale_candidates[scale_dtype]
+    return scaling_block_sizes
+
+
 # =============== Documentation Generator ================
 
 def _generate_rst_dtype_promotion_table() -> str:
