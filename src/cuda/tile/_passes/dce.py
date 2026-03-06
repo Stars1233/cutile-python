@@ -5,8 +5,10 @@ import dataclasses
 from typing import Sequence, Set, Tuple, Dict, Any, Optional, List
 
 from cuda.tile._exception import Loc
-from cuda.tile._ir.ir import Block, Operation, Var, IRContext, MemoryEffect
-from cuda.tile._ir.ops import Loop, Continue, Break, EndBranch, IfElse, Return, TileReduce, TileScan
+from cuda.tile._ir.ir import Block, Operation, IRContext, MemoryEffect, Var
+from cuda.tile._ir.ops import (
+    Loop, Continue, Break, EndBranch, IfElse, Return, TileReduce, TileScan, MakeDummy
+)
 
 
 def dead_code_elimination_pass(root_block: Block) -> None:
@@ -226,23 +228,24 @@ def _prune_block(block: Block,
                 mask = tuple(body_var.name in used_vars or res_var.name in used_vars
                              for body_var, res_var in zip(op.body_vars, op.result_vars,
                                                           strict=True))
-                _mark_unused_vars_as_undefined(op.initial_values, mask, used_vars)
                 new_initial_values = _select_by_mask(op.initial_values, mask)
+                new_initial_values = _replace_pruned_with_dummy(
+                        new_initial_values, used_vars, new_ops)
+                new_result_vars = _select_by_mask(op.result_vars, mask)
+                _prune_block(op.body, used_vars, op_to_cf_name, mask, ())
                 new_body_vars = _select_by_mask(op.body_vars, mask)
                 op.body.params = ((op.body.params[0], *new_body_vars)
                                   if op.is_for_loop else new_body_vars)
-                new_result_vars = _select_by_mask(op.result_vars, mask)
-                _prune_block(op.body, used_vars, op_to_cf_name, mask, ())
                 new_ops.append(dataclasses.replace(op,
                                                    initial_values=new_initial_values,
                                                    result_vars=new_result_vars))
         elif isinstance(op, Continue):
-            _mark_unused_vars_as_undefined(op.values, loop_mask, used_vars)
             next_vars = _select_by_mask(op.values, loop_mask)
+            next_vars = _replace_pruned_with_dummy(next_vars, used_vars, new_ops)
             new_ops.append(Continue(result_vars=(), loc=op.loc, values=next_vars))
         elif isinstance(op, Break):
-            _mark_unused_vars_as_undefined(op.values, loop_mask, used_vars)
             output_vars = _select_by_mask(op.values, loop_mask)
+            output_vars = _replace_pruned_with_dummy(output_vars, used_vars, new_ops)
             new_ops.append(Break(result_vars=(), loc=op.loc, values=output_vars))
         elif isinstance(op, IfElse):
             if op_to_cf_name[op] in used_vars:
@@ -286,8 +289,9 @@ def _prune_block(block: Block,
 
 # We keep a carried variable as long as its body variable or its result variable is used.
 #
-# This may create some undefined variables, which is OK. To explicitly say that is OK,
-# we mark the Var objects as undefined.
+# This may leave some initial/continuation/break values referencing vars whose defining
+# ops have been pruned. This function replaces those with MakeDummy() ops
+# so that bytecode generation can proceed normally.
 #
 # Example 1:
 # ==========
@@ -310,18 +314,19 @@ def _prune_block(block: Block,
 #   as well as the continuation value `x.4`, unused. Thus, dead code elimination will prune
 #   the program as such:
 #
-#       x.2 = loop (with x.1 = <undefined x>):
+#       x.2 = loop (with x.1 = <pruned>):
 #           x.3 = tile_load(...)
 #           tile_store(..., x.3)
 #           if ...:
 #               break x.3
-#           continue <undefined x.4>
+#           continue <pruned>
 #       tile_store(..., x.2)
 #
 #
 # Example 2:
 # ==========
-#   Consider the opposite case, where the body variable is used but the result variable isn't:
+#   Consider the opposite case, where the body variable is used but the result variable
+#   isn't:
 #
 #       Source code                       IR
 #       ===========                       ===============
@@ -344,15 +349,23 @@ def _prune_block(block: Block,
 #           tile_store(..., x.1)
 #           x.3 = x.1 + 1
 #           x.4 = if ...:
-#               break <undefined x.5>
+#               break <pruned>
 #           else:
 #               yield x.3
 #         continue x.4
 #
-def _mark_unused_vars_as_undefined(vars: Sequence[Var], mask: Sequence[bool], used_vars: Set[str]):
-    for v, keep in zip(vars, mask, strict=True):
-        if keep and v.name not in used_vars:
-            v.set_undefined()
+def _replace_pruned_with_dummy(vars: Sequence[Var],
+                               used_vars: Set[str],
+                               new_ops: list[Operation]) -> tuple[Var, ...]:
+    return tuple(v if v.name in used_vars else _make_dummy_like(v, new_ops)
+                 for v in vars)
+
+
+def _make_dummy_like(v: Var, new_ops: list[Operation]) -> Var:
+    dummy_var = v.ctx.make_var_like(v)
+    dummy_var.set_type(v.get_type())
+    new_ops.append(MakeDummy(result_vars=(dummy_var,), loc=dummy_var.loc))
+    return dummy_var
 
 
 def _select_by_mask(seq: Sequence[Any], mask: Sequence[bool]) -> Tuple[Any, ...]:

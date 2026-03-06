@@ -313,9 +313,6 @@ class BytecodeContext:
     def get_value(self, var: Var) -> bc.Value:
         return self._value_map[var.name]
 
-    def get_value_allow_undefined(self, var: Var, ty: Type) -> bc.Value:
-        return self.undefined_value(ty) if var.is_undefined() else self.get_value(var)
-
     def get_optional_value(self, var: Var) -> Optional[bc.Value]:
         if var.name in self._constants and self._constants[var.name] is None:
             return None
@@ -364,16 +361,6 @@ class BytecodeContext:
             return sum((self.constant_tuple(item_val, item_ty)
                         for item_ty, item_val in zip(ty.value_types, value, strict=True)), ())
         return self.constant(value, ty),
-
-    def undefined_value(self, ty: Type) -> bc.Value:
-        if isinstance(ty, TokenTy):
-            return bc.encode_MakeTokenOp(self.builder, typeid(self.type_table, ty))
-
-        if isinstance(ty, TileTy) and isinstance(ty.dtype, PointerTy):
-            const = self.constant(0, TileTy(dtype=datatype.int64, shape=ty.shape))
-            return bc.encode_IntToPtrOp(self.builder, typeid(self.type_table, ty), const)
-
-        return self.constant(0, ty)
 
     def index_tuple(self, index: tuple[Var, ...]) -> Tuple[bc.Value, ...]:
         i32_tile_ty = self.type_table.tile(self.type_table.I32, ())

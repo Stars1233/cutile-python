@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from cuda.tile._ir.ir import Block, Var, MemoryEffect
+from cuda.tile._ir.ir import Block, MemoryEffect
 from cuda.tile._ir.ops import Loop, IfElse, Continue, Break, EndBranch, Return, TileReduce, TileScan
 
 from dataclasses import dataclass
@@ -93,10 +93,10 @@ def _hoist(block: Block, stack: list[_StackItem], def_depth: dict[str, int], is_
 
             inputs = op.initial_values if isinstance(op, Loop) else op.xs
             for v in inputs:
-                depinfo.update(_get_def_depth(def_depth, v), depth)
+                depinfo.update(def_depth[v.name], depth)
             depinfo.update(body_res.min_depth, depth)
         elif isinstance(op, IfElse):
-            depinfo.update(_get_def_depth(def_depth, op.cond), depth)
+            depinfo.update(def_depth[op.cond.name], depth)
             for branch in (op.then_block, op.else_block):
                 branch_res = _hoist(branch, stack, def_depth, False)
                 depinfo.update(branch_res.min_depth, depth)
@@ -115,12 +115,12 @@ def _hoist(block: Block, stack: list[_StackItem], def_depth: dict[str, int], is_
         elif isinstance(op, EndBranch):
             depinfo.must_stay = True
             for v in op.outputs:
-                depinfo.update(_get_def_depth(def_depth, v), depth)
+                depinfo.update(def_depth[v.name], depth)
         else:
             # "Pure" operation without any nested blocks, side effects and jumps.
             assert len(op.nested_blocks) == 0
             for v in op.all_inputs():
-                depinfo.update(_get_def_depth(def_depth, v), depth)
+                depinfo.update(def_depth[v.name], depth)
 
         target_depth = depth
         if depinfo.must_stay:
@@ -140,12 +140,3 @@ def _hoist(block: Block, stack: list[_StackItem], def_depth: dict[str, int], is_
     stack.pop()
     block[:] = new_block.detach_all()
     return ret
-
-
-def _get_def_depth(def_depth: dict[str, int], var: Var) -> int:
-    try:
-        return def_depth[var.name]
-    except KeyError:
-        pass
-    assert var.is_undefined(), var.name
-    return 0

@@ -25,6 +25,7 @@ from cuda.tile._ir.ir import (
     TupleValue, make_aggregate, RangeValue, BoundMethodValue, ArrayValue, ConstantState,
     ListValue, ClosureValue, MemoryEffect, attribute, operand, BlockRestriction
 )
+from .type import PointerTy
 from . import hir
 from .hir import ResolvedName
 from .op_impl import (
@@ -102,8 +103,8 @@ class Loop(Operation, opcode="loop"):
     @override
     def generate_bytecode(self, ctx: BytecodeContext) -> tuple[bc.Value, ...]:
         types = tuple(x.get_type() for x in self.body_vars)
-        initial_values = [ctx.get_value_allow_undefined(input_var, ty)
-                          for input_var, ty in zip(self.initial_values, types, strict=True)]
+        initial_values = [ctx.get_value(input_var)
+                          for input_var in self.initial_values]
         result_type_ids = [typeid(ctx.type_table, ty) for ty in types]
 
         if self.is_for_loop:
@@ -224,9 +225,7 @@ async def loop_impl(body: hir.Block, iterable: Var):
         ty = body_var.get_type_allow_invalid()
         is_valid = not isinstance(ty, InvalidType)
         mask.append(is_valid)
-        if not is_valid:
-            body_var.set_undefined()
-        elif not was_valid and ty.is_aggregate():
+        if not was_valid and is_valid and ty.is_aggregate():
             # The initial variable is invalid but the loop variable is preserved,
             # and the loop variable is aggregate. In this case, `flat_body_vars[i]`
             # will contain a single variable (previously of InvalidType,
@@ -246,6 +245,7 @@ async def loop_impl(body: hir.Block, iterable: Var):
     new_body.params = tuple(body_params)
     valid_var_types = tuple(v.get_type() for v, is_valid in zip(body_vars, mask, strict=True)
                             if is_valid)
+    flat_var_types = flatten_aggregate_types(valid_var_types)
 
     # Update Continue/Break statements
     for jump_info in loop_info.jumps:
@@ -253,16 +253,20 @@ async def loop_impl(body: hir.Block, iterable: Var):
                        for out, is_valid in zip(jump_info.outputs, mask, strict=True)
                        if is_valid)
         flat_values = flatten_aggregates(values, valid_var_types)
+        # For undefined break/continue value, add a MakeDummy op as its producer
+        flat_values = _add_dummy_op_to_invalid_vars(flat_values, flat_var_types)
         assert len(flat_values) == len(all_flattened_body_vars)
         jump_info.jump_op.values = flat_values
 
     # Create the loop Operation
-    valid_initial_values = tuple(v for v, is_valid in zip(initial_values, mask, strict=True)
+    valid_initial_values = tuple(v for v, is_valid
+                                 in zip(initial_values, mask, strict=True)
                                  if is_valid)
     flat_initial_values = flatten_aggregates(valid_initial_values, valid_var_types)
+    # For undefined initial value, add a MakeDummy op as its producer
+    flat_initial_values = _add_dummy_op_to_invalid_vars(flat_initial_values, flat_var_types)
     assert len(flat_initial_values) == len(all_flattened_body_vars)
 
-    flat_var_types = flatten_aggregate_types(valid_var_types)
     if range_ty is None:
         start = stop = step = None
     else:
@@ -297,7 +301,8 @@ async def loop_impl(body: hir.Block, iterable: Var):
     for body_var, state, local_idx, is_valid in zip(body_vars, var_states, stored_locals, mask,
                                                     strict=True):
         if not is_valid:
-            store_undefined(local_idx, body_var.get_type_allow_invalid(), state.result_phi.last_loc)
+            store_invalid(local_idx, body_var.get_type_allow_invalid(),
+                          state.result_phi.last_loc)
 
     # Do this check at the end because this may be an automatically inserted loop
     # around the helper function's body.
@@ -465,14 +470,16 @@ async def if_else_impl(cond: Var, then_block: hir.Block, else_block: hir.Block) 
         assert num_explicit_results == 1
         ret = all_results[0]
         if ret is None:
-            ret = builder.ir_ctx.make_temp(builder.loc, undefined=True)
+            assert isinstance(result_phis[0].ty, InvalidType)
+            ret = builder.ir_ctx.make_temp(builder.loc)
+            ret.set_type(result_phis[0].ty)
 
     # Update the scope for stored named
     for res_var, phi, local_idx in zip(all_results[num_explicit_results:],
                                        result_phis[num_explicit_results:],
                                        stored_locals, strict=True):
         if res_var is None:
-            store_undefined(local_idx, phi.ty, phi.last_loc)
+            store_invalid(local_idx, phi.ty, phi.last_loc)
         else:
             store_var(local_idx, res_var, phi.last_loc)
 
@@ -486,9 +493,7 @@ class Continue(Operation, opcode="continue", terminator=True):
 
     @override
     def generate_bytecode(self, ctx: BytecodeContext) -> tuple[()]:
-        next_values = [ctx.get_value_allow_undefined(var, ctx.typeof(body_var))
-                       for var, body_var
-                       in zip(self.values, ctx.innermost_loop.body_vars, strict=True)]
+        next_values = [ctx.get_value(var) for var in self.values]
         bc.encode_ContinueOp(ctx.builder, next_values)
         return ()
 
@@ -517,11 +522,7 @@ class Break(Operation, opcode="break", terminator=True):
 
     @override
     def generate_bytecode(self, ctx: BytecodeContext) -> tuple[()]:
-        # body_vars is not a typo. We use body variables because they always contain the actual
-        # types of the loop variables, whereas result variables may have an InvalidType.
-        output_values = [ctx.get_value_allow_undefined(var, ctx.typeof(body_var))
-                         for var, body_var
-                         in zip(self.values, ctx.innermost_loop.body_vars, strict=True)]
+        output_values = [ctx.get_value(var) for var in self.values]
         bc.encode_BreakOp(ctx.builder, output_values)
         return ()
 
@@ -614,6 +615,27 @@ class TypedConst(Operation, opcode="typed_const"):
     @override
     def generate_bytecode(self, ctx: BytecodeContext) -> bc.Value:
         return ctx.constant(self.value, ctx.typeof(self.result_var))
+
+
+@dataclass(eq=False)
+class MakeDummy(Operation, opcode="make_dummy"):
+    """Placeholder value inserted for undefined variable in loop.
+
+    The use case for undefined variables is to represent loop's
+    initial_values or continue/break's next_values during type inference or
+    post dead code elimination.
+    """
+
+    @override
+    def generate_bytecode(self, ctx: BytecodeContext) -> bc.Value:
+        ty = ctx.typeof(self.result_var)
+        if isinstance(ty, TokenTy):
+            return bc.encode_MakeTokenOp(ctx.builder, ctx.type_table.Token)
+        if isinstance(ty, TileTy) and isinstance(ty.dtype, PointerTy):
+            int_ty = TileTy(dtype=datatype.int64, shape=ty.shape)
+            const = ctx.constant(0, int_ty)
+            return bc.encode_IntToPtrOp(ctx.builder, typeid(ctx.type_table, ty), const)
+        return ctx.constant(0, ty)
 
 
 def loosely_typed_const(value: Any,
@@ -1583,8 +1605,6 @@ class Assign(Operation, opcode="assign"):
 def assign(value: Var, res: Var) -> None:
     Builder.get_current().append_verbatim(Assign(value=value, result_vars=(res,), loc=res.loc))
     res.ctx.copy_type_information(value, res)
-    if value.is_undefined():
-        res.set_undefined()
 
 
 @impl(hir.identity)
@@ -1776,8 +1796,12 @@ def flatten_aggregates(vars: Sequence[Var], types: Sequence[Type]) -> tuple[Var,
     ret = []
     for x, ty in zip(vars, types, strict=True):
         item_types = tuple(ty.flatten_aggregate())
-        if isinstance(x.get_type_allow_invalid(), InvalidType):
-            ret.extend(x.ctx.make_temp(x.loc, undefined=True) for _ in item_types)
+        x_ty = x.get_type_allow_invalid()
+        if isinstance(x_ty, InvalidType):
+            for _ in item_types:
+                t = x.ctx.make_temp(x.loc)
+                t.set_type(x_ty)
+                ret.append(t)
         else:
             items = tuple(x.flatten_aggregate())
             assert len(items) == len(item_types)
@@ -1837,10 +1861,10 @@ def _unflatten_proper_aggregate(flattened_iter: Iterator[Var], nominal: Type, ac
         # Pop values from the iterator and throw them out
         for _ in nominal_item_types:
             next(flattened_iter)
-        # Return an undefined variable. It is OK that we don't create an aggregate value for it --
-        # any use of it should be invalid anyway.
         builder = Builder.get_current()
-        return builder.ir_crx.make_temp(builder.loc, undefined=True)
+        t = builder.ir_ctx.make_temp(builder.loc)
+        t.set_type(actual)
+        return t
 
     items = tuple(_maybe_unflatten_aggregate(flattened_iter, item_nominal, item_actual)
                   for item_nominal, item_actual
@@ -3991,10 +4015,10 @@ def store_var(local_idx: int, value: Var, loc: Loc | None = None):
     assign(value, new_var)
 
 
-def store_undefined(local_idx: int, ty: Type, loc: Loc | None = None):
+def store_invalid(local_idx: int, ty: Type, loc: Loc | None = None):
+    assert isinstance(ty, InvalidType)
     scope = Scope.get_current()
     new_var = scope.local.redefine(local_idx, loc or Builder.get_current().loc)
-    new_var.set_undefined()
     new_var.set_type(ty)
 
 
@@ -4014,8 +4038,6 @@ def load_var_impl(name):
     if rn.depth >= 0:
         ret = scope.local_scopes[rn.depth][rn.index]
         ret.get_type()  # Trigger an InvalidType check
-        if ret.is_undefined():
-            raise TileSyntaxError(f"Undefined variable {name} used")
         return ret
     elif rn.index >= 0:
         val = scope.func_hir.frozen_global_values[rn.index]
@@ -4206,3 +4228,11 @@ def sym2var(x: Any) -> Var:
 
     x = get_constant_value(x)
     return loosely_typed_const(x)
+
+
+def _add_dummy_op_to_invalid_vars(vars: Sequence[Var],
+                                  actual_types: Sequence[Type]) -> tuple[Var, ...]:
+    return tuple(add_operation(MakeDummy, actual)
+                 if isinstance(v.get_type_allow_invalid(), InvalidType)
+                 else v
+                 for v, actual in zip(vars, actual_types, strict=True))

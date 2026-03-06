@@ -83,9 +83,6 @@ class _AliasTracker:
 def _propagate(alias_tracker: _AliasTracker,
                src: Var,
                dst: Var):
-    if src.is_undefined():
-        alias_tracker[src.name] = frozenset()
-
     src_aliases = alias_tracker[src.name]
     dst_aliases = alias_tracker.get(dst.name, frozenset())
     alias_tracker[dst.name] = dst_aliases | src_aliases

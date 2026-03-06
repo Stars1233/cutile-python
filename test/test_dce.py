@@ -4,11 +4,18 @@
 
 import cuda.tile as ct
 from cuda.tile._ir.ir import KernelArgument
-from cuda.tile._ir.ops import Loop, Continue, Break
+from cuda.tile._ir.ops import Loop, Continue, Break, MakeDummy
 from cuda.tile._ir import ir
 from cuda.tile._compile import _get_final_ir
 from cuda.tile._cext import default_tile_context
 from cuda.tile._ir.type import ArrayTy
+
+
+def _get_defining_op(var, root_block: ir.Block):
+    for op in root_block.traverse():
+        if var.name in (rv.name for rv in op.result_vars):
+            return op
+    return None
 
 
 def get_ir(func) -> ir.Block:
@@ -54,14 +61,14 @@ def test_unused_body_var():
     func_body = get_ir(kernel)
     loop, = [op for op in func_body if isinstance(op, Loop)]
 
-    # The initial variable should be undefined because it is never used
+    # The initial variable's defining op should be replaced with a dummy MakeDummy
     t_idx = [v.get_original_name() for v in loop.body.params].index("t")
-    assert loop.initial_values[t_idx].is_undefined()
+    assert isinstance(_get_defining_op(loop.initial_values[t_idx], func_body), MakeDummy)
 
-    # The yielded variable should also be undefined because it is never used
+    # The yielded variable's defining op should also be replaced with a dummy MakeDummy
     continue_op = loop.body[-1]
     assert isinstance(continue_op, Continue)
-    assert continue_op.values[t_idx].is_undefined()
+    assert isinstance(_get_defining_op(continue_op.values[t_idx], func_body), MakeDummy)
 
 
 def test_unused_result_var():
@@ -79,7 +86,7 @@ def test_unused_result_var():
     func_body = get_ir(kernel)
     loop, = [op for op in func_body if isinstance(op, Loop)]
 
-    # The value yielded by "break" should be undefined
+    # The value yielded by "break" should be replaced with a dummy MakeDummy by DCE
     t_idx = [v.get_original_name() for v in loop.body_vars].index("t")
     break_op, = [op for op in func_body.traverse() if isinstance(op, Break)]
-    assert break_op.values[t_idx].is_undefined()
+    assert isinstance(_get_defining_op(break_op.values[t_idx], func_body), MakeDummy)

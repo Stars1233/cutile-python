@@ -13,6 +13,7 @@ from cuda.tile._exception import Loc, TileSyntaxError
 from cuda.tile._ir import hir
 from cuda.tile._ir.hir import ResolvedName
 from cuda.tile._ir.ir import Operation, Var, IRContext
+from cuda.tile._ir.type import InvalidType
 
 
 @dataclass
@@ -71,7 +72,9 @@ class LocalScope:
         assert index >= 0
         var = self._map[index]
         if var is None:
-            return self._ir_ctx.make_var(self._local_names[index], loc, undefined=True)
+            name = self._local_names[index]
+            var = self._ir_ctx.make_var(name, loc)
+            var.set_type(InvalidType(f"Use of potentially undefined variable `{name}`", loc=loc))
         return var
 
     @contextmanager

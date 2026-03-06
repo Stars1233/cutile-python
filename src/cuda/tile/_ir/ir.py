@@ -41,18 +41,18 @@ class IRContext:
         self.tileiras_version: BytecodeVersion = tileiras_version
 
     #  Make a Var with a unique name based on `name`.
-    def make_var(self, name: str, loc: Loc, undefined: bool = False) -> Var:
+    def make_var(self, name: str, loc: Loc) -> Var:
         var_name = name
         while var_name in self._all_vars:
             var_name = f"{name}.{next(self._counter_by_name[name])}"
         self._all_vars[var_name] = name
-        return Var(var_name, loc, self, undefined)
+        return Var(var_name, loc, self)
 
     def make_var_like(self, var: Var) -> Var:
-        return self.make_var(self.get_original_name(var.name), var.loc, var.is_undefined())
+        return self.make_var(self.get_original_name(var.name), var.loc)
 
-    def make_temp(self, loc: Loc, undefined: bool = False) -> Var:
-        return self.make_var(f"${next(self._temp_counter)}", loc, undefined=undefined)
+    def make_temp(self, loc: Loc) -> Var:
+        return self.make_var(f"${next(self._temp_counter)}", loc)
 
     def get_original_name(self, var_name: str) -> str:
         return self._all_vars[var_name]
@@ -154,11 +154,10 @@ class AggregateValue:
 
 
 class Var:
-    def __init__(self, name: str, loc: Loc, ctx: IRContext, undefined: bool = False):
+    def __init__(self, name: str, loc: Loc, ctx: IRContext):
         self.name = name
         self.loc = loc
         self.ctx = ctx
-        self._undefined = undefined
 
     def try_get_type(self) -> Optional[Type]:
         return self.ctx.typemap.get(self.name)
@@ -173,9 +172,6 @@ class Var:
         try:
             return self.ctx.typemap[self.name]
         except KeyError:
-            if self._undefined:
-                return InvalidType(f"Use of potentially undefined variable"
-                                   f" `{self.get_original_name()}`", loc=Loc.unknown())
             raise TileInternalError(f"Type of variable {self.name} not found")
 
     def set_type(self, ty: Type, force: bool = False):
@@ -212,12 +208,6 @@ class Var:
         if not force:
             assert self.name not in self.ctx._loose_typemap
         self.ctx._loose_typemap[self.name] = ty
-
-    def is_undefined(self) -> bool:
-        return self._undefined
-
-    def set_undefined(self):
-        self._undefined = True
 
     def get_original_name(self) -> str:
         return self.ctx.get_original_name(self.name)
