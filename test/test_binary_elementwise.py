@@ -498,14 +498,16 @@ def test_array_scalar_div(shape, tile, int_dtype, tmp_path, op_symbol, ref_impl,
 @pytest.mark.parametrize("op_symbol, ref_impl", [
     ("/", lambda x, y: x / y),
     ("ct.truediv", lambda x, y: x / y),
+    ("//", lambda x, y: x // y),
+    ("ct.floordiv", lambda x, y: x // y),
     ])
-def test_array_scalar_truediv_float(shape, tile, float_dtype, tmp_path, op_symbol, ref_impl):
+def test_array_scalar_div_float(shape, tile, float_dtype, tmp_path, op_symbol, ref_impl):
     x = make_tensor(shape, dtype=float_dtype, device='cuda')
     y = 23.0
     res_dtype = torch.promote_types(x.dtype, torch.float32)
     ref = ref_impl(x.to(res_dtype), y)
     z = torch.zeros_like(ref)
-    kernel = array_scalar_kernel('truediv',
+    kernel = array_scalar_kernel('div_float',
                                  f'tz = {op_symbol}(tx, y)' if op_symbol.startswith("ct.") else
                                  f'tz = tx {op_symbol} y',
                                  tmp_path)
@@ -540,17 +542,19 @@ def test_array_div(shape, tile, x_dtype, y_dtype, tmp_path, op_symbol, ref_impl,
 @pytest.mark.parametrize("op_symbol, ref_impl", [
     ("/", lambda x, y: x / y),
     ("ct.truediv", lambda x, y: x / y),
+    ("//", lambda x, y: torch.floor(x / y)),
+    ("ct.floordiv", lambda x, y: torch.floor(x / y)),
     ])
 @pytest.mark.parametrize("x_dtype", float_dtypes, ids=dtype_id)
 @pytest.mark.parametrize("y_dtype", float_dtypes, ids=dtype_id)
-def test_array_truediv_float(shape, tile, x_dtype, y_dtype, tmp_path, op_symbol, ref_impl):
+def test_array_div_float(shape, tile, x_dtype, y_dtype, tmp_path, op_symbol, ref_impl):
     should_raise = {x_dtype, y_dtype} == {torch.float16, torch.bfloat16}
     x = (torch.rand(*shape, device="cuda") * 100).to(dtype=x_dtype)
     y = (torch.rand(*shape, device="cuda") * 100 + 1).to(dtype=y_dtype)
     result_type = torch.promote_types(x.dtype, y.dtype)
     z = torch.zeros_like(x).to(result_type)
     ref = ref_impl(x, y).to(result_type)
-    kernel = array_kernel('truediv',
+    kernel = array_kernel('div_float',
                           f"tz = {op_symbol}(tx, ty)" if op_symbol.startswith("ct.") else
                           f"tz = tx {op_symbol} ty",
                           tmp_path)

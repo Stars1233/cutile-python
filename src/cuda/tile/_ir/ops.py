@@ -944,6 +944,11 @@ class RawBinaryArithmeticOperation(Operation, opcode="raw_binary_arith"):
                 return bc.encode_DivIOp(ctx.builder, res_typeid, lhs, rhs,
                                         signedness=datatype.get_signedness(dtype),
                                         rounding=bc.RoundingMode.NEGATIVE_INF)
+            case "floordiv", "float":
+                quotient = bc.encode_DivFOp(ctx.builder, res_typeid, lhs, rhs,
+                                            rounding_mode=rounding_mode,
+                                            flush_to_zero=self.flush_to_zero)
+                return bc.encode_FloorOp(ctx.builder, res_typeid, quotient)
             case "cdiv", "int":
                 return bc.encode_DivIOp(ctx.builder, res_typeid, lhs, rhs,
                                         signedness=datatype.get_signedness(dtype),

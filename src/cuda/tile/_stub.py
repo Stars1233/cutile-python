@@ -1616,9 +1616,48 @@ def truediv(x, y, /, *, rounding_mode: Optional[RoundingMode] = None,
     pass
 
 
-@_doc_binary_op('//')
 @function
 def floordiv(x, y, /) -> TileOrScalar:
+    """Elementwise floordiv on two tiles.
+
+    Can also use builtin operation ``x // y``.
+
+    Supports both integer and floating-point operands. For float inputs,
+    the result is ``floor(x / y)`` as a float (e.g. ``5.5 // 2.2 == 2.0``).
+
+    Args:
+        x (Tile): LHS tile.
+        y (Tile): RHS tile.
+
+    The ``shape`` of ``x`` and ``y`` will be broadcasted and
+    ``dtype`` promoted to common dtype.
+
+    Returns:
+        Tile:
+
+    Examples:
+
+        >>> # integer tile and tile
+        >>> tx = ct.full((2, 4), 7, dtype=ct.int32)
+        >>> ty = ct.full((2, 4), 3, dtype=ct.int32)
+        >>> tz = ct.floordiv(tx, ty)
+
+        >>> # Can also use the builtin op
+        >>> tz = tx // ty
+
+        >>> # float tile and tile
+        >>> tx = ct.full((2, 4), 5.5, dtype=ct.float32)
+        >>> ty = ct.full((2, 4), 2.2, dtype=ct.float32)
+        >>> tz = tx // ty  # result is ct.float32 with value 2.0
+
+        >>> # tile and scalar
+        >>> tx = ct.full((2, 4), 7, dtype=ct.int32)
+        >>> y = 2
+        >>> tz = tx // y
+
+        >>> # scalar and scalar
+        >>> z = 7 // 2
+    """
     pass
 
 
