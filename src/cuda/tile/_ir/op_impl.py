@@ -18,7 +18,7 @@ from cuda.tile._ir.ops_utils import get_dtype
 
 from .typing_support import datatype, get_signature
 from .ir import Var, TupleValue, Builder
-from .type import TupleTy, TileTy, DTypeSpec, EnumTy, StringTy, ArrayTy, SliceType, \
+from .type import TiledViewTy, TupleTy, TileTy, DTypeSpec, EnumTy, StringTy, ArrayTy, SliceType, \
     ListTy, LooselyTypedScalar, RangeIterType, FunctionTy, ClosureTy, BoundMethodTy, \
     DTypeConstructor, Type
 
@@ -355,6 +355,13 @@ def require_array_type(var: Var) -> ArrayTy:
     ty = var.get_type()
     if not isinstance(ty, ArrayTy):
         raise _make_type_error(f"Expected an array, but given value has type {ty}", var)
+    return ty
+
+
+def require_tiled_view_type(var: Var) -> TiledViewTy:
+    ty = var.get_type()
+    if not isinstance(ty, TiledViewTy):
+        raise TileTypeError(f"Expected a tiled view, but given value has type {ty}")
     return ty
 
 

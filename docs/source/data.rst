@@ -156,6 +156,32 @@ A tile index ``(i, j, ...)`` with shape ``S`` refers to the elements of the arra
 When accessing the elements of an array using tile indices, the multidimensional memory layout of the array is used.
 To access the tile space with a different memory layout, use the `order` parameter of load/store operations.
 
+.. _data-tiled-views:
+
+Tiled Views
+-----------
+
+A *tiled view* represents the |tile space| of a |global array|.
+
+A tiled view's *num_tiles* is a tuple of integer values, each denoting the number of tiles of
+the corresponding dimension.
+The length of the *num_tiles* tuple equals the tile space's number of dimensions.
+The product of *num_tiles* values equals the total number of tiles in the tile space.
+
+A tile in the tiled view can be loaded or stored using its corresponding tile index.
+
+.. seealso::
+  :ref:`cuda.tile.TiledView class documentation <data-tiled-view-cuda-tile-tiled-view>`
+
+  :meth:`Array.tiled_view`
+
+.. toctree::
+   :maxdepth: 2
+   :hidden:
+
+   data/tiled_view
+
+
 Shape Broadcasting
 ------------------
 

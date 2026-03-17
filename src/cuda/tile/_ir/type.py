@@ -378,6 +378,49 @@ class PartitionViewTy(Type):
                 f"padding_mode={self.padding_mode}]")
 
 
+# ============== TiledView Type ===============
+
+
+class TiledViewTy(Type):
+    def __init__(self, array_ty: ArrayTy, tile_shape: tuple[int, ...],
+                 padding_mode: PaddingMode):
+        self.array_ty = array_ty
+        self.tile_shape = tile_shape
+        self.padding_mode = padding_mode
+
+    def is_aggregate(self) -> bool:
+        return True
+
+    def aggregate_item_types(self) -> tuple["Type", ...]:
+        return (self.array_ty,)
+
+    def make_aggregate_value(self, items: tuple["Var", ...]) -> "AggregateValue":
+        from .ir import TiledViewValue
+        [array] = items
+        return TiledViewValue(array)
+
+    @property
+    def ndim(self):
+        return self.array_ty.ndim
+
+    @property
+    def dtype(self):
+        return self.array_ty.dtype
+
+    def __eq__(self, other: "Type"):
+        return (isinstance(other, TiledViewTy)
+                and self.array_ty == other.array_ty
+                and self.tile_shape == other.tile_shape
+                and self.padding_mode == other.padding_mode)
+
+    def __hash__(self):
+        return hash(("TiledViewTy", self.array_ty, self.tile_shape, self.padding_mode))
+
+    def __str__(self):
+        return (f"TiledView[{self.array_ty},tile_shape={self.tile_shape},"
+                f"padding_mode={self.padding_mode}]")
+
+
 # ============== List Type ===============
 
 

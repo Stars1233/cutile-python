@@ -121,6 +121,15 @@ def test_invalid_index_rank():
         compile(kernel, (nd_tensor(2),))
 
 
+def test_tiled_view_invalid_index_rank():
+    def kernel(x):
+        x.tiled_view((2, 2)).load((0, 0, 0))
+
+    msg = re.escape('Index size 3 does not match the tiled view rank 2')
+    with pytest.raises(TileTypeError, match=msg):
+        compile(kernel, (nd_tensor(2),))
+
+
 def test_invalid_order_literal():
     def kernel(x):
         ct.load(x, (0, 0), shape=(2, 2), order='A')

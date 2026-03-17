@@ -59,6 +59,7 @@ from cuda.tile._stub import (
     ConstantAnnotation,
     Scalar,
     Tile,
+    TiledView,
 
     abs,
     add,
@@ -201,6 +202,7 @@ __all__ = [
     "ConstantAnnotation",
     "Scalar",
     "Tile",
+    "TiledView",
 
     "abs",
     "add",

@@ -102,6 +102,11 @@
 .. |tile spaces| replace:: :ref:`tile spaces <data-element-tile-space>`
 .. |Tile spaces| replace:: :ref:`Tile spaces <data-element-tile-space>`
 
+.. |tiled view| replace:: :ref:`tiled view <data-tiled-views>`
+.. |Tiled view| replace:: :ref:`Tiled view <data-tiled-views>`
+.. |tiled views| replace:: :ref:`tiled views <data-tiled-views>`
+.. |Tiled views| replace:: :ref:`Tiled views <data-tiled-views>`
+
 .. |scalar| replace:: :ref:`scalar <data-tiles-and-scalars>`
 .. |Scalar| replace:: :ref:`Scalar <data-tiles-and-scalars>`
 .. |scalars| replace:: :ref:`scalars <data-tiles-and-scalars>`

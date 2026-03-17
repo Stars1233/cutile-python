@@ -949,7 +949,7 @@ class TestRuntimeAlias(MLIRTestBase):
         super().test_mlir(kernel, check_directive)
 
 
-ArraySliceLoadStoreCheckDirective = """\
+ArrayViewLoadStoreCheckDirective = """\
 // CHECK: %[[TOKEN0:.*]] = make_token
 // CHECK: %[[VAL1:.*]], %[[TOKEN1:.*]] = load_view_tko {{.*}} token = %[[TOKEN0]]
 // CHECK: %[[TOKEN2:.*]] = join_tokens %[[TOKEN0]], %[[TOKEN1]]
@@ -960,7 +960,7 @@ ArraySliceLoadStoreCheckDirective = """\
 """
 
 
-ArraySliceForLoopCheckDirective = """\
+ArrayViewForLoopCheckDirective = """\
 // CHECK: %[[TOKEN0:.*]] = make_token
 // CHECK: %[[TOKENPAIR:.*]]:2 = for {{.*}} iter_values(
 // CHECK-SAME: %[[TKNARG0:.*]] = %[[TOKEN0]], %[[TKNARG1:.*]] = %[[TOKEN0]])
@@ -972,9 +972,39 @@ ArraySliceForLoopCheckDirective = """\
 """
 
 
-class TestArraySliceMLIR(MLIRTestBase):
+ArrayViewWhileLoopCheckDirective = """\
+// CHECK: %[[TOKEN0:.*]] = make_token
+// CHECK: %[[VAL1:.*]], %[[TOKEN1:.*]] = load_view_tko {{.*}} token = %[[TOKEN0]]
+// CHECK: %[[TOKEN2:.*]] = join_tokens %[[TOKEN0]], %[[TOKEN1]]
+// CHECK: %[[TOKENQUARTET:.*]]:4 = loop iter_values(
+// CHECK-SAME: {{.*}}, {{.*}}, %[[TKNARG0:.*]] = %[[TOKEN2]], %[[TKNARG1:.*]] = %[[TOKEN0]])
+// CHECK:     else
+// CHECK:         break {{.*}}, {{.*}}, %[[TKNARG0]], %[[TKNARG1]]
+// CHECK:     %[[VAL3:.*]], %[[TOKEN3:.*]] = load_view_tko {{.*}} token = %[[TKNARG1]]
+// CHECK:     %[[TOKEN4:.*]] = join_tokens %[[TKNARG0]], %[[TOKEN3]]
+// CHECK:     %[[TOKEN5:.*]] = store_view_tko {{.*}} token = %[[TOKEN4]]
+// CHECK:     continue {{.*}}, {{.*}}, %[[TOKEN5]], %[[TOKEN5]]
+// CHECK: %[[TOKEN6:.*]] = store_view_tko {{.*}} token = %[[TOKENQUARTET]]#2
+"""
 
-    def array_slice_load_store(X, TILE: ct.Constant[int]):
+
+ArrayViewIfElseCheckDirective = """\
+// CHECK: %[[TOKEN0:.*]] = make_token
+// CHECK: %[[VAL1:.*]], %[[TOKEN1:.*]] = load_view_tko {{.*}} token = %[[TOKEN0]]
+// CHECK: %[[TOKEN2:.*]] = join_tokens %[[TOKEN0]], %[[TOKEN1]]
+// CHECK: %[[TOKENPAIR:.*]]:2 = if
+// CHECK:     %[[VAL3:.*]], %[[TOKEN3:.*]] = load_view_tko {{.*}} token = %[[TOKEN0]]
+// CHECK:     %[[TOKEN4:.*]] = join_tokens %[[TOKEN2]], %[[TOKEN3]]
+// CHECK:     yield %[[VAL3:.*]], %[[TOKEN4]]
+// CHECK: else
+// CHECK:     yield %[[VAL1:.*]], %[[TOKEN2]]
+// CHECK: %[[TOKEN5:.*]] = store_view_tko {{.*}} token = %[[TOKENPAIR]]#1
+"""
+
+
+class TestArrayViewMLIR(MLIRTestBase):
+
+    def array_slice_load_store(X, _n: int, TILE: ct.Constant[int]):
         first_half = X.slice(axis=0, start=0, stop=TILE)
         second_half = X.slice(axis=0, start=TILE, stop=2*TILE)
         tx = ct.load(first_half, index=(0,), shape=(TILE,))
@@ -992,19 +1022,71 @@ class TestArraySliceMLIR(MLIRTestBase):
         first_chunk = X.slice(axis=0, start=0, stop=TILE)
         ct.store(first_chunk, index=(0,), tile=ct.full((TILE,), 0, dtype=X.dtype))
 
+    def array_slice_ifelse(X, cond: int, TILE: ct.Constant[int]):
+        chunk = X.slice(axis=0, start=0, stop=TILE)
+        tx = ct.load(chunk, index=(0,), shape=(TILE,))
+        if cond:
+            tx = ct.load(chunk, index=(0,), shape=(TILE,))
+        ct.store(X, index=(0,), tile=tx)
+
+    def tiled_view_load_store(X, _n: int, TILE: ct.Constant[int]):
+        tv = X.tiled_view(TILE)
+        tx = tv.load(0)
+        tv.store(1, tx + 1)
+        tv2 = X.tiled_view(TILE)
+        ty = tv2.load(1)
+        tv2.store(0, ty)
+
+    def tiled_view_for_loop(X, n: int, TILE: ct.Constant[int]):
+        tv = X.tiled_view(TILE)
+        for i in range(n):
+            tx = tv.load(i)
+            tv.store(i, tx + 1)
+        ct.store(X, (0,), ct.full((TILE,), 0, dtype=X.dtype))
+
+    def array_slice_while_loop(X, n: int, TILE: ct.Constant[int]):
+        chunk = X.slice(axis=0, start=0, stop=TILE)
+        tx = ct.load(chunk, index=(0,), shape=(TILE,))
+        i = 0
+        while i < n:
+            tx = ct.load(chunk, index=(0,), shape=(TILE,))
+            ct.store(chunk, index=(0,), tile=tx + 1)
+            i += 1
+        ct.store(chunk, index=(0,), tile=tx)
+
+    def tiled_view_ifelse(X, cond: int, TILE: ct.Constant[int]):
+        tv = X.tiled_view(TILE)
+        tx = tv.load(0)
+        if cond:
+            tx = tv.load(0)
+        ct.store(X, (0,), tx)
+
+    def tiled_view_while_loop(X, n: int, TILE: ct.Constant[int]):
+        tv = X.tiled_view(TILE)
+        tx = tv.load(0)
+        i = 0
+        while i < n:
+            tx = tv.load(i)
+            tv.store(i, tx + 1)
+            i += 1
+        tv.store(0, tx)
+
     @override
     def compile_kernel(self, kernel):
         tile_size = 1024
         X = torch.arange(tile_size * 2, device="cuda", dtype=torch.int32)
-        if kernel.__name__ == "array_slice_load_store":
-            bytecode = get_bytecode(kernel, (X, tile_size))
-        else:
-            bytecode = get_bytecode(kernel, (X, 2, tile_size))
+        bytecode = get_bytecode(kernel, (X, 2, tile_size))
         return bytecode
 
     @pytest.mark.parametrize("kernel, check_directive", make_cases(
-        (array_slice_load_store, ArraySliceLoadStoreCheckDirective),
-        (array_slice_for_loop, ArraySliceForLoopCheckDirective),
+        (array_slice_load_store, ArrayViewLoadStoreCheckDirective),
+        (array_slice_for_loop, ArrayViewForLoopCheckDirective),
+        (array_slice_while_loop, ArrayViewWhileLoopCheckDirective),
+        (array_slice_ifelse, ArrayViewIfElseCheckDirective),
+        (tiled_view_load_store, ArrayViewLoadStoreCheckDirective),
+        (tiled_view_for_loop, ArrayViewForLoopCheckDirective),
+        (tiled_view_while_loop, ArrayViewWhileLoopCheckDirective),
+        (tiled_view_ifelse, ArrayViewIfElseCheckDirective),
     ))
     @override
     def test_mlir(self, kernel, check_directive):

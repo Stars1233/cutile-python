@@ -23,7 +23,7 @@ from cuda.tile._ir.ir import (
     add_operation, Builder,
     enter_nested_block, nested_block, PhiState, LoopVarState,
     TupleValue, make_aggregate, RangeValue, BoundMethodValue, ArrayValue, ConstantState,
-    ListValue, ClosureValue, MemoryEffect, attribute, operand, BlockRestriction
+    ListValue, TiledViewValue, ClosureValue, MemoryEffect, attribute, operand, BlockRestriction
 )
 from .type import PointerTy
 from . import hir
@@ -33,8 +33,8 @@ from .op_impl import (
     require_signed_integer_0d_tile_type,
     require_tile_type, normalize_axis, require_dtype_spec,
     require_constant_bool, require_optional_constant_enum,
-    require_constant_str, require_array_type, require_tuple_type, require_constant_slice,
-    require_list_type, require_0d_tile_type,
+    require_constant_str, require_array_type, require_tiled_view_type, require_tuple_type,
+    require_constant_slice, require_list_type, require_0d_tile_type,
     require_index_or_index_tuple_type, require_constant_shape, require_constant_axis_order,
     require_constant_enum, require_optional_constant_int, require_optional_constant_bool,
     require_optional_constant_str, PrintfValidator, require_tile_maybe_loose_type,
@@ -43,7 +43,7 @@ from .op_impl import (
     require_callable_type)
 from .ops_utils import (
     BINOP_REGISTRY, UNARYOP_REGISTRY,
-    check_rd_and_ftz, PaddingMode,
+    check_rd_and_ftz, PaddingMode, get_default_order,
     rounding_mode_to_bytecode, get_default_rounding_mode, get_dtype,
     change_dtype, memory_order_to_bytecode,
     memory_scope_to_bytecode, broadcast_shapes2, is_shape_broadcastable_to, BroadcastError,
@@ -57,7 +57,7 @@ from .type import (
     PartitionViewTy, TupleTy, TileTy, NoneType, BoundMethodTy, ArrayTy,
     ListTy, make_tile_ty, SliceType, DTypeConstructor, RangeIterType, Type,
     NONE, ModuleTy, TypeTy, LooselyTypedScalar, DTypeSpec, StringTy, InvalidType,
-    array_size_type, ClosureTy, LiveCapturedScope, TokenTy,
+    array_size_type, ClosureTy, LiveCapturedScope, TokenTy, TiledViewTy
 )
 from cuda.tile._datatype import (
     DType, is_integral, is_float, is_signed, is_boolean, is_restricted_float,
@@ -1552,6 +1552,7 @@ def getattr_impl(object: Var, name: Var) -> Var:
         case ArrayTy(), "shape": return build_tuple(object.get_aggregate().shape)
         case ArrayTy(), "strides": return build_tuple(object.get_aggregate().strides)
         case ArrayTy(), "slice": return bind_method(object, ct._m_array_slice)
+        case ArrayTy(), "tiled_view": return bind_method(object, ct._m_array_tiled_view)
 
         case TileTy(), "dtype": return loosely_typed_const(ty.dtype)
         case TileTy(), "shape": return loosely_typed_const(ty.shape)
@@ -1563,6 +1564,15 @@ def getattr_impl(object: Var, name: Var) -> Var:
         case TileTy(), "permute": return bind_method(object, ct.permute)
         case TileTy(), "transpose": return bind_method(object, ct.transpose)
         case TileTy(), "item": return bind_method(object, ct._m_tile_item)
+
+        case TiledViewTy(), "dtype": return loosely_typed_const(ty.dtype)
+        case TiledViewTy(), "tile_shape": return loosely_typed_const(ty.tile_shape)
+        case TiledViewTy(), "num_tiles":
+            [array] = object.get_aggregate().as_tuple()
+            return build_tuple(num_tiles(array, ty.tile_shape, get_default_order(ty.ndim)))
+
+        case TiledViewTy(), "load": return bind_method(object, ct._m_tiled_view_load)
+        case TiledViewTy(), "store": return bind_method(object, ct._m_tiled_view_store)
 
         case ModuleTy(), _:
             try:
@@ -2087,22 +2097,11 @@ class TileLoad(Operation, opcode="tile_load", memory_effect=MemoryEffect.LOAD):
         return res, res_token
 
 
-@impl(ct.load)
-def tile_load_impl(array: Var, index: Var, shape: Var, order: Var,
-                   padding_mode: Var, latency: Var, allow_tma: Var) -> Var:
+def _tile_load_impl_inner(array: Var, index_items: tuple[Var, ...], shape: Sequence[int],
+                          order: Sequence[int], padding_mode: PaddingMode,
+                          latency: Var, allow_tma: Var) -> Var:
     array_ty = require_array_type(array)
-    index_ty = require_index_or_index_tuple_type(index)
-    index_items = index.get_aggregate().items if isinstance(index_ty, TupleTy) else (index,)
-
-    if array_ty.ndim != len(index_items):
-        raise TileTypeError(f"Index size {len(index_items)}"
-                            f" does not match the array rank {array_ty.ndim}")
-
-    shape = require_constant_shape(shape, allow_single_int=True, expected_rank=array_ty.ndim,
-                                   allow_0d_shape=True)
     broadcasted_shape = (1,) * array_ty.ndim if len(shape) == 0 else shape
-    order = require_constant_axis_order(order, array_ty.ndim)
-    padding_mode = require_constant_enum(padding_mode, PaddingMode)
     latency = require_optional_constant_int(latency)
     allow_tma = require_optional_constant_bool(allow_tma)
     _check_load_store_hints(latency, allow_tma)
@@ -2113,6 +2112,23 @@ def tile_load_impl(array: Var, index: Var, shape: Var, order: Var,
                                    view=view, index=index_items, latency=latency,
                                    allow_tma=allow_tma)
     return reshape(result, shape)
+
+
+@impl(ct.load)
+def tile_load_impl(array: Var, index: Var, shape: Var, order: Var,
+                   padding_mode: Var, latency: Var, allow_tma: Var) -> Var:
+    array_ty = require_array_type(array)
+    index_ty = require_index_or_index_tuple_type(index)
+    index_items = index.get_aggregate().items if isinstance(index_ty, TupleTy) else (index,)
+    if array_ty.ndim != len(index_items):
+        raise TileTypeError(f"Index size {len(index_items)}"
+                            f" does not match the array rank {array_ty.ndim}")
+
+    shape = require_constant_shape(shape, allow_single_int=True, expected_rank=array_ty.ndim,
+                                   allow_0d_shape=True)
+    order = require_constant_axis_order(order, array_ty.ndim)
+    padding_mode = require_constant_enum(padding_mode, PaddingMode)
+    return _tile_load_impl_inner(array, index_items, shape, order, padding_mode, latency, allow_tma)
 
 
 @dataclass(eq=False)
@@ -2150,29 +2166,34 @@ def _implicit_cast(src: Var, target_dtype: DType, error_context: str) -> Var:
     return astype(src, target_dtype)
 
 
+def _tile_store_impl_inner(array: Var, index_items: tuple[Var, ...], tile: Var,
+                           order: Sequence[int], latency: Var, allow_tma: Var):
+    array_ty = require_array_type(array)
+    tile_ty = require_tile_type(tile)
+    broadcasted_shape = (1,) * array_ty.ndim if len(tile_ty.shape) == 0 else tile_ty.shape
+    latency = require_optional_constant_int(latency)
+    allow_tma = require_optional_constant_bool(allow_tma)
+    _check_load_store_hints(latency, allow_tma)
+
+    tile = reshape(tile, broadcasted_shape)
+    view = make_partition_view(array, broadcasted_shape, order, PaddingMode.UNDETERMINED)
+    [_token] = add_operation(TileStore, (TokenTy(),), view=view, index=index_items, tile=tile,
+                             latency=latency, allow_tma=allow_tma)
+
+
 @impl(ct.store)
 def tile_store_impl(array: Var, index: Var, tile: Var, order: Var,
                     latency: Var, allow_tma: Var):
     array_ty = require_array_type(array)
-    tile_ty = require_tile_type(tile)
     index_ty = require_index_or_index_tuple_type(index)
     index_items = index.get_aggregate().items if isinstance(index_ty, TupleTy) else (index,)
     if array_ty.ndim != len(index_items):
         raise TileTypeError(f"Index size {len(index_items)}"
                             f" does not match the array rank {array_ty.ndim}")
 
-    shape = tile_ty.shape
-    broadcasted_shape = (1,) * array_ty.ndim if len(shape) == 0 else shape
-    order = require_constant_axis_order(order, array_ty.ndim)
-    latency = require_optional_constant_int(latency)
-    allow_tma = require_optional_constant_bool(allow_tma)
-    _check_load_store_hints(latency, allow_tma)
-
     tile = _implicit_cast(tile, array_ty.dtype, "Stored tile is incompatible with array's dtype")
-    tile = reshape(tile, broadcasted_shape)
-    view = make_partition_view(array, broadcasted_shape, order, PaddingMode.UNDETERMINED)
-    [_token] = add_operation(TileStore, (TokenTy(),), view=view, index=index_items, tile=tile,
-                             latency=latency, allow_tma=allow_tma)
+    order = require_constant_axis_order(order, array_ty.ndim)
+    _tile_store_impl_inner(array, index_items, tile, order, latency, allow_tma)
 
 
 @dataclass(eq=False)
@@ -2646,16 +2667,22 @@ def join_tokens(tokens: Tuple[Var, ...], *, block: Block, res: Var, loc: Loc) ->
 
 @dataclass(eq=False)
 class NumTiles(Operation, opcode="num_tiles"):
-    axis: int = attribute()
     view: Var = operand()
 
     @override
     def generate_bytecode(self, ctx: BytecodeContext):
         view_ty: PartitionViewTy = self.view.get_type()
         result_types = [ctx.type_table.tile(ctx.type_table.I32, ())] * len(view_ty.tile_shape)
-        values = bc.encode_GetIndexSpaceShapeOp(ctx.builder, result_types,
-                                                src=ctx.get_value(self.view))
-        return values[self.axis]
+        values = bc.encode_GetIndexSpaceShapeOp(ctx.builder, result_types, ctx.get_value(self.view))
+        return values
+
+
+def num_tiles(array: Var, shape: Sequence[int], order: Sequence[int]) -> Tuple[Var, ...]:
+    array_ty = require_array_type(array)
+    broadcasted_shape = (1,) * array_ty.ndim if len(shape) == 0 else shape
+    view = make_partition_view(array, broadcasted_shape, order, PaddingMode.UNDETERMINED)
+    result_tys = tuple(make_tile_ty(datatype.default_int_type, ()) for _s in broadcasted_shape)
+    return add_operation(NumTiles, result_tys, view=view)
 
 
 @impl(ct.num_tiles)
@@ -2665,12 +2692,9 @@ def num_tiles_impl(array: Var, axis: Var, shape: Var, order: Var) -> Var:
     axis = normalize_axis(axis, array_ty.ndim)
     shape = require_constant_shape(shape, allow_single_int=True, expected_rank=array_ty.ndim,
                                    allow_0d_shape=True)
-    broadcasted_shape = (1,) * array_ty.ndim if len(shape) == 0 else shape
     order = require_constant_axis_order(order, array_ty.ndim)
-
-    view = make_partition_view(array, broadcasted_shape, order, PaddingMode.UNDETERMINED)
-    return add_operation(NumTiles, make_tile_ty(datatype.default_int_type, ()), view=view,
-                         axis=axis)
+    space_shape = num_tiles(array, shape, order)
+    return space_shape[axis]
 
 
 def full_const(shape: Sequence[int], fill_value: int | float, dtype: DType) -> Var:
@@ -4007,6 +4031,54 @@ def extract_impl(x: Var, index: Var, shape: Var) -> Var:
 @impl(ct._m_tile_item)
 def tile_item(tile: Var) -> Var:
     return reshape(tile, ())
+
+
+@impl(ct._m_array_tiled_view)
+def array_tiled_view_impl(array: Var, tile_shape: Var, padding_mode: Var) -> Var:
+    array_ty = require_array_type(array)
+    shape_val = require_constant_shape(tile_shape, allow_single_int=True,
+                                       expected_rank=array_ty.ndim,
+                                       allow_0d_shape=True)
+    padding_mode_val = require_constant_enum(padding_mode, PaddingMode)
+    view_ty = TiledViewTy(array_ty, shape_val, padding_mode_val)
+    return make_aggregate(TiledViewValue(array), view_ty)
+
+
+@impl(ct._m_tiled_view_load)
+def tiled_view_load_impl(tiled_view: Var, index: Var, latency: Var, allow_tma: Var) -> Var:
+    view_ty = require_tiled_view_type(tiled_view)
+    index_ty = require_index_or_index_tuple_type(index)
+    index_items = index.get_aggregate().items if isinstance(index_ty, TupleTy) else (index,)
+    if view_ty.ndim != len(index_items):
+        raise TileTypeError(f"Index size {len(index_items)}"
+                            f" does not match the tiled view rank {view_ty.ndim}")
+
+    [array] = tiled_view.get_aggregate().as_tuple()
+    order = get_default_order(view_ty.ndim)
+    return _tile_load_impl_inner(array, index_items, view_ty.tile_shape, order,
+                                 view_ty.padding_mode, latency, allow_tma)
+
+
+@impl(ct._m_tiled_view_store)
+def tiled_view_store_impl(tiled_view: Var, index: Var, tile: Var, latency: Var, allow_tma: Var):
+    view_ty = require_tiled_view_type(tiled_view)
+    index_ty = require_index_or_index_tuple_type(index)
+    index_items = index.get_aggregate().items if isinstance(index_ty, TupleTy) else (index,)
+    if view_ty.ndim != len(index_items):
+        raise TileTypeError(f"Index size {len(index_items)}"
+                            f" does not match the tiled view rank {view_ty.ndim}")
+
+    tile_ty = require_tile_type(tile)
+    if not is_shape_broadcastable_to(tile_ty.shape, view_ty.tile_shape):
+        raise TileTypeError(f"Tile shape {tile_ty.shape} is not broadcastable"
+                            f" to the tiled view's tile shape {view_ty.tile_shape}")
+
+    tile = broadcast_to(tile, view_ty.tile_shape)
+    tile = _implicit_cast(tile, view_ty.dtype,
+                          "Stored tile is incompatible with tiled view's dtype")
+    [array] = tiled_view.get_aggregate().as_tuple()
+    order = get_default_order(view_ty.ndim)
+    _tile_store_impl_inner(array, index_items, tile, order, latency, allow_tma)
 
 
 def store_var(local_idx: int, value: Var, loc: Loc | None = None):

@@ -272,6 +272,14 @@ class ArrayValue(AggregateValue):
 
 
 @dataclass
+class TiledViewValue(AggregateValue):
+    array: Var
+
+    def as_tuple(self) -> tuple["Var", ...]:
+        return (self.array,)
+
+
+@dataclass
 class ListValue(AggregateValue):
     base_ptr: Var
     length: Var

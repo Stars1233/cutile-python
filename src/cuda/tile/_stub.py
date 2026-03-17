@@ -130,6 +130,9 @@ class ScalarProtocol(Protocol):
 
 Scalar = int | float | ScalarProtocol
 
+Shape = Union[int, tuple[int, ...]]
+Order = Union[tuple[int, ...], Literal['C'], Literal['F']]
+
 
 class Array:
     """Type stub for |array| objects."""
@@ -201,6 +204,33 @@ class Array:
             >>> tile = ct.load(segment, (0, 0), shape=(TILE_M, TILE_N))
         """
         return _m_array_slice(self, axis, start, stop)
+
+    def tiled_view(self, tile_shape: Constant[Shape], *,
+                   padding_mode: PaddingMode = PaddingMode.UNDETERMINED) -> "TiledView":
+        """Creates a |tiled view| of this array with a fixed `tile_shape`.
+
+        The resulting :class:`TiledView` partitions this array into a grid of
+        equally sized tiles.
+
+        Args:
+            tile_shape (tuple[const int,...]): The shape of each tile in the view.
+                Must have the same rank as this array.
+            padding_mode (PaddingMode): The value used to pad tiles that extend
+                beyond the array boundaries. By default, the padding value is
+                undetermined.
+
+        Returns:
+            TiledView:
+
+        Examples:
+
+            >>> tv = array1d.tiled_view(128)
+            >>> tv = array2d.tiled_view((64, 64))
+
+        .. seealso::
+            :ref:`Tiled Views <data-tiled-views>`
+        """
+        return _m_array_tiled_view(self, tile_shape, padding_mode=padding_mode)
 
 
 class Tile:
@@ -366,10 +396,95 @@ class Tile:
         return matmul(other, self)
 
 
-Shape = Union[int, tuple[int, ...]]
-Order = Union[tuple[int, ...], Literal['C'], Literal['F']]
-
 TileOrScalar = Union[Tile, Scalar]
+
+
+class TiledView:
+    """Type stub for a |tiled view|."""
+
+    @property
+    @function
+    def dtype(self) -> "DType":
+        """The data type of the elements in the |tiled view|.
+
+        Returns:
+            DType (constant):
+        """
+
+    @property
+    @function
+    def num_tiles(self) -> tuple[int, ...]:
+        """The number of tiles in each of the |tiled view|'s dimensions.
+
+        Returns:
+            tuple[int32,...]:
+        """
+
+    @property
+    @function
+    def tile_shape(self) -> tuple[int, ...]:
+        """The shape of tiles produced by each indexed access.
+
+        Returns:
+            tuple[const int,...]:
+        """
+
+    def load(self, index: Shape, *,
+             latency: Optional[int] = None,
+             allow_tma: Optional[bool] = None) -> Tile:
+        """Loads a tile from the |tiled view| at the given tile `index`.
+
+        The returned tile has shape :attr:`tile_shape`. Out-of-bounds elements
+        are filled according to the view's padding mode.
+
+        Args:
+            index (tuple[int,...]): An index in the |tiled view|'s tile space.
+            latency (const int): A hint indicating how heavy DRAM traffic will be. It shall be an
+                integer between 1 (low) and 10 (high). By default, the compiler will infer the
+                latency.
+            allow_tma (const bool): If False, the load will not use TMA. By default, TMA is
+                allowed.
+
+        Returns:
+            Tile:
+
+        Examples:
+
+            >>> tv = array2d.tiled_view((64, 64))
+            >>> tile = tv.load((i, j))  # `tile` has shape (64, 64)
+
+            >>> tv = array1d.tiled_view(128)
+            >>> tile = tv.load(i)  # `tile` has shape (128,)
+        """
+        return _m_tiled_view_load(self, index, latency=latency, allow_tma=allow_tma)
+
+    def store(self, index: Shape, tile: Tile, *,
+              latency: Optional[int] = None,
+              allow_tma: Optional[bool] = None) -> None:
+        """Stores a `tile` into the |tiled view| at the given tile `index`.
+
+        The `tile`'s shape must be broadcastable to :attr:`tile_shape`.
+        If the `tile`'s dtype differs from the view's dtype, an implicit cast is performed.
+
+        Args:
+            index (tuple[int,...]): An index in the |tiled view|'s tile space.
+            tile (Tile): The tile to store.
+            latency (const int): A hint indicating how heavy DRAM traffic will be. It shall be an
+                integer between 1 (low) and 10 (high). By default, the compiler will infer the
+                latency.
+            allow_tma (const bool): If False, the store will not use TMA. By default, TMA is
+                allowed.
+
+        Examples:
+
+            >>> tv = array2d.tiled_view((64, 64))
+            >>> tv.store((i, j), tile)
+
+            >>> # Broadcasting
+            >>> tv = array1d.tiled_view(128)
+            >>> tv.store(i, ct.full((), 0.0, ct.float32))
+        """
+        _m_tiled_view_store(self, index, tile, latency=latency, allow_tma=allow_tma)
 
 
 ###############################################################################
@@ -2277,8 +2392,41 @@ def static_iter(iterable):
 
 
 @function
-def _m_array_slice(array, axis, start, stop) -> Array: ...  # Array.slice(axis, start, stop)
+def _m_array_slice(array, axis, start, stop): ...
+# Array.slice(axis, start, stop)
 
 
 @function
-def _m_tile_item(tile): ...  # Tile.item()
+def _m_tile_item(tile): ...
+# Tile.item()
+
+
+def _inherit_kwdefaults(source):
+    def decorator(f):
+        target = getattr(f, '__wrapped__', f)
+        source_fn = getattr(source, '__wrapped__', source)
+        if kwdefaults := source_fn.__kwdefaults__:
+            kwonly = {name for name, p in inspect.signature(target).parameters.items()
+                      if p.kind == inspect.Parameter.KEYWORD_ONLY}
+            assert kwdefaults.keys() <= kwonly
+            target.__kwdefaults__ = dict(kwdefaults)
+        return f
+    return decorator
+
+
+@_inherit_kwdefaults(Array.tiled_view)
+@function
+def _m_array_tiled_view(array, tile_shape, *, padding_mode): ...
+# Array.tiled_view(shape, padding_mode=padding_mode)
+
+
+@_inherit_kwdefaults(TiledView.load)
+@function
+def _m_tiled_view_load(tiled_view, index, *, latency, allow_tma): ...
+# TiledView.load(index, latency=latency, allow_tma=allow_tma)
+
+
+@_inherit_kwdefaults(TiledView.store)
+@function
+def _m_tiled_view_store(tiled_view, index, tile, *, latency, allow_tma): ...
+# TiledView.store(index, tile, latency=latency, allow_tma=allow_tma)

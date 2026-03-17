@@ -339,3 +339,7 @@ def broadcast_shapes2(s1: Sequence[int], s2: Sequence[int]) -> Tuple[int, ...]:
 
 def is_shape_broadcastable_to(src: Sequence[int], dst: Sequence[int]) -> bool:
     return len(src) <= len(dst) and all(x in (y, 1) for x, y in zip(reversed(src), reversed(dst)))
+
+
+def get_default_order(rank: int) -> tuple[int, ...]:
+    return tuple(range(rank))
