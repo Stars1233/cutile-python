@@ -280,17 +280,15 @@ def test_matmul_fp8(tile_size, dtype):
     scale = torch.tensor([1.0], dtype=torch.float32, device="cuda")
     try:
         ref = torch._scaled_mm(A, B.T, scale, scale,
-                               out_dtype=torch.float16, use_fast_accum=True).to(dtype)
+                               out_dtype=torch.float16, use_fast_accum=True)
     except (RuntimeError, ValueError) as e:
         assert 'Multiplication of two Float8_e5m2 matrices is not supported' in str(e)
         ref = None
     ct.launch(torch.cuda.current_stream(), (1,), matmul_kernel,
               (A, B.T, C, m, n, k))
     if ref is not None:
-        atol, rtol = get_tolerance(A.dtype)
-        assert_close(C.to(torch.float16),
-                     ref.to(torch.float16),
-                     atol=atol, rtol=rtol)
+        atol, rtol = 0.1, 0.1
+        assert_close(C.to(torch.float16), ref, atol=atol, rtol=rtol)
 
 
 @pytest.mark.parametrize("tile_size", [(16, 16, 16)])
