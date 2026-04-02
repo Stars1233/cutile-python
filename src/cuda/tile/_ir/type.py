@@ -228,6 +228,8 @@ class StringFormat:
 class FormattedStringTy(Type):
     format: "StringFormat"
     value_types: tuple
+    has_single_quote: bool = False
+    has_double_quote: bool = False
 
     def is_aggregate(self) -> bool:
         return True

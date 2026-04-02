@@ -138,6 +138,68 @@ def kernel_print_aliases(x, TILE: ct.Constant[int]):
     p_printf("printf%%[%d]:%d\n", bid, tx)
 
 
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_print_tuple(x, TILE: ct.Constant[int]):
+    ct.print(x.shape)
+    print(x.shape)
+    ct.print(f"shape = {x.shape}")
+    ct.print("shape:", x.shape)
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_print_nested_tuple(x, TILE: ct.Constant[int]):
+    ct.print(f"nested tuple: {((x.shape, x.shape), ct.bid(0))}")
+    ct.print(((x.shape, x.shape), ct.bid(0)))
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_print_tuple_escaped_str(x, TILE: ct.Constant[int]):
+    bid = ct.bid(0)
+    ct.print(f"tuple w/ escaped str: {((x.shape, '%d'), '%%d')}")
+    ct.print(("foo", "'''foo'''", "\"foo'"))
+    ct.print((f"foo{bid}", f"'''foo{bid}'''", f"\"foo{bid}\'"))
+    single = "'"
+    double = '"'
+    both = '\'"'
+    ct.print((f'{single}', f"{double}", f"{both}"))
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_print_tuple_fstring(x, TILE: ct.Constant[int]):
+    bid = ct.bid(0)
+    msg = f"bid={bid}"
+    ct.print((msg, bid))
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_print_empty_tuple(x, TILE: ct.Constant[int]):
+    ct.print(f"empty tuple: {()}")
+    ct.print(())
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_print_single_tuple(x, TILE: ct.Constant[int]):
+    bid = ct.bid(0)
+    ct.print(f"single tuple: {(bid,)}")
+    ct.print((bid,))
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_print_tuple_w_tile(x, TILE: ct.Constant[int]):
+    bid = ct.bid(0)
+    tx = ct.load(x, index=(bid,), shape=(TILE,))
+    ct.print(f"tuple w/ tile: {(tx,)}")
+    ct.print((tx,))
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_print_tuple_tile_shape(x, TILE: ct.Constant[int]):
+    bid = ct.bid(0)
+    tx = ct.load(x, index=(bid,), shape=(TILE,))
+    ct.print(f"Tile shape: {tx.shape}")
+    ct.print(tx.shape)
+
+
 _KERNELS_MAP_ = {
     "kernel_printf_float": kernel_printf_float,
     "kernel_printf_int": kernel_printf_int,
@@ -154,6 +216,14 @@ _KERNELS_MAP_ = {
     "kernel_builtin_print_float": kernel_builtin_print_float,
     "kernel_fstring_nested": kernel_fstring_nested,
     "kernel_print_aliases": kernel_print_aliases,
+    "kernel_print_tuple": kernel_print_tuple,
+    "kernel_print_nested_tuple": kernel_print_nested_tuple,
+    "kernel_print_empty_tuple": kernel_print_empty_tuple,
+    "kernel_print_single_tuple": kernel_print_single_tuple,
+    "kernel_print_tuple_escaped_str": kernel_print_tuple_escaped_str,
+    "kernel_print_tuple_w_tile": kernel_print_tuple_w_tile,
+    "kernel_print_tuple_fstring": kernel_print_tuple_fstring,
+    "kernel_print_tuple_tile_shape": kernel_print_tuple_tile_shape,
 }
 
 
@@ -347,6 +417,99 @@ def test_print_aliases(shape, tile):
         assert f"ct%:[{formatted_x}]" in actual_outs
         assert f"builtin%:[{formatted_x}]" in actual_outs
         assert f"printf%[{i}]:[{formatted_x}]" in actual_outs
+
+
+def test_ct_print_tuple():
+    proc = _run_kernel_proc("kernel_print_tuple", (2, 4), "int32", 2)
+    print(proc.stderr.decode(), file=sys.stderr)
+    assert proc.returncode == 0
+    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    assert actual_outs[0] == "(2, 4)"          # ct.print(x.shape)
+    assert actual_outs[1] == "(2, 4)"          # print(x.shape)
+    assert actual_outs[2] == "shape = (2, 4)"  # ct.print(f"shape = {x.shape}")
+    assert actual_outs[3] == "shape: (2, 4)"   # ct.print("shape:", x.shape)
+
+
+def test_ct_print_nested_tuple():
+    proc = _run_kernel_proc("kernel_print_nested_tuple", (2, 4), "int32", 2)
+    print(proc.stderr.decode(), file=sys.stderr)
+    assert proc.returncode == 0
+    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    assert actual_outs[0] == "nested tuple: (((2, 4), (2, 4)), 0)"
+    assert actual_outs[1] == "(((2, 4), (2, 4)), 0)"
+
+
+def test_ct_print_tuple_with_escaped_str():
+    proc = _run_kernel_proc("kernel_print_tuple_escaped_str", (2, 4), "int32", 2)
+    print(proc.stderr.decode(), file=sys.stderr)
+    assert proc.returncode == 0
+    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    assert actual_outs[0] == "tuple w/ escaped str: (((2, 4), '%d'), '%%d')"
+    assert actual_outs[1] == "('foo', \"'''foo'''\", '\"foo\\\'')"
+    assert actual_outs[2] == "('foo0', \"'''foo0'''\", '\"foo0\\\'')"
+    assert actual_outs[3] == "(\"'\", '\"', '\\'\"')"
+
+
+def test_ct_print_empty_tuple():
+    proc = _run_kernel_proc("kernel_print_empty_tuple", (8,), "int32", 8)
+    print(proc.stderr.decode(), file=sys.stderr)
+    assert proc.returncode == 0
+    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    assert actual_outs[0] == "empty tuple: ()"
+    assert actual_outs[1] == "()"
+
+
+def test_ct_print_single_tuple():
+    proc = _run_kernel_proc("kernel_print_single_tuple", (8,), "int32", 8)
+    print(proc.stderr.decode(), file=sys.stderr)
+    assert proc.returncode == 0
+    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    assert actual_outs[0] == "single tuple: (0,)"
+    assert actual_outs[1] == "(0,)"
+
+
+def test_ct_print_tuple_w_tile():
+    shape = (8,)
+    tile = 8
+    proc = _run_kernel_proc("kernel_print_tuple_w_tile", shape, "int32", tile)
+    print(proc.stderr.decode(), file=sys.stderr)
+    assert proc.returncode == 0
+
+    x = np.arange(np.prod(shape)).reshape(shape).astype(np.int32)
+    formatted_x = ', '.join([f"{elem}" for elem in x[:tile]])
+
+    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    assert actual_outs[0] == f"tuple w/ tile: ([{formatted_x}],)"
+    assert actual_outs[1] == f"([{formatted_x}],)"
+
+
+def test_ct_print_tuple_tile_shape():
+    proc = _run_kernel_proc("kernel_print_tuple_tile_shape", (8,), "int32", 8)
+    print(proc.stderr.decode(), file=sys.stderr)
+    assert proc.returncode == 0
+    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    assert actual_outs[0] == "Tile shape: (8,)"
+    assert actual_outs[1] == "(8,)"
+
+
+def test_ct_print_tuple_fstring():
+    proc = _run_kernel_proc("kernel_print_tuple_fstring", (8,), "int32", 8)
+    print(proc.stderr.decode(), file=sys.stderr)
+    assert proc.returncode == 0
+    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    assert actual_outs[0] == "('bid=0', 0)"
+
+
+def test_ct_print_tuple_format_spec_error():
+    from cuda.tile._exception import TileTypeError
+
+    @ct.kernel(opt_level=_OPT_LEVEL)
+    def bad_kernel(x, TILE: ct.Constant[int]):
+        ct.print(f"{x.shape:10}")
+
+    x = torch.zeros(8, device='cuda', dtype=torch.int32)
+    with pytest.raises(TileTypeError, match="cannot apply format spec to a tuple value"):
+        ct.launch(torch.cuda.current_stream(), (1, 1, 1), bad_kernel, (x, 8))
 
 
 if __name__ == "__main__":

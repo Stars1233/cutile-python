@@ -646,6 +646,8 @@ def loosely_typed_const(value: Any,
                         loose_ty: Optional[Type] = None,
                         name: str | None = None) -> Var:
     if ty is None:
+        if isinstance(value, tuple):
+            return build_tuple(tuple(loosely_typed_const(item) for item in value))
         ty = typeof_pyval(value)
     ret = strictly_typed_const(value, ty, name=name)
     if loose_ty is None:
@@ -1333,32 +1335,42 @@ def build_tuple(items: tuple[Var, ...]) -> Var:
 def build_formatted_string_impl(format: StringFormat, values: tuple[Var, ...]) -> Var:
     new_pieces = []
     new_values = []
-    for piece in format.pieces:
-        if isinstance(piece, str):
-            new_pieces.append(piece)
-        else:
-            val_var = values[piece.value_idx]
-            val_ty = val_var.get_type()
-            if isinstance(val_ty, FormattedStringTy):
-                if piece.format_spec is not None:
-                    raise TileTypeError(
-                        "f-string: cannot apply format spec to a formatted string value",
-                        val_var.loc)
-                inner_val = val_var.get_aggregate()
-                assert isinstance(inner_val, FormattedStringValue)
-                offset = len(new_values)
-                for inner_piece in val_ty.format.pieces:
-                    if isinstance(inner_piece, str):
-                        new_pieces.append(inner_piece)
-                    else:
-                        new_pieces.append(FormattedPiece(
-                            offset + inner_piece.value_idx, inner_piece.format_spec))
-                new_values.extend(inner_val.values)
+    has_single_quote = False
+    has_double_quote = False
+
+    def _update_has_quote_flags(s: str):
+        nonlocal has_single_quote, has_double_quote
+        if "'" in s:
+            has_single_quote = True
+        if '"' in s:
+            has_double_quote = True
+
+    def _build_formatted_string(fmt: StringFormat, vals: tuple[Var, ...]):
+        for piece in fmt.pieces:
+            if isinstance(piece, str):
+                new_pieces.append(piece)
+                _update_has_quote_flags(piece)
             else:
-                new_pieces.append(FormattedPiece(len(new_values), piece.format_spec))
-                new_values.append(val_var)
+                val_var = vals[piece.value_idx]
+                val_ty = val_var.get_type()
+                if isinstance(val_ty, FormattedStringTy):
+                    if piece.format_spec is not None:
+                        raise TileTypeError(
+                            "f-string: cannot apply format spec to a formatted string value",
+                            val_var.loc)
+                    inner_val = val_var.get_aggregate()
+                    assert isinstance(inner_val, FormattedStringValue)
+                    _build_formatted_string(val_ty.format, inner_val.values)
+                else:
+                    new_pieces.append(FormattedPiece(len(new_values), piece.format_spec))
+                    new_values.append(val_var)
+                    if isinstance(val_ty, StringTy):
+                        _update_has_quote_flags(val_ty.value)
+
+    _build_formatted_string(format, values)
     new_fmt = StringFormat(tuple(new_pieces))
-    ty = FormattedStringTy(new_fmt, tuple(v.get_type() for v in new_values))
+    ty = FormattedStringTy(new_fmt, tuple(v.get_type() for v in new_values),
+                           has_single_quote, has_double_quote)
     return make_aggregate(FormattedStringValue(new_fmt, tuple(new_values)), ty)
 
 
@@ -3770,43 +3782,68 @@ def printf_impl(format: Var, args: Tuple[Var, ...]) -> None:
 @impl(ct.print)
 @impl(builtins.print)
 def print_impl(args: Tuple[Var, ...], sep: Var, end: Var) -> None:
-    sep_str = PrintfValidator.escape_str(require_constant_str(sep))
-    end_str = PrintfValidator.escape_str(require_constant_str(end))
-
     format_parts = []
     leaf_vars = []
-    first = True
 
-    for arg_var in args:
-        if not first:
-            format_parts.append(sep_str)
-        else:
-            first = False
+    def _get_string_quotes(has_single_quote: bool, has_double_quote: bool) -> str:
+        return "'" if not has_single_quote or has_double_quote else '"'
 
-        arg_ty = arg_var.get_type()
-        if isinstance(arg_ty, FormattedStringTy):
-            fmt_val = arg_var.get_aggregate()
-            assert isinstance(fmt_val, FormattedStringValue)
-            for piece in arg_ty.format.pieces:
+    def _expand_var(var: Var | str, format_spec: str | None = None,
+                    is_tuple_element: bool = False, escape_in_str: str | None = None):
+        if isinstance(var, str) or isinstance(ty := var.get_type(), StringTy):
+            str_val = var if isinstance(var, str) else ty.value
+            escaped = PrintfValidator.escape_str(str_val)
+            if is_tuple_element:
+                string_quote = _get_string_quotes("'" in escaped, '"' in escaped)
+                escaped = escaped.replace(string_quote, f"\\{string_quote}")
+                format_parts.append(f"{string_quote}{escaped}{string_quote}")
+            else:
+                if escape_in_str is not None:
+                    escaped = escaped.replace(escape_in_str, f"\\{escape_in_str}")
+                format_parts.append(escaped)
+        elif isinstance(ty, FormattedStringTy):
+            if is_tuple_element:
+                string_quote = _get_string_quotes(ty.has_single_quote, ty.has_double_quote)
+                format_parts.append(string_quote)
+            else:
+                string_quote = None
+            val = var.get_aggregate()
+            for piece in ty.format.pieces:
                 if isinstance(piece, str):
-                    format_parts.append(PrintfValidator.escape_str(piece))
+                    _expand_var(piece, escape_in_str=string_quote)
                 else:
-                    value_ty = arg_ty.value_types[piece.value_idx]
-                    dtype = get_dtype(value_ty)
-                    if piece.format_spec is not None:
-                        format_parts.append(PrintfValidator.apply_python_spec(
-                            piece.format_spec, dtype))
-                    else:
-                        format_parts.append(PrintfValidator.infer_format(dtype))
-                    leaf_vars.append(fmt_val.values[piece.value_idx])
-        elif isinstance(arg_ty, StringTy):
-            format_parts.append(PrintfValidator.escape_str(arg_ty.value))
-        else:
-            tile_ty = require_tile_type(arg_var)
-            format_parts.append(PrintfValidator.infer_format(get_dtype(tile_ty)))
-            leaf_vars.append(arg_var)
+                    _expand_var(val.values[piece.value_idx], piece.format_spec,
+                                escape_in_str=string_quote)
+            if is_tuple_element:
+                format_parts.append(string_quote)
+        elif isinstance(ty, TupleTy):
+            if format_spec is not None:
+                raise TileTypeError(
+                    "f-string: cannot apply format spec to a tuple value",
+                    var.loc)
 
-    format_parts.append(end_str)
+            agg = var.get_aggregate()
+            format_parts.append('(')
+            for i, item in enumerate(agg.items):
+                _expand_var(item, is_tuple_element=True)
+                if i < len(agg.items) - 1:
+                    format_parts.append(', ')
+            format_parts.append(',)' if len(agg.items) == 1 else ')')
+        else:
+            tile_ty = require_tile_type(var)
+            if format_spec is not None:
+                format_parts.append(PrintfValidator.apply_python_spec(
+                    format_spec, get_dtype(tile_ty)))
+            else:
+                format_parts.append(PrintfValidator.infer_format(get_dtype(tile_ty)))
+            leaf_vars.append(var)
+
+    for i, arg_var in enumerate(args):
+        if i > 0:
+            format_parts.append(PrintfValidator.escape_str(require_constant_str(sep)))
+        _expand_var(arg_var)
+    format_parts.append(PrintfValidator.escape_str(require_constant_str(end)))
+
     final_format = ''.join(format_parts)
     add_operation(TilePrintf, (), format=final_format, args=tuple(leaf_vars))
 
