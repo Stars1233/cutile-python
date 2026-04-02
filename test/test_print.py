@@ -15,6 +15,11 @@ import cuda.tile as ct
 from cuda.tile._bytecode.version import BytecodeVersion
 from cuda.tile._compiler_options import CompilerOptions
 from conftest import get_tileiras_version
+from cuda.tile._datatype import (bool_,
+                                 float16, float32, float64,
+                                 int8, int16, int32, int64,
+                                 uint8, uint16, uint32, uint64,
+                                 NumericDTypeCategories, is_float)
 
 # opt_level=0 required for correct print ordering in tileiras < 13.2
 _DEFAULT_OPT_LEVEL = CompilerOptions.__dataclass_fields__['opt_level'].default
@@ -33,6 +38,34 @@ def kernel_printf_int(x, TILE: ct.Constant[int]):
     bid = ct.bid(0)
     tx = ct.load(x, index=(bid,), shape=(TILE,))
     ct.printf("tile[%d]:%d\n", bid, tx)
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_printf_int64(x, TILE: ct.Constant[int]):
+    bid = ct.bid(0)
+    tx = ct.load(x, index=(bid,), shape=(TILE,))
+    ct.printf("tile[%d]:%lld\n", bid, tx)
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_printf_float64(x, TILE: ct.Constant[int]):
+    bid = ct.bid(0)
+    tx = ct.load(x, index=(bid,), shape=(TILE,))
+    ct.printf("tile[%d]:%.5lf\n", bid, tx)
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_printf_uint(x, TILE: ct.Constant[int]):
+    bid = ct.bid(0)
+    tx = ct.load(x, index=(bid,), shape=(TILE,))
+    ct.printf("tile[%d]:%u\n", bid, tx)
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_printf_uint64(x, TILE: ct.Constant[int]):
+    bid = ct.bid(0)
+    tx = ct.load(x, index=(bid,), shape=(TILE,))
+    ct.printf("tile[%d]:%llu\n", bid, tx)
 
 
 @ct.kernel(opt_level=_OPT_LEVEL)
@@ -108,6 +141,10 @@ def kernel_print_aliases(x, TILE: ct.Constant[int]):
 _KERNELS_MAP_ = {
     "kernel_printf_float": kernel_printf_float,
     "kernel_printf_int": kernel_printf_int,
+    "kernel_printf_int64": kernel_printf_int64,
+    "kernel_printf_float64": kernel_printf_float64,
+    "kernel_printf_uint": kernel_printf_uint,
+    "kernel_printf_uint64": kernel_printf_uint64,
     "kernel_print_int": kernel_print_int,
     "kernel_print_float": kernel_print_float,
     "kernel_print_sep": kernel_print_sep,
@@ -122,7 +159,7 @@ _KERNELS_MAP_ = {
 
 def _run_kernel_subprocess(kernel_name: str, shape: str, dtype_str: str, tile: str):
     shape = ast.literal_eval(shape)
-    dtype = getattr(torch, dtype_str)
+    dtype = getattr(torch, 'bool' if dtype_str == 'bool_' else dtype_str)
     tile = int(tile)
     x = torch.arange(torch.prod(torch.tensor(shape)), device='cuda').reshape(shape).to(dtype)
     grid = (ceil(shape[0] / tile), 1, 1)
@@ -139,35 +176,70 @@ def _run_kernel_proc(kernel_name, shape, dtype_str, tile):
     )
 
 
-@pytest.mark.parametrize("shape", [(8,), (16,)])
-@pytest.mark.parametrize("tile", [8])
-@pytest.mark.parametrize("dtype_str", ["float32", "float16", "int32"])
-@pytest.mark.parametrize("float_kernel,int_kernel", [
-    ("kernel_printf_float", "kernel_printf_int"),
-    ("kernel_print_float", "kernel_print_int"),
-    ("kernel_builtin_print_float", "kernel_builtin_print_int"),
-], ids=["ct_printf", "ct_print", "builtin_print"])
-def test_print_1d(shape, tile, dtype_str, float_kernel, int_kernel):
-    kernel_name = float_kernel if "float" in dtype_str else int_kernel
-    proc = _run_kernel_proc(kernel_name, shape, dtype_str, tile)
+def _test_print_1d(shape, tile, kernel_name, dtype):
+    proc = _run_kernel_proc(kernel_name, shape, dtype.__name__, tile)
     print(proc.stderr.decode(), file=sys.stderr)
     assert proc.returncode == 0
 
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines()
-                   if line]
-    dtype = getattr(np, dtype_str)
-    x = np.arange(np.prod(shape)).reshape(shape).astype(dtype)
+    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    x = np.arange(np.prod(shape)).reshape(shape).astype(dtype.__name__)
     num_tiles = math.ceil(shape[0] / tile)
     for i in range(num_tiles):
-        start_idx, end_idx = tile*i, tile*(i+1)
-        if "float" in dtype_str:
+        start_idx, end_idx = tile * i, tile * (i + 1)
+        if is_float(dtype):
             formatted_x = ', '.join([f"{elem:.5f}" for elem in x[start_idx:end_idx]])
-        elif "int" in dtype_str:
-            formatted_x = ', '.join([f"{elem}" for elem in x[start_idx:end_idx]])
         else:
-            raise ValueError(f"Unsupported dtype: {dtype_str}")
+            formatted_x = ', '.join([f"{int(elem)}" for elem in x[start_idx:end_idx]])
         expected_out = f"tile[{i}]:[{formatted_x}]"
         assert expected_out in actual_outs
+
+
+@pytest.mark.parametrize("shape", [(8,), (16,)])
+@pytest.mark.parametrize("tile", [8])
+@pytest.mark.parametrize("kernel_name,dtype", [
+    ("kernel_printf_float",        float16),
+    ("kernel_printf_float",        float32),
+    ("kernel_printf_float64",      float64),
+    ("kernel_printf_int",          int8),
+    ("kernel_printf_int",          int16),
+    ("kernel_printf_int",          int32),
+    ("kernel_printf_int64",        int64),
+    ("kernel_printf_uint",         uint8),
+    ("kernel_printf_uint",         uint16),
+    ("kernel_printf_uint",         uint32),
+    ("kernel_printf_uint64",       uint64),
+])
+def test_printf(shape, tile, kernel_name, dtype):
+    _test_print_1d(shape, tile, kernel_name, dtype)
+
+
+@pytest.mark.parametrize("shape", [(8,), (16,)])
+@pytest.mark.parametrize("tile", [8])
+@pytest.mark.parametrize("dtype", NumericDTypeCategories.Integral)
+@pytest.mark.parametrize("kernel_name", ["kernel_print_int", "kernel_builtin_print_int"],
+                         ids=["ct_print", "builtin_print"])
+def test_int_with_ct_print_and_builtin_print(shape, tile, kernel_name, dtype):
+    _test_print_1d(shape, tile, kernel_name, dtype)
+
+
+@pytest.mark.parametrize("shape", [(8,), (16,)])
+@pytest.mark.parametrize("tile", [8])
+@pytest.mark.parametrize("dtype", [float16, float32, float64])
+@pytest.mark.parametrize("kernel_name", ["kernel_print_float", "kernel_builtin_print_float"],
+                         ids=["ct_print", "builtin_print"])
+def test_float_with_ct_print_and_builtin_print(shape, tile, kernel_name, dtype):
+    _test_print_1d(shape, tile, kernel_name, dtype)
+
+
+@pytest.mark.parametrize("shape", [(8,), (16,)])
+@pytest.mark.parametrize("tile", [8])
+@pytest.mark.parametrize("kernel_name", [
+    "kernel_printf_int",
+    "kernel_print_int",
+    "kernel_builtin_print_int",
+], ids=["ct_printf", "ct_print", "builtin_print"])
+def test_bool(shape, tile, kernel_name):
+    _test_print_1d(shape, tile, kernel_name, bool_)
 
 
 @pytest.mark.parametrize("shape", [(8,),])

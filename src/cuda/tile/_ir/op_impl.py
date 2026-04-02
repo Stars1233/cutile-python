@@ -435,10 +435,19 @@ class PrintfValidator:
 
     @classmethod
     def infer_format(cls, dtype: DType) -> str:
-        if is_boolean(dtype) or is_integral(dtype):
+        if is_boolean(dtype):
             return '%d'
+        elif is_integral(dtype):
+            result = '%'
+            if dtype.bitwidth == 64:
+                result += 'll'
+            if is_signed(dtype):
+                result += 'd'
+            else:
+                result += 'u'
+            return result
         elif is_float(dtype):
-            return '%f'
+            return '%lf' if dtype.bitwidth == 64 else '%f'
         else:
             raise TileTypeError(f"print(): cannot infer format for dtype {dtype}")
 
