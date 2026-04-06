@@ -29,4 +29,4 @@ This includes:
 - Linking tile and SIMT kernels into the same binary.
 - Passing the same kinds of arrays to both tile and SIMT kernels.
 
-Inter-kernel interoperability shall be supported.
+Intra-kernel interoperability will be supported in the future.

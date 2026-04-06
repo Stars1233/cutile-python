@@ -10,61 +10,52 @@ Abstract Machine
 
 .. _grid:
 
-A *tile kernel* is executed by logical thread |blocks| that are organized in
-a 1D, 2D, or 3D *grid*.
+A *tile kernel* is executed by logical thread |blocks| organized in a 1D,
+2D, or 3D *grid*.
 
 .. _block:
 
-Each *block* is executed by a subset of a GPU, which is decided by the
-implementation, not the programmer.
-Each |block| executes the body of the |kernel|.
-Scalar operations are executed serially by a single thread of the |block|,
-and array operations are collectively executed in parallel by all threads of
-the |block|.
+Each *block* runs on a subset of a GPU defined by the underlying compiler implementation.
+Every |block| executes the body of the |kernel|:
+scalar operations run serially on a single thread, while array operations
+run collectively in parallel across all threads of the |block|.
 
-Tile programs explicitly describe |block|-level parallelism, but not
-thread-level parallelism.
-Threads cannot be explicitly identified or manipulated in tile programs.
+Tile programs express |block|-level parallelism only with no exposure to
+individual threads within the block.
 
-Explicit synchronization or communication within a |block| is not
-permitted, but it is allowed between different |blocks|.
+Explicit synchronization or communication within a |block| is not permitted,
+but is allowed between different |blocks|.
 
-It is important to not confuse |blocks| (units of execution) with
-|tiles| (units of data).
-A block may work with multiple different |tiles| with
-differing shapes originating from differing |global arrays|.
+A |block| defines the unit of execution and a |tile| defines unit of data,
+which shall not be confused. A single block may operate on multiple |tiles|
+with different shapes originating from different |global arrays|.
 
-.. Comparison with SIMT
-.. --------------------
-.. 
-.. TODO
 
 .. _execution-execution-spaces:
 
 Execution Spaces
 ----------------
 
-cuTile code is executed on one or more *targets*, which are distinct execution environments that
-are distinguished by different hardware resources or programming models.
-
-A function is *usable* if it can be called.
-A type or object is *usable* if its attributes are accessible (can be read and written) and its
-methods are callable.
+cuTile code runs on one or more *targets*. A target is an execution environment
+defined by its hardware resources and programming model.
 
 .. _host code:
 .. _SIMT code:
 .. _tile code:
 
-Some functions, types, and objects are only usable on certain *targets*.
-The set of *targets* that such a construct is usable on is called its *execution space*.
+The set of targets where a construct can be used is called its *execution space*.
+cuTile defines three execution spaces:
 
-- *Host code* is the execution space that includes all CPU targets.
-- *SIMT code* is the execution space that includes all CUDA SIMT targets.
-  Note: This has historically been called device code, but we avoid this term to prevent ambiguity.
-- *Tile code* is the execution space that includes all CUDA tile targets.
+- *Host code* --- all CPU targets.
+- *SIMT code* --- all CUDA SIMT targets.
+  (Historically called *device code*; we avoid that term to prevent ambiguity.)
+- *Tile code* --- all CUDA tile targets.
 
-Functions can have decorators that explicitly specify their execution space.
-These are called *annotated functions*.
+Some constructs span multiple execution spaces. For example,
+:py:func:`~cuda.tile.cdiv` is usable in both host code and tile code.
+
+A function whose decorator explicitly specifies its execution space is called
+an *annotated function*.
 
 .. _execution-tile-functions:
 
@@ -87,50 +78,49 @@ Python Subset
 -------------
 
 |Tile code| supports a subset of the Python language.
-Within |tile code|, there is no Python runtime.
+There is no Python runtime within |tile code|.
 
-Only Python features explicitly enumerated in this document are supported.
-Many features, such as lambdas, exceptions, and coroutines are not supported today.
+Only Python features explicitly listed in this document are supported.
+Many features --- such as exceptions, and coroutines --- are not
+supported today.
 
 Object Model & Lifetimes
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 All objects created within |tile code| are immutable.
-Any operation that conceptually modifies an object or its attributes creates and returns a new
-object.
-Attributes cannot be dynamically added to objects.
+Any operation that would conceptually modify an object instead creates and returns a new object.
+Attributes cannot be added to objects dynamically.
 
-The only mutable objects that can be used in |tile code| are |arrays|, which must be passed in as
-|kernel| parameters.
+Global |arrays| are views that can read and write global device memory, but the views themselves
+are also immutable.
 
 The caller of a |kernel| must ensure that:
 
 - No |arrays| passed to the |kernel| alias one another.
-- All passed |arrays| remain valid until the |kernel| has finished execution.
+- All |arrays| remain valid until the |kernel| completes execution.
 
 Control Flow
 ~~~~~~~~~~~~
 
-Python control flow statements (``if``, ``for``, ``while``, etc.) shall be usable in |tile code|.
-They can be arbitrarily nested.
+Python control flow statements (``if``, ``for``, ``while``, etc.) are usable in |tile code|
+and can be arbitrarily nested.
 
 Current limitations
 ^^^^^^^^^^^^^^^^^^^
 
-The Python subset used in |tile code| imposes additional restrictions on control flow:
+|Tile code| imposes additional restrictions on control flow:
 
 * ``step`` must be strictly positive.
 
-  Negative-step ranges such as
-  ``range(10, 0, -1)`` are not supported today. Passing a negative step
-  indirectly via a variable may lead to undefined behavior.
+  Negative-step ranges such as ``range(10, 0, -1)`` are not supported today.
+  Passing a negative step indirectly via a variable may cause undefined
+  behavior.
 
 Tile Parallelism
 ----------------
 
-When a |block| executes a function that takes |tiles| as parameters, it may parallelize the
-evaluation of the function across the |block|'s execution resources.
-Unless otherwise specified, the execution shall complete before the function returns.
+When a |block| executes a function that takes |tiles| as parameters, it may
+parallelize evaluation across the |block|'s execution resources.
 
 Constantness
 ------------
@@ -140,26 +130,28 @@ Constantness
 Constant Expressions & Objects
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Some facilities require certain parameters to be an object that is known statically at compilation time.
-*Constant expressions* produce *constant objects* suitable for such parameters. Constant expressions are:
+Some facilities require parameters whose values are known at compile time.
+*Constant expressions* produce *constant objects* suitable for such parameters.
+Constant expressions are:
 
 - A literal object.
 - Integer arithmetic expressions where all the operands are literal objects.
 - A local object or parameter that is assigned from a literal object or constant expression.
 - A global object that is defined at the time of compilation or launch.
 
-By default, numeric constants are *loosely typed*: until used in a context that requires
-a type of a specific width, integer constants have infinite precision, and floating-point
-constants are stored in the IEEE 754 double precision format.
+By default, numeric constants are *loosely typed*: integer constants have
+infinite precision and floating-point constants are stored in IEEE 754 double
+precision, until used in a context that requires a specific-width type.
 
-A *strictly typed* constant can be created by calling a dtype object as a constructor,
-e.g. ``ct.int16(5)`` creates a strictly typed ``int16`` constant. When a strictly typed constant
-is combined with a loosely typed constant, the result is a strictly typed constant.
-For example ``ct.int16(5) + 2`` will create a strictly typed ``int16`` constant 7.
+A *strictly typed* constant is created by calling a dtype constructor,
+e.g. ``ct.int16(5)``. Combining a strictly typed constant with a loosely typed
+constant yields a strictly typed constant:
+``ct.int16(5) + 2`` produces a strictly typed ``int16`` constant 7.
 
-Combining two strictly typed constants creates a new strictly typed constant. In this case,
-the regular |type promotion| rules apply.
-For example, ``ct.int16(5) + ct.int32(7)`` will create a strictly typed ``int32`` constant 12.
+Combining two strictly typed constants also produces a strictly typed constant,
+with the regular |type promotion| rules applied.
+For example, ``ct.int16(5) + ct.int32(7)`` produces a strictly typed ``int32``
+constant 12.
 
 
 .. _execution-constant-embedding:
@@ -167,11 +159,10 @@ For example, ``ct.int16(5) + ct.int32(7)`` will create a strictly typed ``int32`
 Constant Embedding
 ~~~~~~~~~~~~~~~~~~
 
-If a parameter to a |kernel| is *constant embedded*, then:
+If a |kernel| parameter is *constant embedded*, then:
 
-- All uses of the parameter shall act as if they were replaced by the literal value of the parameter.
-- There shall be a distinct machine representation of the |kernel| for each different value of the parameter that the |kernel| is invoked with. Note: The |kernel| shall be compiled once for each different value of the parameter, even if JIT caching is enabled.
-- The |machine representation| of the parameter shall be 0 bytes.
+- Every use of the parameter behaves as if replaced by its literal value.
+- A distinct |machine representation| of the |kernel| is generated for each unique value of the parameter. Note: The |kernel| is compiled once per unique value, even if JIT caching is enabled.
 
 Constant Type Hints
 ~~~~~~~~~~~~~~~~~~~
