@@ -10,6 +10,7 @@ import torch
 import numpy as np
 
 import cuda.tile as ct
+from cuda.tile._exception import TileTypeError
 
 
 class TestMemoryBehavior:
@@ -1091,3 +1092,209 @@ class TestArrayViewMLIR(MLIRTestBase):
     @override
     def test_mlir(self, kernel, check_directive):
         super().test_mlir(kernel, check_directive)
+
+
+LoadAcquireStoreReleaseCheckDirective = """\
+// CHECK: %[[TOKEN0:.*]] = make_token
+// CHECK: %[[VAL1:.*]], %[[X_TOKEN1:.*]] = load_view_tko acquire device {{.*}} token = %[[TOKEN0]]
+// CHECK: %[[TOKEN1:.*]] = join_tokens %[[TOKEN0]], %[[X_TOKEN1]]
+// CHECK: %[[TOKEN2:.*]] = join_tokens %[[TOKEN1]], %[[X_TOKEN1]]
+// CHECK: %[[TOKEN3:.*]] = store_view_tko release device {{.*}} token = %[[TOKEN2]]
+"""  # noqa: E501
+
+LoadRelaxedStoreRelaxedCheckDirective = """\
+// CHECK: %[[TOKEN0:.*]] = make_token
+// CHECK: %[[VAL1:.*]], %[[X_TOKEN1:.*]] = load_view_tko relaxed device {{.*}} token = %[[TOKEN0]]
+// CHECK: %[[TOKEN1:.*]] = join_tokens %[[TOKEN0]], %[[X_TOKEN1]]
+// CHECK: %[[TOKEN2:.*]] = store_view_tko relaxed device {{.*}} token = %[[TOKEN1]]
+"""  # noqa: E501
+
+LoadAcquireStoreWeakCheckDirective = """\
+// CHECK: %[[TOKEN0:.*]] = make_token
+// CHECK: %[[VAL1:.*]], %[[X_TOKEN1:.*]] = load_view_tko acquire device {{.*}} token = %[[TOKEN0]]
+// CHECK: store_view_tko weak
+"""  # noqa: E501
+
+LoadWeakStoreReleaseCheckDirective = """\
+// CHECK: %[[TOKEN0:.*]] = make_token
+// CHECK: %[[VAL1:.*]], %[[X_TOKEN1:.*]] = load_view_tko weak {{.*}} token = %[[TOKEN0]]
+// CHECK: store_view_tko release device
+"""  # noqa: E501
+
+LoadAcquireStoreReleaseSysCheckDirective = """\
+// CHECK: %[[TOKEN0:.*]] = make_token
+// CHECK: %[[VAL1:.*]], %[[X_TOKEN1:.*]] = load_view_tko acquire sys {{.*}} token = %[[TOKEN0]]
+// CHECK: %[[TOKEN1:.*]] = join_tokens %[[TOKEN0]], %[[X_TOKEN1]]
+// CHECK: %[[TOKEN2:.*]] = join_tokens %[[TOKEN1]], %[[X_TOKEN1]]
+// CHECK: %[[TOKEN3:.*]] = store_view_tko release sys {{.*}} token = %[[TOKEN2]]
+"""  # noqa: E501
+
+LoadStoreDefaultWeakCheckDirective = """\
+// CHECK: %[[TOKEN0:.*]] = make_token
+// CHECK: %[[VAL1:.*]], %[[X_TOKEN1:.*]] = load_view_tko weak {{.*}} token = %[[TOKEN0]]
+// CHECK: store_view_tko weak
+"""  # noqa: E501
+
+
+class TestLoadStoreMemoryOrderMLIR(MLIRTestBase):
+
+    def load_acquire_store_release(X, TILE: ct.Constant[int]):
+        tx = ct.load(X, index=(0,), shape=(TILE,),
+                     memory_order=ct.MemoryOrder.ACQUIRE,
+                     memory_scope=ct.MemoryScope.DEVICE)
+        ct.store(X, index=(0,), tile=tx,
+                 memory_order=ct.MemoryOrder.RELEASE,
+                 memory_scope=ct.MemoryScope.DEVICE)
+
+    def load_relaxed_store_relaxed(X, TILE: ct.Constant[int]):
+        tx = ct.load(X, index=(0,), shape=(TILE,),
+                     memory_order=ct.MemoryOrder.RELAXED,
+                     memory_scope=ct.MemoryScope.DEVICE)
+        ct.store(X, index=(0,), tile=tx,
+                 memory_order=ct.MemoryOrder.RELAXED,
+                 memory_scope=ct.MemoryScope.DEVICE)
+
+    def load_acquire_store_weak(X, TILE: ct.Constant[int]):
+        tx = ct.load(X, index=(0,), shape=(TILE,),
+                     memory_order=ct.MemoryOrder.ACQUIRE,
+                     memory_scope=ct.MemoryScope.DEVICE)
+        ct.store(X, index=(0,), tile=tx)
+
+    def load_weak_store_release(X, TILE: ct.Constant[int]):
+        tx = ct.load(X, index=(0,), shape=(TILE,))
+        ct.store(X, index=(0,), tile=tx,
+                 memory_order=ct.MemoryOrder.RELEASE,
+                 memory_scope=ct.MemoryScope.DEVICE)
+
+    def load_acquire_store_release_sys(X, TILE: ct.Constant[int]):
+        tx = ct.load(X, index=(0,), shape=(TILE,),
+                     memory_order=ct.MemoryOrder.ACQUIRE,
+                     memory_scope=ct.MemoryScope.SYS)
+        ct.store(X, index=(0,), tile=tx,
+                 memory_order=ct.MemoryOrder.RELEASE,
+                 memory_scope=ct.MemoryScope.SYS)
+
+    def load_store_default_weak(X, TILE: ct.Constant[int]):
+        tx = ct.load(X, index=(0,), shape=(TILE,))
+        ct.store(X, index=(0,), tile=tx)
+
+    @override
+    def compile_kernel(self, kernel):
+        tile_size = 1024
+        X = torch.arange(tile_size, device="cuda", dtype=torch.int32)
+        return get_bytecode(kernel, (X, tile_size))
+
+    @pytest.mark.parametrize("kernel, check_directive", make_cases(
+        (load_acquire_store_release, LoadAcquireStoreReleaseCheckDirective),
+        (load_relaxed_store_relaxed, LoadRelaxedStoreRelaxedCheckDirective),
+        (load_acquire_store_weak, LoadAcquireStoreWeakCheckDirective),
+        (load_weak_store_release, LoadWeakStoreReleaseCheckDirective),
+        (load_acquire_store_release_sys, LoadAcquireStoreReleaseSysCheckDirective),
+        (load_store_default_weak, LoadStoreDefaultWeakCheckDirective),
+    ))
+    @override
+    def test_mlir(self, kernel, check_directive):
+        super().test_mlir(kernel, check_directive)
+
+
+AcquireLoadCheckDirective = """\
+// CHECK: %[[TOKEN0:.*]] = make_token
+// CHECK: %[[TX:.*]], %[[X_TOKEN1:.*]] = load_view_tko weak {{.*}} token = %[[TOKEN0]]
+// CHECK: %[[X_TOKEN2:.*]] = join_tokens %[[TOKEN0]], %[[X_TOKEN1]]
+// CHECK: %[[TY:.*]], %[[Y_TOKEN1:.*]] = load_view_tko acquire device {{.*}} token = %[[TOKEN0]]
+// CHECK: %[[Y_TOKEN2:.*]] = join_tokens %[[TOKEN0]], %[[Y_TOKEN1]]
+// CHECK: %[[X_TOKEN3:.*]] = join_tokens %[[X_TOKEN2]], %[[Y_TOKEN1]]
+// CHECK: %[[X_TOKEN4:.*]] = store_view_tko weak {{.*}} token = %[[X_TOKEN3]]
+"""  # noqa: E501
+
+ReleaseStoreCheckDirective = """\
+// CHECK: %[[TOKEN0:.*]] = make_token
+// CHECK: %[[TX:.*]], %[[X_TOKEN1:.*]] = load_view_tko weak {{.*}} token = %[[TOKEN0]]
+// CHECK: %[[X_TOKEN2:.*]] = join_tokens %[[TOKEN0]], %[[X_TOKEN1]]
+// CHECK: %[[TY:.*]], %[[Y_TOKEN1:.*]] = load_view_tko weak {{.*}} token = %[[TOKEN0]]
+// CHECK: %[[Y_TOKEN2:.*]] = join_tokens %[[TOKEN0]], %[[Y_TOKEN1]]
+// CHECK: %[[X_TOKEN3:.*]] = store_view_tko weak {{.*}} token = %[[X_TOKEN2]]
+// CHECK: %[[Y_TOKEN3:.*]] = join_tokens %[[Y_TOKEN2]], %[[X_TOKEN3]]
+// CHECK: %[[Y_TOKEN4:.*]] = store_view_tko release device {{.*}} token = %[[Y_TOKEN3]]
+"""  # noqa: E501
+
+WeakLoadStoreCheckDirective = """\
+// CHECK: %[[TOKEN0:.*]] = make_token
+// CHECK: %[[TX:.*]], %[[X_TOKEN1:.*]] = load_view_tko weak {{.*}} token = %[[TOKEN0]]
+// CHECK: %[[X_TOKEN2:.*]] = join_tokens %[[TOKEN0]], %[[X_TOKEN1]]
+// CHECK: %[[TY:.*]], %[[Y_TOKEN1:.*]] = load_view_tko weak {{.*}} token = %[[TOKEN0]]
+// CHECK: %[[Y_TOKEN2:.*]] = join_tokens %[[TOKEN0]], %[[Y_TOKEN1]]
+// CHECK: %[[X_TOKEN3:.*]] = store_view_tko weak {{.*}} token = %[[X_TOKEN2]]
+// CHECK: %[[Y_TOKEN4:.*]] = store_view_tko weak {{.*}} token = %[[Y_TOKEN2]]
+"""  # noqa: E501
+
+
+class TestLoadStoreTokenOrderMLIR(MLIRTestBase):
+
+    def acquire_load(X, Y, TILE: ct.Constant[int]):
+        tx = ct.load(X, index=(0,), shape=(TILE,))
+        ty = ct.load(Y, index=(0,), shape=(TILE,),
+                     memory_order=ct.MemoryOrder.ACQUIRE,
+                     memory_scope=ct.MemoryScope.DEVICE)
+        ct.store(X, index=(0,), tile=tx + 1)
+        ct.store(Y, index=(0,), tile=ty + 1)
+
+    def release_store(X, Y, TILE: ct.Constant[int]):
+        tx = ct.load(X, index=(0,), shape=(TILE,))
+        ty = ct.load(Y, index=(0,), shape=(TILE,))
+        ct.store(X, index=(0,), tile=tx + 1)
+        ct.store(Y, index=(0,), tile=ty + 1,
+                 memory_order=ct.MemoryOrder.RELEASE,
+                 memory_scope=ct.MemoryScope.DEVICE)
+
+    def weak_load_store(X, Y, TILE: ct.Constant[int]):
+        tx = ct.load(X, index=(0,), shape=(TILE,))
+        ty = ct.load(Y, index=(0,), shape=(TILE,))
+        ct.store(X, index=(0,), tile=tx + 1)
+        ct.store(Y, index=(0,), tile=ty + 1)
+
+    @override
+    def compile_kernel(self, kernel):
+        tile_size = 1024
+        X = torch.arange(tile_size, device="cuda", dtype=torch.int32)
+        Y = torch.arange(tile_size, device="cuda", dtype=torch.int32)
+        return get_bytecode(kernel, (X, Y, tile_size))
+
+    @pytest.mark.parametrize("kernel, check_directive", make_cases(
+        (acquire_load, AcquireLoadCheckDirective),
+        (release_store, ReleaseStoreCheckDirective),
+        (weak_load_store, WeakLoadStoreCheckDirective),
+    ))
+    @override
+    def test_mlir(self, kernel, check_directive):
+        super().test_mlir(kernel, check_directive)
+
+
+class TestLoadStoreMemoryOrderErrors:
+
+    @pytest.mark.parametrize("memory_order", [
+        ct.MemoryOrder.RELEASE,
+        ct.MemoryOrder.ACQ_REL,
+    ], ids=lambda o: o.name)
+    def test_load_invalid_memory_order(self, memory_order):
+        @ct.kernel
+        def kernel(X, TILE: ct.Constant[int]):
+            ct.load(X, index=(0,), shape=(TILE,), memory_order=memory_order)
+
+        X = torch.zeros(64, device="cuda", dtype=torch.int32)
+        with pytest.raises(TileTypeError, match="Invalid memory order for tile_load"):
+            ct.launch(torch.cuda.current_stream(), (1,), kernel, (X, 64))
+
+    @pytest.mark.parametrize("memory_order", [
+        ct.MemoryOrder.ACQUIRE,
+        ct.MemoryOrder.ACQ_REL,
+    ], ids=lambda o: o.name)
+    def test_store_invalid_memory_order(self, memory_order):
+        @ct.kernel
+        def kernel(X, TILE: ct.Constant[int]):
+            tx = ct.load(X, index=(0,), shape=(TILE,))
+            ct.store(X, index=(0,), tile=tx, memory_order=memory_order)
+
+        X = torch.zeros(64, device="cuda", dtype=torch.int32)
+        with pytest.raises(TileTypeError, match="Invalid memory order for tile_store"):
+            ct.launch(torch.cuda.current_stream(), (1,), kernel, (X, 64))

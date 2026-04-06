@@ -318,3 +318,63 @@ def test_mixed_scalar_tile_atomic():
     x = make_tensor((1,), dtype=torch.int32, device="cuda")
     y = make_tensor((1,), dtype=torch.int32, device="cuda")
     ct.launch(torch.cuda.current_stream(), (1,), mixed_scalar_tile_atomic, (x, y))
+
+
+class TestInvalidAtomicMemoryOrderAndScope:
+    def test_atomic_cas_weak_ordering(self):
+        @ct.kernel
+        def kernel(x):
+            ct.atomic_cas(x, 0, 0, 0, memory_order=ct.MemoryOrder.WEAK,
+                          memory_scope=ct.MemoryScope.DEVICE)
+        x = make_tensor((1,), dtype=torch.int32, device="cuda")
+        with pytest.raises(TileTypeError, match="Invalid memory order for tile_atomic_cas"):
+            ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))
+
+    def test_atomic_rmw_weak_ordering(self):
+        @ct.kernel
+        def kernel(x):
+            ct.atomic_add(x, 0, 0, memory_order=ct.MemoryOrder.WEAK,
+                          memory_scope=ct.MemoryScope.DEVICE)
+        x = make_tensor((1,), dtype=torch.int32, device="cuda")
+        with pytest.raises(TileTypeError, match="Invalid memory order for tile_atomic_rmw"):
+            ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))
+
+    @pytest.mark.parametrize(
+        "memory_order",
+        [
+            ct.MemoryOrder.ACQ_REL,
+            ct.MemoryOrder.ACQUIRE,
+            ct.MemoryOrder.RELEASE,
+            ct.MemoryOrder.RELAXED,
+        ],
+    )
+    def test_atomic_rmw_none_scope(self, memory_order):
+        @ct.kernel
+        def kernel(x):
+            ct.atomic_add(x, 0, 0, memory_order=memory_order, memory_scope=ct.MemoryScope.NONE)
+        x = make_tensor((1,), dtype=torch.int32, device="cuda")
+        with pytest.raises(
+            TileTypeError,
+            match="tile_atomic_rmw with (.+) memory ordering requires a memory scope",
+        ):
+            ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))
+
+    @pytest.mark.parametrize(
+        "memory_order",
+        [
+            ct.MemoryOrder.ACQ_REL,
+            ct.MemoryOrder.ACQUIRE,
+            ct.MemoryOrder.RELEASE,
+            ct.MemoryOrder.RELAXED,
+        ],
+    )
+    def test_atomic_cas_none_scope(self, memory_order):
+        @ct.kernel
+        def kernel(x):
+            ct.atomic_cas(x, 0, 0, 0, memory_order=memory_order, memory_scope=ct.MemoryScope.NONE)
+        x = make_tensor((1,), dtype=torch.int32, device="cuda")
+        with pytest.raises(
+            TileTypeError,
+            match="tile_atomic_cas with (.+) memory ordering requires a memory scope",
+        ):
+            ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))

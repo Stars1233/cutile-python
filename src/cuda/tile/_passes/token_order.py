@@ -130,7 +130,7 @@ def _get_block_memory_effects(block: Block,
             return EMPTY_MEMORY_EFFECTS
 
         has_acquire_order = False
-        if isinstance(cur_op, (TileAtomicCAS, TileAtomicRMW)):
+        if isinstance(cur_op, (TileAtomicCAS, TileAtomicRMW, TileLoad, TileStore)):
             has_acquire_order = memory_order_has_acquire(cur_op.memory_order)
 
         return MemoryEffects({dataflow_result[_get_input_var(cur_op).name].alias_set: effect},
@@ -163,8 +163,9 @@ def _to_token_order_in_block(block: Block,
             last_op_key = _last_op_key(alias_set)
             last_store_key = _last_store_key(alias_set)
 
+            mem_order = op.memory_order if isinstance(op, TileLoad) else None
             input_tok, maybe_input_tok_join_op = _get_input_token(last_store_key, op,
-                                                                  token_map, None,
+                                                                  token_map, mem_order,
                                                                   block.ctx)
             if maybe_input_tok_join_op:
                 operations.append(maybe_input_tok_join_op)
@@ -181,6 +182,9 @@ def _to_token_order_in_block(block: Block,
 
             token_map[last_op_key] = new_last_op_tok
 
+            if isinstance(op, TileLoad) and memory_order_has_acquire(op.memory_order):
+                token_map[ACQUIRE_TOKEN_KEY] = result_tok
+
         elif isinstance(op, (TileStore, StorePointer)):
             # Try to parallelize the store in the innermost loop if possible
             if (
@@ -196,8 +200,9 @@ def _to_token_order_in_block(block: Block,
             last_op_key = _last_op_key(alias_set)
             last_store_key = _last_store_key(alias_set)
 
+            mem_order = op.memory_order if isinstance(op, TileStore) else None
             input_tok, maybe_input_tok_join_op = _get_input_token(last_op_key, op, token_map,
-                                                                  None, block.ctx)
+                                                                  mem_order, block.ctx)
             if maybe_input_tok_join_op:
                 operations.append(maybe_input_tok_join_op)
 

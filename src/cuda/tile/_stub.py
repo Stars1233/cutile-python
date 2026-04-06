@@ -758,7 +758,9 @@ def load(array: Array, /,
          order: Constant[Order] = "C",
          padding_mode: PaddingMode = PaddingMode.UNDETERMINED,
          latency: Optional[int] = None,
-         allow_tma: Optional[bool] = None) -> Tile:
+         allow_tma: Optional[bool] = None,
+         memory_order: MemoryOrder = MemoryOrder.WEAK,
+         memory_scope: MemoryScope = MemoryScope.NONE) -> Tile:
     """Loads a tile from the `array` which is partitioned into a |tile space|.
 
     The |tile space| is the result of partitioning the `array` into a grid of equally
@@ -805,6 +807,10 @@ def load(array: Array, /,
         latency (const int): A hint indicating how heavy DRAM traffic will be. It shall be an
             integer between 1 (low) and 10 (high). By default, the compiler will infer the latency.
         allow_tma (const bool): If False, the load will not use TMA. By default, TMA is allowed.
+        memory_order (MemoryOrder): Memory ordering semantics for the load.
+            Defaults to ``MemoryOrder.WEAK``. Valid values: ``WEAK``, ``RELAXED``, ``ACQUIRE``.
+        memory_scope (MemoryScope): The scope of threads that participate in memory
+            ordering. Only meaningful when ``memory_order`` is not ``WEAK``.
 
     Returns:
         Tile:
@@ -905,7 +911,9 @@ def store(array: Array, /,
           tile: TileOrScalar, *,
           order: Constant[Order] = "C",
           latency: Optional[int] = None,
-          allow_tma: Optional[bool] = None) -> None:
+          allow_tma: Optional[bool] = None,
+          memory_order: MemoryOrder = MemoryOrder.WEAK,
+          memory_scope: MemoryScope = MemoryScope.NONE) -> None:
     """Stores a `tile` value into the `array` at the `index` of its |tile space|.
 
     The |tile space| is the result of partitioning the `array` into a grid of tiles
@@ -935,6 +943,10 @@ def store(array: Array, /,
             integer between 1 (low) and 10 (high). By default, the compiler will infer the latency.
         allow_tma (bool, optional): If False, the store will not use TMA.
             By default, TMA is allowed.
+        memory_order (MemoryOrder): Memory ordering semantics for the store.
+            Defaults to ``MemoryOrder.WEAK``. Valid values: ``WEAK``, ``RELAXED``, ``RELEASE``.
+        memory_scope (MemoryScope): The scope of threads that participate in memory
+            ordering. Only meaningful when ``memory_order`` is not ``WEAK``.
 
     Examples:
 

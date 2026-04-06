@@ -49,7 +49,7 @@ from .ops_utils import (
     rounding_mode_to_bytecode, get_default_rounding_mode, get_dtype,
     change_dtype, memory_order_to_bytecode,
     memory_scope_to_bytecode, broadcast_shapes2, is_shape_broadcastable_to, BroadcastError,
-    promote_types, promote_dtypes, check_implicit_cast
+    promote_types, promote_dtypes, check_implicit_cast, validate_memory_order_and_scope
 )
 from .scope import Scope, JumpInfo, ControlFlowInfo
 from .typing_support import (
@@ -2139,9 +2139,15 @@ def make_partition_view(array: Var, tile_shape: Sequence[int],
 class TileLoad(Operation, opcode="tile_load", memory_effect=MemoryEffect.LOAD):
     latency: Optional[int] = attribute()
     allow_tma: Optional[bool] = attribute()
+    memory_order: MemoryOrder = attribute(default=MemoryOrder.WEAK)
+    memory_scope: MemoryScope = attribute(default=MemoryScope.NONE)
     view: Var = operand()
     index: tuple[Var, ...] = operand()
     token: Optional[Var] = operand(default=None)
+
+    VALID_MEMORY_ORDERS = (
+        MemoryOrder.RELAXED, MemoryOrder.ACQUIRE, MemoryOrder.WEAK
+    )
 
     @override
     def generate_bytecode(self, ctx: BytecodeContext) -> tuple[bc.Value, bc.Value]:
@@ -2153,8 +2159,8 @@ class TileLoad(Operation, opcode="tile_load", memory_effect=MemoryEffect.LOAD):
             view=ctx.get_value(self.view),
             index=ctx.index_tuple(self.index),
             token=None if self.token is None else ctx.get_value(self.token),
-            memory_ordering_semantics=bc.MemoryOrderingSemantics.WEAK,
-            memory_scope=None,
+            memory_ordering_semantics=memory_order_to_bytecode[self.memory_order],
+            memory_scope=memory_scope_to_bytecode[self.memory_scope],
             optimization_hints=ctx.load_store_hints(self.latency, self.allow_tma),
         )
         return res, res_token
@@ -2162,7 +2168,9 @@ class TileLoad(Operation, opcode="tile_load", memory_effect=MemoryEffect.LOAD):
 
 def _tile_load_impl_inner(array: Var, index_items: tuple[Var, ...], shape: Sequence[int],
                           order: Sequence[int], padding_mode: PaddingMode,
-                          latency: Var, allow_tma: Var) -> Var:
+                          latency: Var, allow_tma: Var,
+                          memory_order: MemoryOrder = MemoryOrder.WEAK,
+                          memory_scope: MemoryScope = MemoryScope.NONE) -> Var:
     array_ty = require_array_type(array)
     broadcasted_shape = (1,) * array_ty.ndim if len(shape) == 0 else shape
     latency = require_optional_constant_int(latency)
@@ -2173,7 +2181,8 @@ def _tile_load_impl_inner(array: Var, index_items: tuple[Var, ...], shape: Seque
     res_ty = make_tile_ty(array_ty.dtype, broadcasted_shape)
     result, _token = add_operation(TileLoad, (res_ty, TokenTy()),
                                    view=view, index=index_items, latency=latency,
-                                   allow_tma=allow_tma)
+                                   allow_tma=allow_tma, memory_order=memory_order,
+                                   memory_scope=memory_scope)
     return reshape(result, shape)
 
 
@@ -2256,7 +2265,8 @@ def tile_load(array: Var, index: tuple[Var, ...], shape: Sequence[int], order: S
 
 @impl(ct.load)
 def tile_load_impl(array: Var, index: Var, shape: Var, order: Var,
-                   padding_mode: Var, latency: Var, allow_tma: Var) -> Var:
+                   padding_mode: Var, latency: Var, allow_tma: Var,
+                   memory_order: Var, memory_scope: Var) -> Var:
     array_ty = require_array_type(array)
     index_ty = require_index_or_index_tuple_type(index)
     index_items = index.get_aggregate().items if isinstance(index_ty, TupleTy) else (index,)
@@ -2268,17 +2278,27 @@ def tile_load_impl(array: Var, index: Var, shape: Var, order: Var,
                                    allow_0d_shape=True)
     order = require_constant_axis_order(order, array_ty.ndim)
     padding_mode = require_constant_enum(padding_mode, PaddingMode)
-    return _tile_load_impl_inner(array, index_items, shape, order, padding_mode, latency, allow_tma)
+    mem_order = require_constant_enum(memory_order, MemoryOrder)
+    mem_scope = require_constant_enum(memory_scope, MemoryScope)
+    validate_memory_order_and_scope(mem_order, mem_scope, TileLoad)
+    return _tile_load_impl_inner(array, index_items, shape, order, padding_mode, latency, allow_tma,
+                                 memory_order=mem_order, memory_scope=mem_scope)
 
 
 @dataclass(eq=False)
 class TileStore(Operation, opcode="tile_store", memory_effect=MemoryEffect.STORE):
     latency: Optional[int] = attribute()
     allow_tma: Optional[bool] = attribute()
+    memory_order: MemoryOrder = attribute(default=MemoryOrder.WEAK)
+    memory_scope: MemoryScope = attribute(default=MemoryScope.NONE)
     view: Var = operand()
     index: tuple[Var, ...] = operand()
     tile: Var = operand()
     token: Optional[Var] = operand(default=None)
+
+    VALID_MEMORY_ORDERS = (
+        MemoryOrder.RELAXED, MemoryOrder.RELEASE, MemoryOrder.WEAK
+    )
 
     @override
     def generate_bytecode(self, ctx: BytecodeContext) -> bc.Value:
@@ -2289,8 +2309,8 @@ class TileStore(Operation, opcode="tile_store", memory_effect=MemoryEffect.STORE
             view=ctx.get_value(self.view),
             index=ctx.index_tuple(self.index),
             token=None if self.token is None else ctx.get_value(self.token),
-            memory_ordering_semantics=bc.MemoryOrderingSemantics.WEAK,
-            memory_scope=None,
+            memory_ordering_semantics=memory_order_to_bytecode[self.memory_order],
+            memory_scope=memory_scope_to_bytecode[self.memory_scope],
             optimization_hints=ctx.load_store_hints(self.latency, self.allow_tma),
         )
 
@@ -2307,7 +2327,9 @@ def _implicit_cast(src: Var, target_dtype: DType, error_context: str) -> Var:
 
 
 def _tile_store_impl_inner(array: Var, index_items: tuple[Var, ...], tile: Var,
-                           order: Sequence[int], latency: Var, allow_tma: Var):
+                           order: Sequence[int], latency: Var, allow_tma: Var,
+                           memory_order: MemoryOrder = MemoryOrder.WEAK,
+                           memory_scope: MemoryScope = MemoryScope.NONE):
     array_ty = require_array_type(array)
     tile_ty = require_tile_type(tile)
     broadcasted_shape = (1,) * array_ty.ndim if len(tile_ty.shape) == 0 else tile_ty.shape
@@ -2318,12 +2340,14 @@ def _tile_store_impl_inner(array: Var, index_items: tuple[Var, ...], tile: Var,
     tile = reshape(tile, broadcasted_shape)
     view = make_partition_view(array, broadcasted_shape, order, PaddingMode.UNDETERMINED)
     [_token] = add_operation(TileStore, (TokenTy(),), view=view, index=index_items, tile=tile,
-                             latency=latency, allow_tma=allow_tma)
+                             latency=latency, allow_tma=allow_tma, memory_order=memory_order,
+                             memory_scope=memory_scope)
 
 
 @impl(ct.store)
 def tile_store_impl(array: Var, index: Var, tile: Var, order: Var,
-                    latency: Var, allow_tma: Var):
+                    latency: Var, allow_tma: Var,
+                    memory_order: Var, memory_scope: Var):
     array_ty = require_array_type(array)
     index_ty = require_index_or_index_tuple_type(index)
     index_items = index.get_aggregate().items if isinstance(index_ty, TupleTy) else (index,)
@@ -2333,7 +2357,11 @@ def tile_store_impl(array: Var, index: Var, tile: Var, order: Var,
 
     tile = _implicit_cast(tile, array_ty.dtype, "Stored tile is incompatible with array's dtype")
     order = require_constant_axis_order(order, array_ty.ndim)
-    _tile_store_impl_inner(array, index_items, tile, order, latency, allow_tma)
+    mem_order = require_constant_enum(memory_order, MemoryOrder)
+    mem_scope = require_constant_enum(memory_scope, MemoryScope)
+    validate_memory_order_and_scope(mem_order, mem_scope, TileStore)
+    _tile_store_impl_inner(array, index_items, tile, order, latency, allow_tma,
+                           memory_order=mem_order, memory_scope=mem_scope)
 
 
 @dataclass(eq=False)
@@ -2628,6 +2656,10 @@ class TileAtomicCAS(Operation, opcode="tile_atomic_cas",
     mask: Optional[Var] = operand(default=None)
     token: Optional[Var] = operand(default=None)
 
+    VALID_MEMORY_ORDERS = (
+        MemoryOrder.RELAXED, MemoryOrder.ACQUIRE, MemoryOrder.RELEASE, MemoryOrder.ACQ_REL
+    )
+
     def generate_bytecode(self, ctx: BytecodeContext) -> tuple[bc.Value, bc.Value]:
         return bc.encode_AtomicCASTkoOp(
             ctx.builder,
@@ -2661,6 +2693,7 @@ def atomic_cas_impl(array: Var, indices: Var, expected: Var, desired: Var, check
     # Handle `memory_order` and `memory_scope`
     memory_order = require_constant_enum(memory_order, MemoryOrder)
     memory_scope = require_constant_enum(memory_scope, MemoryScope)
+    validate_memory_order_and_scope(memory_order, memory_scope, TileAtomicCAS)
 
     result_ty = make_tile_ty(array_dtype, pointer_shape)
     result, _token = add_operation(TileAtomicCAS, (result_ty, TokenTy()),
@@ -2692,6 +2725,10 @@ class TileAtomicRMW(Operation, opcode="tile_atomic_rmw", memory_effect=MemoryEff
     update: Var = operand()
     mask: Optional[Var] = operand(default=None)
     token: Optional[Var] = operand(default=None)
+
+    VALID_MEMORY_ORDERS = (
+        MemoryOrder.RELAXED, MemoryOrder.ACQUIRE, MemoryOrder.RELEASE, MemoryOrder.ACQ_REL
+    )
 
     @override
     def generate_bytecode(self, ctx: BytecodeContext) -> tuple[bc.Value, bc.Value]:
@@ -2769,6 +2806,7 @@ def atomic_rmw_impl(int_mode: Optional[AtomicRMWMode],
 
     memory_order = require_constant_enum(memory_order, MemoryOrder)
     memory_scope = require_constant_enum(memory_scope, MemoryScope)
+    validate_memory_order_and_scope(memory_order, memory_scope, TileAtomicRMW)
 
     result_ty = make_tile_ty(array_dtype, pointer_shape)
     result, _token = add_operation(TileAtomicRMW, (result_ty, TokenTy()),

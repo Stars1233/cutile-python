@@ -1,0 +1,1 @@
+- Add support for specifying memory order and memory scope on load and store operations.

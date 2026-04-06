@@ -9,6 +9,8 @@ class MemoryScope(Enum):
     """
     The scope of threads that participate in memory ordering.
     """
+    NONE = "none"
+    """No memory scope. Used for load/store operations with WEAK memory ordering."""
 
     BLOCK = "block"
     """Ordering guarantees apply to threads within the same block."""
@@ -23,8 +25,11 @@ class MemoryScope(Enum):
 
 class MemoryOrder(Enum):
     """
-    Memory ordering semantics of an atomic operation.
+    Memory ordering semantics of a memory operation.
     """
+
+    WEAK = "weak"
+    """Weak (non-atomic) ordering. The default for load/store operations."""
 
     RELAXED = "relaxed"
     """No ordering guarantees. Cannot be used to synchronize between threads."""
@@ -41,5 +46,3 @@ class MemoryOrder(Enum):
 
     ACQ_REL = "acq_rel"
     """Combined acquire and release semantics."""
-
-    # TODO: expose WEAK for load/store?

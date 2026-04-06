@@ -180,6 +180,7 @@ def check_rd_and_ftz(fn: str, rounding_mode: Optional[RoundingMode], flush_to_ze
 
 
 memory_scope_to_bytecode = {
+    MemoryScope.NONE: None,
     MemoryScope.BLOCK: bc.MemoryScope.TL_BLK,
     MemoryScope.DEVICE: bc.MemoryScope.DEVICE,
     MemoryScope.SYS: bc.MemoryScope.SYS
@@ -187,6 +188,7 @@ memory_scope_to_bytecode = {
 
 
 memory_order_to_bytecode = {
+    MemoryOrder.WEAK: bc.MemoryOrderingSemantics.WEAK,
     MemoryOrder.RELAXED: bc.MemoryOrderingSemantics.RELAXED,
     MemoryOrder.ACQUIRE: bc.MemoryOrderingSemantics.ACQUIRE,
     MemoryOrder.RELEASE: bc.MemoryOrderingSemantics.RELEASE,
@@ -343,3 +345,27 @@ def is_shape_broadcastable_to(src: Sequence[int], dst: Sequence[int]) -> bool:
 
 def get_default_order(rank: int) -> tuple[int, ...]:
     return tuple(range(rank))
+
+
+def validate_memory_order_and_scope(
+    memory_order: MemoryOrder,
+    memory_scope: MemoryScope,
+    operation_type: type[Operation],
+):
+    opcode: str = operation_type._opcode
+    if memory_order not in operation_type.VALID_MEMORY_ORDERS:
+        formatted_expected = ", ".join(
+            str(order) for order in operation_type.VALID_MEMORY_ORDERS
+        )
+        raise TileTypeError(
+            f"Invalid memory order for {opcode}. "
+            f"Got {memory_order}, expected one of {formatted_expected}"
+        )
+    if memory_order == MemoryOrder.WEAK and memory_scope != MemoryScope.NONE:
+        raise TileTypeError(
+            f"{opcode} with WEAK memory ordering cannot specify a memory scope"
+        )
+    if memory_order != MemoryOrder.WEAK and memory_scope == MemoryScope.NONE:
+        raise TileTypeError(
+            f"{opcode} with {memory_order.name} memory ordering requires a memory scope"
+        )
