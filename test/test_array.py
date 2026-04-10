@@ -4,16 +4,6 @@
 
 import cuda.tile as ct
 import torch
-from cuda.tile._ir.op_impl import impl
-
-
-def raise_error(*args): ...
-
-
-@impl(raise_error)
-def raise_error_impl(args):
-    msg = " ".join(str(x.get_constant()) for x in args)
-    raise AssertionError(msg)
 
 
 @ct.kernel
@@ -21,12 +11,9 @@ def array_attr_kernel(X, out):
     ndim = X.ndim
     shape = X.shape
     strides = X.strides
-    if ndim != 3:
-        raise_error("Expect ndim 3, got", ndim)
-    if len(shape) != ndim:
-        raise_error("Expect shape len 3, got", len(shape))
-    if len(strides) != ndim:
-        raise_error("Expect stride len 3, got", len(strides))
+    ct.static_assert(ndim == 3)
+    ct.static_assert(len(shape) == ndim)
+    ct.static_assert(len(strides) == ndim)
 
     ct.store(out, (0,), shape[0])
     ct.store(out, (1,), shape[1])

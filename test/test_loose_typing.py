@@ -7,16 +7,6 @@ import torch
 
 import cuda.tile as ct
 from cuda.tile import TileValueError
-from cuda.tile._ir.op_impl import impl
-
-
-def raise_error(*args): ...
-
-
-@impl(raise_error)
-def raise_error_impl(args):
-    msg = " ".join(str(x.get_constant()) for x in args)
-    raise AssertionError(msg)
 
 
 @ct.kernel
@@ -33,8 +23,7 @@ def propagate_constant_int_then_promote(n: ct.Constant[int], out):
     b = a - t  # b = [18, 19, 20, 21]
 
     # Check that the type of `b` is the same as `a`
-    if b.dtype != ct.int8:
-        raise_error("Expected int8, got", b.dtype)
+    ct.static_assert(b.dtype == ct.int8)
 
     ct.scatter(out, ct.arange(4, dtype=ct.int32), b)
 
@@ -63,8 +52,7 @@ def propagate_constant_float_then_promote(n: ct.Constant[int], out):
     b = a - t  # b = [20.5, 21.5, 22.5, 23.5]
 
     # Check that the result of `a - t` has been promoted to float32
-    if b.dtype != ct.float32:
-        raise_error("Expected float32, got", b.dtype)
+    ct.static_assert(b.dtype == ct.float32)
 
     ct.scatter(out, ct.arange(4, dtype=ct.int32), b)
 
@@ -85,8 +73,7 @@ def pack_tuple_then_getitem_and_promote(n: ct.Constant[int], out):
     b = a + t
 
     # Check that the type of `b` is the same as `a`
-    if b.dtype != ct.int8:
-        raise_error("Expected int8, got", b.dtype)
+    ct.static_assert(b.dtype == ct.int8)
 
     ct.scatter(out, ct.arange(4, dtype=ct.int32), b)
 
@@ -107,8 +94,7 @@ def pack_nested_tuple_then_getitem_and_promote(n: ct.Constant[int], out):
     b = a + t
 
     # Check that the type of `b` is the same as `a`
-    if b.dtype != ct.int8:
-        raise_error("Expected int8, got", b.dtype)
+    ct.static_assert(b.dtype == ct.int8)
 
     ct.scatter(out, ct.arange(4, dtype=ct.int32), b)
 
@@ -132,8 +118,7 @@ def propagate_constant_int_through_if_else_then_promote(n: ct.Constant[int], out
     b = a + t  # [7, 8, 9, 10]
 
     # Check that the type of `b` is the same as `a`
-    if b.dtype != ct.int8:
-        raise_error("Expected int8, got", b.dtype)
+    ct.static_assert(b.dtype == ct.int8)
 
     ct.scatter(out, ct.arange(4, dtype=ct.int32), b)
 
@@ -157,8 +142,7 @@ def different_constants_in_if_else_then_promote(n: ct.Constant[int], out):
     b = a + t  # [5, 6, 7, 8]
 
     # Since `t` is int32 and not loosely typed, the result should be an int32
-    if b.dtype != ct.int32:
-        raise_error("Expected int32, got", b.dtype)
+    ct.static_assert(b.dtype == ct.int32)
 
     ct.scatter(out, ct.arange(4, dtype=ct.int32), b)
 
@@ -173,12 +157,10 @@ def test_different_constants_in_if_else_then_promote():
 @ct.kernel
 def combine_loose_and_strict_int(n: ct.Constant[int], out):
     t = n + ct.int16(2)  # int16 because n is loosely typed
-    if t != 7:
-        raise_error("Expected `t` to be a constant 7")
+    ct.static_assert(t == 7)
     a = ct.arange(4, dtype=ct.int8)  # explicitly int8
     b = a + t  # int16 because `t` is strictly typed
-    if b.dtype != ct.int16:
-        raise_error("Expected int16, got", b.dtype)
+    ct.static_eval(b.dtype == ct.int16)
     ct.scatter(out, ct.arange(4, dtype=ct.int32), b)
 
 

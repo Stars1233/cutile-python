@@ -12,7 +12,7 @@ from .._coroutine_util import resume_after, run_coroutine
 from .._exception import Loc, TileSyntaxError, TileInternalError, TileError, TileRecursionError
 from .._ir import hir, ir
 from .._ir.ir import Var, IRContext, BoundMethodValue, ClosureValue
-from .._ir.op_impl import op_implementations
+from .._ir.op_impl import ImplRegistry
 from .._ir.ops import loosely_typed_const, end_branch, return_, continue_, \
     break_, store_var
 from .._ir.scope import Scope, LocalScope, IntMap
@@ -133,8 +133,9 @@ async def call(callee_var: Var, args, kwargs) -> Var | None:
     callee, self_arg = _get_callee_and_self(callee_var)
     args = self_arg + args
     arg_list = _bind_args(callee, args, kwargs)
-    if callee in op_implementations:
-        impl = op_implementations[callee]
+    impl_registry = ImplRegistry.get_current()
+    if callee in impl_registry.op_implementations:
+        impl = impl_registry.op_implementations[callee]
         result = impl(*arg_list)
         if impl._is_coroutine:
             result = await result

@@ -31,7 +31,7 @@ from .type import PointerTy
 from . import hir
 from .hir import ResolvedName
 from .op_impl import (
-    impl, require_constant_int, require_constant_int_tuple,
+    ImplRegistry, require_constant_int, require_constant_int_tuple,
     require_signed_integer_0d_tile_type,
     require_tile_type, normalize_axis, require_dtype_spec,
     require_constant_bool, require_optional_constant_enum,
@@ -43,7 +43,7 @@ from .op_impl import (
     require_0d_tile_maybe_loose_type, require_bool, require_optional_range_type,
     require_tile_or_tile_tuple_type, require_constant_scalar_tuple, require_constant_scalar,
     require_callable_type, require_raw_array_memory_type,
-    overload_dispatcher, OverloadNotFoundError, WILDCARD)
+    OverloadNotFoundError, WILDCARD)
 from .ops_utils import (
     BINOP_REGISTRY, UNARYOP_REGISTRY,
     check_rd_and_ftz, PaddingMode, get_default_order,
@@ -77,6 +77,10 @@ from .._debug import CUDA_TILE_TESTING_DISABLE_DIV
 from .._dispatch_mode import StaticEvalMode
 from .._symbolic import SymbolicTile, SymbolicArray, Symbol, SymbolicClosure
 
+
+tile_impl_registry = ImplRegistry()
+impl = tile_impl_registry.impl
+overload_dispatcher = tile_impl_registry.overload_dispatcher
 
 # ================================================
 # Control flow operations

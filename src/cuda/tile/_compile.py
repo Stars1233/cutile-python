@@ -33,7 +33,7 @@ from cuda.tile._exception import (
     TileCompilerTimeoutError, FunctionDesc, Loc
 )
 from cuda.tile._ir import ir, hir
-from cuda.tile._ir.ops import loosely_typed_const, flatten_block_parameters
+from cuda.tile._ir.ops import loosely_typed_const, flatten_block_parameters, tile_impl_registry
 from cuda.tile._ir.type import TileTy, ArrayTy, ListTy
 from cuda.tile._passes.ast2hir import get_function_hir
 from cuda.tile._passes.code_motion import hoist_loop_invariants
@@ -265,7 +265,8 @@ class _IrKeeper:
                                                    param_names,
                                                    self._func_hir.param_locs,
                                                    ir_ctx)
-                hir2ir(self._func_hir, params.aggregate_vars, ir_ctx)
+                with tile_impl_registry.as_current():
+                    hir2ir(self._func_hir, params.aggregate_vars, ir_ctx)
 
             func_body = ir.Block(ir_ctx, self._func_hir.body.loc)
             func_body.params = sum((vars for vars, _ in params.nonconstant_flat_vars), ())

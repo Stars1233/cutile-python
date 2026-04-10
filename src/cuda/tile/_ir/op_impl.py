@@ -6,6 +6,7 @@ import functools
 import inspect
 import threading
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import EnumMeta
 from typing import Optional, NamedTuple, Tuple, Sequence, Any, Union, Callable
@@ -35,10 +36,6 @@ def _verify_params_match(stub_sig: inspect.Signature, func_sig: inspect.Signatur
             f" Signatures: {stub_sig}, {func_sig}.")
 
 
-op_implementations = dict()
-_overloaded_implementations = dict()
-
-
 @dataclass(frozen=True)
 class WildcardClass:
     pass
@@ -56,115 +53,147 @@ class OverloadNotFoundError(Exception):
     pass
 
 
-def overload_dispatcher(stub):
-    """
-    Decorates a function to attach an overloaded implementation dispatcher to a stub.
+class ImplRegistry:
+    def __init__(self):
+        self.op_implementations = dict()
+        self._overloaded_implementations = dict()
 
-    The decorated function must yield an "overload key", i.e. a tuple of values based
-    on which the appropriate overload should be selected, and then handle the OverloadNotFoundError
-    by re-raising a TileError. See getattr_overload_dispatcher() for an example.
-    """
+    @staticmethod
+    def get_current() -> "ImplRegistry":
+        ret = _current_registry.impl_registry
+        assert ret is not None
+        return ret
 
-    def decorate(key_func):
-        @functools.wraps(key_func)
-        async def implementation(*args):
-            generator = key_func(*args)
-            key = next(generator)
-            overload_impl = _find_overload(stub, key)
-            if overload_impl is None:
-                generator.throw(OverloadNotFoundError())
-                raise RuntimeError("Expected the overload key provider to re-throw a TileError")
+    @contextmanager
+    def as_current(self):
+        old = _current_registry.impl_registry
+        _current_registry.impl_registry = self
+        try:
+            yield self
+        finally:
+            _current_registry.impl_registry = old
 
-            try:
-                next(generator)
-            except StopIteration:
-                pass  # Good, that's what we expect
+    def clone(self) -> "ImplRegistry":
+        ret = ImplRegistry()
+        ret.op_implementations.update(self.op_implementations)
+        ret._overloaded_implementations.update(self._overloaded_implementations)
+        return ret
+
+    def overload_dispatcher(self, stub):
+        """
+        Decorates a function to attach an overloaded implementation dispatcher to a stub.
+
+        The decorated function must yield an "overload key", i.e. a tuple of values based
+        on which the appropriate overload should be selected, and then handle
+        the OverloadNotFoundError by re-raising a TileError.
+        See getattr_overload_dispatcher() for an example.
+        """
+
+        def decorate(key_func):
+            @functools.wraps(key_func)
+            async def implementation(*args):
+                generator = key_func(*args)
+                key = next(generator)
+                overload_impl = ImplRegistry.get_current()._find_overload(stub, key)
+                if overload_impl is None:
+                    generator.throw(OverloadNotFoundError())
+                    raise RuntimeError("Expected the overload key provider to re-throw a TileError")
+
+                try:
+                    next(generator)
+                except StopIteration:
+                    pass  # Good, that's what we expect
+                else:
+                    raise RuntimeError("Expected the overload key provider to yield exactly once")
+
+                result = overload_impl(*args)
+                if overload_impl._is_coroutine:
+                    result = await result
+
+                return result
+
+            assert stub not in self._overloaded_implementations
+            self._overloaded_implementations[stub] = dict()
+            return self.impl(stub)(implementation)
+
+        return decorate
+
+    def _find_overload(self, stub: Callable, overload: tuple[Any, ...]) -> Callable | None:
+        candidates = self._overloaded_implementations[stub]
+        match = None
+        for parameters, impl in candidates.items():
+            is_matching = all(p == WILDCARD or p == arg
+                              for p, arg in zip(parameters, overload, strict=True))
+            if is_matching:
+                if match is not None:
+                    raise ValueError(f"Multiple matching overloads found for {stub}, {overload}")
+                match = impl
+        return match
+
+    def impl(self, stub, *, fixed_args: Sequence[Any] = (),
+             min_version: Optional[BytecodeVersion] = None,
+             overload: tuple[Any, ...] = ()):
+        stub_sig = get_signature(stub)
+
+        def _check_version():
+            cur_version = Builder.get_current().ir_ctx.tileiras_version
+            if min_version is not None and cur_version < min_version:
+                raise TileUnsupportedFeatureError(
+                    f"{stub.__name__} requires tileiras "
+                    f"{min_version.major()}.{min_version.minor()} or later. "
+                    f"Current version is {cur_version.major()}.{cur_version.minor()}."
+                )
+
+        def decorate(func):
+            orig_func = func
+            if len(fixed_args) > 0:
+                func = functools.partial(orig_func, *fixed_args)
+
+            func_sig = get_signature(func)
+            _verify_params_match(stub_sig, func_sig)
+            is_coroutine = inspect.iscoroutinefunction(func)
+            if is_coroutine:
+                @functools.wraps(func)
+                async def wrapper(*args, **kwargs):
+                    _check_version()
+                    # Memorize the stub and the args so that we can automatically
+                    # provide context for error messages.
+                    old = _current_stub.stub_and_args
+                    _current_stub.stub_and_args = (stub, stub_sig, func_sig, args, kwargs)
+                    try:
+                        return await func(*args, **kwargs)
+                    finally:
+                        _current_stub.stub_and_args = old
             else:
-                raise RuntimeError("Expected the overload key provider to yield exactly once")
+                @functools.wraps(func)
+                def wrapper(*args, **kwargs):
+                    _check_version()
+                    # Memorize the stub and the args so that we can automatically
+                    # provide context for error messages.
+                    old = _current_stub.stub_and_args
+                    _current_stub.stub_and_args = (stub, stub_sig, func_sig, args, kwargs)
+                    try:
+                        return func(*args, **kwargs)
+                    finally:
+                        _current_stub.stub_and_args = old
 
-            result = overload_impl(*args)
-            if overload_impl._is_coroutine:
-                result = await result
+            wrapper._is_coroutine = is_coroutine
 
-            return result
+            if len(overload) == 0:
+                self.op_implementations[stub] = wrapper
+            else:
+                self._overloaded_implementations[stub][overload] = wrapper
 
-        assert stub not in _overloaded_implementations
-        _overloaded_implementations[stub] = dict()
-        return impl(stub)(implementation)
+            return orig_func
 
-    return decorate
-
-
-def _find_overload(stub: Callable, overload: tuple[Any, ...]) -> Callable | None:
-    candidates = _overloaded_implementations[stub]
-    match = None
-    for parameters, impl in candidates.items():
-        is_matching = all(p == WILDCARD or p == arg
-                          for p, arg in zip(parameters, overload, strict=True))
-        if is_matching:
-            if match is not None:
-                raise ValueError(f"Multiple matching overloads found for {stub}, {overload}")
-            match = impl
-    return match
+        return decorate
 
 
-def impl(stub, *, fixed_args: Sequence[Any] = (),
-         min_version: Optional[BytecodeVersion] = None,
-         overload: tuple[Any, ...] = ()):
-    stub_sig = get_signature(stub)
+class _CurrentRegistry(threading.local):
+    impl_registry = None
 
-    def _check_version():
-        cur_version = Builder.get_current().ir_ctx.tileiras_version
-        if min_version is not None and cur_version < min_version:
-            raise TileUnsupportedFeatureError(
-                f"{stub.__name__} requires tileiras "
-                f"{min_version.major()}.{min_version.minor()} or later. "
-                f"Current version is {cur_version.major()}.{cur_version.minor()}."
-            )
 
-    def decorate(func):
-        orig_func = func
-        if len(fixed_args) > 0:
-            func = functools.partial(orig_func, *fixed_args)
-
-        func_sig = get_signature(func)
-        _verify_params_match(stub_sig, func_sig)
-        is_coroutine = inspect.iscoroutinefunction(func)
-        if is_coroutine:
-            @functools.wraps(func)
-            async def wrapper(*args, **kwargs):
-                _check_version()
-                # Memorize the stub and the args so that we can automatically
-                # provide context for error messages.
-                old = _current_stub.stub_and_args
-                _current_stub.stub_and_args = (stub, stub_sig, func_sig, args, kwargs)
-                try:
-                    return await func(*args, **kwargs)
-                finally:
-                    _current_stub.stub_and_args = old
-        else:
-            @functools.wraps(func)
-            def wrapper(*args, **kwargs):
-                _check_version()
-                # Memorize the stub and the args so that we can automatically
-                # provide context for error messages.
-                old = _current_stub.stub_and_args
-                _current_stub.stub_and_args = (stub, stub_sig, func_sig, args, kwargs)
-                try:
-                    return func(*args, **kwargs)
-                finally:
-                    _current_stub.stub_and_args = old
-
-        wrapper._is_coroutine = is_coroutine
-
-        if len(overload) == 0:
-            op_implementations[stub] = wrapper
-        else:
-            _overloaded_implementations[stub][overload] = wrapper
-
-        return orig_func
-
-    return decorate
+_current_registry = _CurrentRegistry()
 
 
 class _CurrentStub(threading.local):
