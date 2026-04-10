@@ -32,7 +32,6 @@ from cuda.tile._ir.ops import (
     binary_arithmetic,
     loosely_typed_const,
     tile_impl_registry,
-    add_impl as tile_add_impl,
     bind_method,
     build_tuple,
     strictly_typed_const,
@@ -541,8 +540,8 @@ def _is_pointer_type(ty):
     return isinstance(ty, TileTy) and is_pointer_dtype(ty.dtype)
 
 
-@impl(operator.add)
-def add_impl(x: Var, y: Var) -> Var:
+@impl(operator.add, overload=(TileTy, TileTy))
+async def add_impl(x: Var, y: Var) -> Var:
     xty, yty = x.get_type(), y.get_type()
     if _is_pointer_type(yty):
         xty, yty = yty, xty
@@ -551,11 +550,14 @@ def add_impl(x: Var, y: Var) -> Var:
         if not datatype.is_integral(offset_dtype):
             raise TileTypeError(f"Expected integer pointer offset, got {offset_dtype}")
         return _pointer_with_offset(x, y)
-    return tile_add_impl(x, y)
+    # HACK HACK HACK
+    with tile_impl_registry.as_current():
+        from cuda.tile._passes.hir2ir import call_function
+        return await call_function(operator.add, x, y)
 
 
-@impl(operator.sub)
-def sub_impl(x: Var, y: Var) -> Var:
+@impl(operator.sub, overload=(TileTy, TileTy))
+async def sub_impl(x: Var, y: Var) -> Var:
     xty, yty = x.get_type(), y.get_type()
     if _is_pointer_type(xty):
         offset_dtype = require_scalar_tile_type(y).dtype
@@ -567,7 +569,10 @@ def sub_impl(x: Var, y: Var) -> Var:
         return _pointer_with_offset(x, offset)
     if _is_pointer_type(yty):
         raise TileTypeError('It is invalid to subtract a pointer from an integer')
-    return binary_arithmetic('sub', x, y)
+    # HACK HACK HACK
+    with tile_impl_registry.as_current():
+        from cuda.tile._passes.hir2ir import call_function
+        return await call_function(operator.sub, x, y)
 
 
 @impl(stub.address_space_cast)

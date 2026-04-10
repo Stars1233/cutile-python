@@ -708,6 +708,34 @@ class FusedMulAddOperation(Operation, opcode="fma"):
                                self.flush_to_zero)
 
 
+@overload_dispatcher(operator.add, fixed_args=["+"])
+@overload_dispatcher(operator.sub, fixed_args=["-"])
+@overload_dispatcher(operator.mul, fixed_args=["*"])
+@overload_dispatcher(operator.floordiv, fixed_args=["//"])
+@overload_dispatcher(operator.truediv, fixed_args=["/"])
+@overload_dispatcher(operator.pow, fixed_args=["**"])
+@overload_dispatcher(operator.mod, fixed_args=["%"])
+@overload_dispatcher(operator.eq, fixed_args=["=="])
+@overload_dispatcher(operator.ne, fixed_args=["!="])
+@overload_dispatcher(operator.lt, fixed_args=["<"])
+@overload_dispatcher(operator.le, fixed_args=["<="])
+@overload_dispatcher(operator.gt, fixed_args=[">"])
+@overload_dispatcher(operator.ge, fixed_args=[">="])
+@overload_dispatcher(operator.and_, fixed_args=["&"])
+@overload_dispatcher(operator.or_, fixed_args=["|"])
+@overload_dispatcher(operator.xor, fixed_args=["^"])
+@overload_dispatcher(operator.lshift, fixed_args=["<<"])
+@overload_dispatcher(operator.rshift, fixed_args=[">>"])
+@overload_dispatcher(operator.matmul, fixed_args=["@"])
+def binop_overload_dispatcher(name: str, x: Var, y: Var):
+    x_ty = x.get_type()
+    y_ty = y.get_type()
+    try:
+        yield type(x_ty), type(y_ty)
+    except OverloadNotFoundError:
+        raise TileTypeError(f"Unsupported operand types for {name}: {x_ty} and {y_ty}")
+
+
 # Does not do broadcasting or type promotion, hence the name "Raw"
 @dataclass(eq=False)
 class RawComparisonOperation(Operation, opcode="raw_cmp"):
@@ -756,12 +784,22 @@ def _binop_propagate_constant(fn: str, x: Any, y: Any, type: Optional[Type]) -> 
         return strictly_typed_const(res, type)
 
 
+def comparison_operator_impl(lhs_ty: type[Type], rhs_ty: type[Type]):
+    def decorate(func):
+        for name in ("eq", "ne", "lt", "le", "gt", "ge"):
+            impl(getattr(operator, name), fixed_args=[name], overload=(lhs_ty, rhs_ty))(func)
+        return func
+
+    return decorate
+
+
 @impl(ct.equal, fixed_args=["eq"])
 @impl(ct.greater, fixed_args=["gt"])
 @impl(ct.not_equal, fixed_args=["ne"])
 @impl(ct.greater_equal, fixed_args=["ge"])
 @impl(ct.less, fixed_args=["lt"])
 @impl(ct.less_equal, fixed_args=["le"])
+@comparison_operator_impl(TileTy, TileTy)
 def comparison(fn: str, x: Var, y: Var) -> Var:
     x_ty = require_tile_maybe_loose_type(x)
     y_ty = require_tile_maybe_loose_type(y)
@@ -798,7 +836,8 @@ def operator_is_not_impl(x: Var, y: Var):
     return _is_none_compare(x, y, negate=True, op_name="is not")
 
 
-def _tuple_comparison(fn: str, x: Var, y: Var) -> Var:
+@comparison_operator_impl(TupleTy, TupleTy)
+async def comparison_operator_tuple_impl(fn: str, x: Var, y: Var) -> Var:
     if fn not in ("eq", "ne"):
         raise TileTypeError(f"Operator '{fn}' is not supported for tuples")
 
@@ -824,7 +863,8 @@ def _tuple_comparison(fn: str, x: Var, y: Var) -> Var:
                 f"Tuple comparison is not supported for elements of type {item_ty}"
             )
 
-    elem_cmps = [comparison_operator_impl("eq", xi, yi) for xi, yi in zip(x_items, y_items)]
+    from cuda.tile._passes.hir2ir import call_function
+    elem_cmps = [await call_function(operator.eq, xi, yi) for xi, yi in zip(x_items, y_items)]
     result = functools.reduce(lambda a, b: binary_bitwise("and_", a, b), elem_cmps,
                               loosely_typed_const(True))
 
@@ -834,25 +874,14 @@ def _tuple_comparison(fn: str, x: Var, y: Var) -> Var:
     return result
 
 
-@impl(operator.eq, fixed_args=["eq"])
-@impl(operator.ne, fixed_args=["ne"])
-@impl(operator.lt, fixed_args=["lt"])
-@impl(operator.le, fixed_args=["le"])
-@impl(operator.gt, fixed_args=["gt"])
-@impl(operator.ge, fixed_args=["ge"])
-def comparison_operator_impl(fn: str, x: Var, y: Var) -> Var:
-    x_ty = x.get_type()
-    y_ty = y.get_type()
+@comparison_operator_impl(DTypeSpec, DTypeSpec)
+def comparison_dtype_spec_impl(fn: str, x: Var, y: Var):
+    return _binop_propagate_constant(fn, x.get_type().dtype, y.get_type().dtype, None)
 
-    match x_ty, y_ty:
-        case DTypeSpec(), DTypeSpec():
-            return _binop_propagate_constant(fn, x_ty.dtype, y_ty.dtype, None)
-        case StringTy(), StringTy():
-            return _binop_propagate_constant(fn, x_ty.value, y_ty.value, None)
-        case TupleTy(), TupleTy():
-            return _tuple_comparison(fn, x, y)
-        case _, _:
-            return comparison(fn, x, y)
+
+@comparison_operator_impl(StringTy, StringTy)
+def comparison_string_impl(fn: str, x: Var, y: Var):
+    return _binop_propagate_constant(fn, x.get_type().value, y.get_type().value, None)
 
 
 def _promote_and_broadcast_to(x: Var, ty: TileTy) -> Var:
@@ -888,9 +917,9 @@ def raw_binary_bitwise(fn: str, x: Var, y: Var) -> Var:
 @impl(ct.bitwise_and, fixed_args=["and_"])
 @impl(ct.bitwise_or, fixed_args=["or_"])
 @impl(ct.bitwise_xor, fixed_args=["xor"])
-@impl(operator.and_, fixed_args=["and_"])
-@impl(operator.or_, fixed_args=["or_"])
-@impl(operator.xor, fixed_args=["xor"])
+@impl(operator.and_, fixed_args=["and_"], overload=(TileTy, TileTy))
+@impl(operator.or_, fixed_args=["or_"], overload=(TileTy, TileTy))
+@impl(operator.xor, fixed_args=["xor"], overload=(TileTy, TileTy))
 def binary_bitwise(fn: str, x: Var, y: Var) -> Var:
     x_ty = require_tile_maybe_loose_type(x)
     y_ty = require_tile_maybe_loose_type(y)
@@ -956,8 +985,8 @@ def raw_bitwise_shift(fn: str, x: Var, y: Var) -> Var:
 
 @impl(ct.bitwise_lshift, fixed_args=["lshift"])
 @impl(ct.bitwise_rshift, fixed_args=["rshift"])
-@impl(operator.lshift, fixed_args=["lshift"])
-@impl(operator.rshift, fixed_args=["rshift"])
+@impl(operator.lshift, fixed_args=["lshift"], overload=(TileTy, TileTy))
+@impl(operator.rshift, fixed_args=["rshift"], overload=(TileTy, TileTy))
 def bitwise_shift(fn: str, x: Var, y: Var) -> Var:
     x_ty = require_tile_maybe_loose_type(x)
     y_ty = require_tile_maybe_loose_type(y)
@@ -1114,23 +1143,26 @@ def binary_arithmetic(fn: str, x: Var, y: Var, rounding_mode: Optional[RoundingM
 @impl(ct.floordiv, fixed_args=["floordiv"])
 @impl(ct.cdiv, fixed_args=["cdiv"])
 @impl(ct.pow, fixed_args=["pow"])
-@impl(operator.sub, fixed_args=["sub"])
-@impl(operator.mul, fixed_args=["mul"])
-@impl(operator.floordiv, fixed_args=["floordiv"])
-@impl(operator.truediv, fixed_args=["truediv"])
-@impl(operator.pow, fixed_args=["pow"])
+@impl(operator.sub, fixed_args=["sub"], overload=(TileTy, TileTy))
+@impl(operator.mul, fixed_args=["mul"], overload=(TileTy, TileTy))
+@impl(operator.floordiv, fixed_args=["floordiv"], overload=(TileTy, TileTy))
+@impl(operator.truediv, fixed_args=["truediv"], overload=(TileTy, TileTy))
+@impl(operator.pow, fixed_args=["pow"], overload=(TileTy, TileTy))
 @impl(min, fixed_args=["min"])
 @impl(max, fixed_args=["max"])
 def binary_arithmetic_impl(fn: str, x: Var, y: Var) -> Var:
     return binary_arithmetic(fn, x, y)
 
 
-@impl(operator.add)
-def add_impl(x: Var, y: Var) -> Var:
-    if isinstance(x.get_type(), TupleTy) and isinstance(y.get_type(), TupleTy):
-        x_items = x.get_aggregate().items
-        y_items = y.get_aggregate().items
-        return build_tuple(x_items + y_items)
+@impl(operator.add, overload=(TupleTy, TupleTy))
+def add_tuple_impl(x: Var, y: Var):
+    x_items = x.get_aggregate().items
+    y_items = y.get_aggregate().items
+    return build_tuple(x_items + y_items)
+
+
+@impl(operator.add, overload=(TileTy, TileTy))
+def add_tile_impl(x: Var, y: Var) -> Var:
     return binary_arithmetic("add", x, y)
 
 
@@ -1157,7 +1189,7 @@ def binary_arithmetic_impl_with_rd_and_ftz(fn: str, x: Var, y: Var,
     return binary_arithmetic(fn, x, y, rounding_mode, flush_to_zero)
 
 
-@impl(operator.mod)
+@impl(operator.mod, overload=(TileTy, TileTy))
 @impl(ct.mod)
 def mod(x: Var, y: Var) -> Var:
     x_ty = require_tile_maybe_loose_type(x)
@@ -3577,7 +3609,7 @@ def mma_impl(x: Var, y: Var, acc: Var, use_fast_acc: Var) -> Var:
 
 
 @impl(ct.matmul)
-@impl(operator.matmul)
+@impl(operator.matmul, overload=(TileTy, TileTy))
 def matmul_impl(x: Var, y: Var) -> Var:
     x_tile_type = require_tile_type(x)
     y_tile_type = require_tile_type(y)

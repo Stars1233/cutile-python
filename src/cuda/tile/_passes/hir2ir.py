@@ -5,8 +5,7 @@ import inspect
 import sys
 from contextlib import contextmanager
 import dataclasses
-from types import BuiltinFunctionType, FunctionType
-from typing import Sequence, Mapping
+from typing import Sequence, Mapping, Callable
 
 from .ast2hir import get_function_hir
 from .. import TileTypeError
@@ -205,7 +204,11 @@ async def _call_user_defined(callee_hir: hir.Function,
     return ret
 
 
-async def _call_function(callee: FunctionType | BuiltinFunctionType,
+async def call_function(callee: Callable, *args: Var, **kwargs: Var):
+    return await _call_function(callee, args, kwargs, ir.Builder.get_current())
+
+
+async def _call_function(callee: Callable,
                          args: Sequence[Var],
                          kwargs: Mapping[str, Var],
                          builder: ir.Builder):

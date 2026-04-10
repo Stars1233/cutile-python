@@ -81,7 +81,7 @@ class ImplRegistry:
             ret._overloaded_implementations[stub] = dict(overloads)
         return ret
 
-    def overload_dispatcher(self, stub):
+    def overload_dispatcher(self, stub, *, fixed_args: Sequence[Any] = ()):
         """
         Decorates a function to attach an overloaded implementation dispatcher to a stub.
 
@@ -92,6 +92,10 @@ class ImplRegistry:
         """
 
         def decorate(key_func):
+            orig_func = key_func
+            if len(fixed_args) > 0:
+                key_func = functools.partial(orig_func, *fixed_args)
+
             @functools.wraps(key_func)
             async def implementation(*args):
                 generator = key_func(*args)
@@ -117,7 +121,8 @@ class ImplRegistry:
 
             assert stub not in self._overloaded_implementations
             self._overloaded_implementations[stub] = dict()
-            return self.impl(stub)(implementation)
+            self.impl(stub)(implementation)
+            return orig_func
 
         return decorate
 
@@ -126,12 +131,11 @@ class ImplRegistry:
         best_matches = []
         best_priority = -1
 
-        for parameters, (priority, impl) in candidates.items():
+        for priority, predicates, impl in candidates.values():
             if priority < best_priority:
                 continue
 
-            if not all(p == WILDCARD or p == arg
-                       for p, arg in zip(parameters, overload, strict=True)):
+            if not all(p(arg) for p, arg in zip(predicates, overload, strict=True)):
                 continue
 
             if priority > best_priority:
@@ -200,8 +204,9 @@ class ImplRegistry:
             if len(overload) == 0:
                 self.op_implementations[stub] = wrapper
             else:
+                predicates = tuple(_predicate_from_overload_pattern(p) for p in overload)
                 self._overloaded_implementations[stub][overload] = \
-                        (sum(p != WILDCARD for p in overload), wrapper)
+                    (sum(p != WILDCARD for p in overload), predicates, wrapper)
 
             return orig_func
 
@@ -209,8 +214,17 @@ class ImplRegistry:
 
     def _have_overload_matching_first_param(self, stub: Callable, first_param: Any) -> bool:
         candidates = self._overloaded_implementations[stub]
-        return any(parameters[0] == first_param
-                   for parameters in candidates.keys())
+        return any(predicates[0](first_param)
+                   for _priority, predicates, _impl in candidates.values())
+
+
+def _predicate_from_overload_pattern(pattern):
+    if pattern == WILDCARD:
+        return lambda _: True
+    elif isinstance(pattern, type):
+        return lambda x: issubclass(x, pattern)
+    else:
+        return lambda x: pattern == x
 
 
 class _CurrentRegistry(threading.local):

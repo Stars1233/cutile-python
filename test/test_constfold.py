@@ -60,7 +60,7 @@ def test_tile_attr():
     compile(kernel, ())
 
 
-def test_compare_dtype():
+def test_compare_array_dtype():
 
     def kernel(x):
         if x.dtype == ct.float64:
@@ -70,6 +70,52 @@ def test_compare_dtype():
         ct.full((2, 2), val, dtype=ct.float32)
 
     compile(kernel, (nd_tensor(2),))
+
+
+def test_dtype_comparison():
+    def kernel():
+        a = ct.float32 == ct.float32
+        ct.static_assert(a is True)
+
+        b = ct.float32 != ct.float32
+        ct.static_assert(b is False)
+
+        c = ct.float32 == ct.float64
+        ct.static_assert(c is False)
+
+        d = ct.float32 != ct.float64
+        ct.static_assert(d is True)
+
+    compile(kernel, ())
+
+
+def test_string_comparison():
+    def kernel():
+        a = "foo" == "foo"
+        ct.static_assert(a is True)
+
+        b = "foo" != "foo"
+        ct.static_assert(b is False)
+
+        c = "foo" == "bar"
+        ct.static_assert(c is False)
+
+        d = "foo" != "bar"
+        ct.static_assert(d is True)
+
+        e = "foo" < "bar"
+        ct.static_assert(e is False)
+
+        f = "foo" <= "bar"
+        ct.static_assert(f is False)
+
+        g = "foo" > "bar"
+        ct.static_assert(g is True)
+
+        h = "foo" >= "bar"
+        ct.static_assert(h is True)
+
+    compile(kernel, ())
 
 
 def test_none_as_constant():
