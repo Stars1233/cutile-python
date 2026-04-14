@@ -59,7 +59,7 @@ def test_tiled_view_copy_2d(shape, tile_size, dtype, noncontiguous):
         tv_n = n.tiled_view(())
         check_tiled_view_properties(tv_n, n.dtype, ())
         if bidm == 0 and bidn == 0:
-            nt1, nt2 = tv_x.num_tiles
+            nt1, nt2 = tv_x.num_tiles(0), tv_x.num_tiles(1)
             tv_n.store(0, nt1)
             tv_n.store(1, nt2)
 
@@ -158,7 +158,7 @@ def test_tiled_view_ifelse_result(use_x):
     @ct.kernel
     def kernel(x, y, z, TILE: ConstInt, USE_X: ct.Constant[bool]):
         tv = x.tiled_view(TILE) if USE_X else y.tiled_view(TILE)
-        for i in range(tv.num_tiles[0]):
+        for i in range(tv.num_tiles(0)):
             z.tiled_view(TILE).store(i, tv.load(i))
 
     x = make_tensor((128,), dtype=torch.float32, device='cuda')
@@ -173,7 +173,7 @@ def test_tiled_view_loop_carried():
     def kernel(x, y, z, TILE: ConstInt):
         tv = x.tiled_view(TILE)
         tv_z = z.tiled_view(TILE)
-        for i in range(tv_z.num_tiles[0]):
+        for i in range(tv_z.num_tiles(0)):
             tv_z.store(i, tv.load(0))
             tv = y.tiled_view(TILE)
 
@@ -210,7 +210,7 @@ def test_tiled_view_helper_func():
 
         tv_x = get_view(x, TILE)
         tv_y = get_view(y, TILE)
-        for i in range(tv_x.num_tiles[0]):
+        for i in range(tv_x.num_tiles(0)):
             copy_tile(tv_x, tv_y, i)
 
     x = make_tensor((128,), dtype=torch.float32, device='cuda')
@@ -233,7 +233,7 @@ def test_tiled_view_closure():
             return copy
 
         func = make_closure()
-        for i in range(tv_x.num_tiles[0]):
+        for i in range(tv_x.num_tiles(0)):
             func(i)
 
     x = make_tensor((128,), dtype=torch.float32, device='cuda')

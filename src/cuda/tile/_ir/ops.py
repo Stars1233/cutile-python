@@ -1797,9 +1797,7 @@ def getattr_tiled_view_tile_shape_impl(object: Var, name: Var):
 
 @impl(getattr, overload=(TiledViewTy, "num_tiles"))
 def getattr_tiled_view_num_tiles_impl(object: Var, name: Var):
-    ty = object.get_type()
-    [array] = object.get_aggregate().as_tuple()
-    return build_tuple(num_tiles(array, ty.tile_shape, get_default_order(ty.ndim)))
+    return bind_method(object, ct._m_tiled_view_num_tiles)
 
 
 @impl(getattr, overload=(TiledViewTy, "load"))
@@ -4434,6 +4432,16 @@ def array_tiled_view_impl(array: Var, tile_shape: Var, padding_mode: Var) -> Var
     padding_mode_val = require_constant_enum(padding_mode, PaddingMode)
     view_ty = TiledViewTy(array_ty, shape_val, padding_mode_val)
     return make_aggregate(TiledViewValue(array), view_ty)
+
+
+@impl(ct._m_tiled_view_num_tiles)
+def tiled_view_num_tiles(tiled_view: Var, axis: Var) -> Var:
+    ty = tiled_view.get_type()
+    [array] = tiled_view.get_aggregate().as_tuple()
+    view_shape = num_tiles(array, ty.tile_shape, get_default_order(ty.ndim))
+    axis = require_constant_int(axis)
+    axis = normalize_axis(axis, ty.ndim)
+    return view_shape[axis]
 
 
 @impl(ct._m_tiled_view_load)

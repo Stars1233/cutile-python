@@ -524,20 +524,23 @@ class TiledView:
 
     @property
     @function
-    def num_tiles(self) -> tuple[int, ...]:
-        """The number of tiles in each of the |tiled view|'s dimensions.
-
-        Returns:
-            tuple[int32,...]:
-        """
-
-    @property
-    @function
     def tile_shape(self) -> tuple[int, ...]:
         """The shape of tiles produced by each indexed access.
 
         Returns:
             tuple[const int,...]:
+        """
+
+    @function
+    def num_tiles(self, axis) -> int:
+        """The number of tiles along a |tiled view|'s given axis.
+
+        Args:
+            axis (const int): The axis of the tile index space.
+
+        Returns:
+            int32:
+
         """
 
     def load(self, index: Shape, *,
@@ -3667,6 +3670,11 @@ def _inherit_kwdefaults(source):
 @function
 def _m_array_tiled_view(array, tile_shape, *, padding_mode): ...
 # Array.tiled_view(shape, padding_mode=padding_mode)
+
+
+@function
+def _m_tiled_view_num_tiles(tiled_view, axis): ...
+# TiledView.num_tiles(axis)
 
 
 @_inherit_kwdefaults(TiledView.load)
