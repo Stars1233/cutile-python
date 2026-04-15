@@ -287,6 +287,49 @@ class Array:
         return _m_array_get_raw_memory(self)
 
 
+def _doc_raw_array_memory_atomic_rmw_op(f):
+    op_name = f.__name__
+    f.__doc__ += f"""\
+
+        For each individual element, the operation is performed atomically,
+        but the operation as a whole is not atomic, and the order of individual writes is
+        unspecified.
+
+        Args:
+            offset: Element offset(s) from the base pointer; scalar or tile of integer type.
+            update: Operand(s) to the atomic operation. Must be scalars 
+                or tiles whose shapes are broadcastable to the common shape of `offset`.
+            mask: Optional boolean mask; where False, no operation is performed.
+            memory_order: Memory ordering for the atomic operation.
+            memory_scope: Memory scope for the atomic operation.
+
+        Returns:
+            Tile: Original elements before the operation.
+
+        Examples:
+
+            .. testcode::
+                :template: setup_only.py
+
+                @ct.kernel
+                def kernel(x):
+                    offset = ct.arange(4, dtype=ct.int32)
+                    update = ct.full((4,), 10, dtype=ct.int32)
+                    raw_mem = x.get_raw_memory()
+                    old = raw_mem.{op_name}(offset, update)
+                    print(old)
+
+                x = torch.ones(4, dtype=torch.int32, device='cuda')
+                ct.launch(stream, (1,), kernel, (x,))
+
+            .. testoutput::
+
+                [1, 1, 1, 1]
+    """
+
+    return f
+
+
 class RawArrayMemory:
     """Type stub for RawArrayMemory objects returned by :py:meth:`Array.get_raw_memory`."""
 
@@ -330,6 +373,158 @@ class RawArrayMemory:
         """
         return _m_raw_array_memory_store_offset(
             self, offset, value, mask=mask, latency=latency)
+
+    def atomic_cas_offset(self, offset: "TileOrScalar", expected: "TileOrScalar",
+                          desired: "TileOrScalar", /, *,
+                          mask: Optional["Tile"] = None,
+                          memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
+                          memory_scope: "MemoryScope" = MemoryScope.DEVICE) -> "Tile":
+        """Bulk atomic compare-and-swap on raw array memory at base_ptr + offset.
+
+        For each offset, `atomic_cas_offset()` compares the corresponding element
+        to the `expected` value. If it matches, it is then overwritten with the `desired` value;
+        otherwise, no update is performed. In either case, the old value of the element is returned.
+        For each individual element, the described compare-and-swap operation is performed 
+        atomically, but the operation as a whole is not atomic, and the order of individual updates 
+        is unspecified.
+
+        Args:
+            offset: Element offset(s) from the base pointer; scalar or tile of integer type.
+            expected: Value(s) to compare against the current memory contents. Must be scalars 
+                or tiles whose shapes are broadcastable to the common shape of `offset`.
+            desired: Value(s) to write when the comparison succeeds. Must be scalars 
+                or tiles whose shapes are broadcastable to the common shape of `offset`.
+            mask: Optional boolean mask; where False, no update is performed, and a corresponding 
+                `expected` value is returned.
+            memory_order: Memory ordering for the atomic operation.
+            memory_scope: Memory scope for the atomic operation.
+
+        Returns:
+            Tile: Original elements before the operation.
+
+        Examples:
+
+            .. testcode::
+                :template: setup_only.py
+
+                @ct.kernel
+                def kernel(x):
+                    offset = ct.arange(4, dtype=ct.int32)
+                    expected = ct.full((4,), 0, dtype=ct.int32)
+                    desired = ct.full((4,), 42, dtype=ct.int32)
+                    raw_mem = x.get_raw_memory()
+                    old = raw_mem.atomic_cas_offset(offset, expected, desired)
+                    print(old)
+
+                x = torch.tensor([0, 1, 0, 1], device='cuda')
+                ct.launch(stream, (1,), kernel, (x,))
+                print(x.tolist())
+
+            .. testoutput::
+
+                [0, 1, 0, 1]
+                [42, 1, 42, 1]
+        """
+        return _m_raw_array_memory_atomic_cas(
+            self, offset, expected, desired, mask=mask,
+            memory_order=memory_order, memory_scope=memory_scope)
+
+    @_doc_raw_array_memory_atomic_rmw_op
+    def atomic_xchg_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
+                           mask: Optional["Tile"] = None,
+                           memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
+                           memory_scope: "MemoryScope" = MemoryScope.DEVICE) -> "Tile":
+        """Bulk atomic exchange on raw array memory at base_ptr + offset.
+
+        For each offset, stores ``update`` to the memory element and returns the original value.
+        """
+        return _m_raw_array_memory_atomic_xchg(
+            self, offset, update, mask=mask,
+            memory_order=memory_order, memory_scope=memory_scope)
+
+    @_doc_raw_array_memory_atomic_rmw_op
+    def atomic_add_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
+                          mask: Optional["Tile"] = None,
+                          memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
+                          memory_scope: "MemoryScope" = MemoryScope.DEVICE) -> "Tile":
+        """Bulk atomic post-increment on raw array memory at base_ptr + offset.
+
+        For each offset, reads the memory element, adds ``update`` to it, writes the result
+        back, and returns the original value.
+        """
+        return _m_raw_array_memory_atomic_add(
+            self, offset, update, mask=mask,
+            memory_order=memory_order, memory_scope=memory_scope)
+
+    @_doc_raw_array_memory_atomic_rmw_op
+    def atomic_max_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
+                          mask: Optional["Tile"] = None,
+                          memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
+                          memory_scope: "MemoryScope" = MemoryScope.DEVICE) -> "TileOrScalar":
+        """Bulk atomic maximum on raw array memory at base_ptr + offset.
+
+        For each offset, reads the memory element, computes the maximum between its value
+        and ``update``, writes the result back, and returns the original value.
+        """
+        return _m_raw_array_memory_atomic_max(
+            self, offset, update, mask=mask,
+            memory_order=memory_order, memory_scope=memory_scope)
+
+    @_doc_raw_array_memory_atomic_rmw_op
+    def atomic_min_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
+                          mask: Optional["Tile"] = None,
+                          memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
+                          memory_scope: "MemoryScope" = MemoryScope.DEVICE) -> "TileOrScalar":
+        """Bulk atomic minimum on raw array memory at base_ptr + offset.
+
+        For each offset, reads the memory element, computes the minimum between its value
+        and ``update``, writes the result back, and returns the original value.
+        """
+        return _m_raw_array_memory_atomic_min(
+            self, offset, update, mask=mask,
+            memory_order=memory_order, memory_scope=memory_scope)
+
+    @_doc_raw_array_memory_atomic_rmw_op
+    def atomic_and_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
+                          mask: Optional["Tile"] = None,
+                          memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
+                          memory_scope: "MemoryScope" = MemoryScope.DEVICE) -> "TileOrScalar":
+        """Bulk atomic bitwise AND on raw array memory at base_ptr + offset.
+
+        For each offset, reads the memory element, computes the bitwise AND with ``update``,
+        writes the result back, and returns the original value.
+        """
+        return _m_raw_array_memory_atomic_and(
+            self, offset, update, mask=mask,
+            memory_order=memory_order, memory_scope=memory_scope)
+
+    @_doc_raw_array_memory_atomic_rmw_op
+    def atomic_or_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
+                         mask: Optional["Tile"] = None,
+                         memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
+                         memory_scope: "MemoryScope" = MemoryScope.DEVICE) -> "Tile":
+        """Bulk atomic bitwise OR on raw array memory at base_ptr + offset.
+
+        For each offset, reads the memory element, computes the bitwise OR with ``update``,
+        writes the result back, and returns the original value.
+        """
+        return _m_raw_array_memory_atomic_or(
+            self, offset, update, mask=mask,
+            memory_order=memory_order, memory_scope=memory_scope)
+
+    @_doc_raw_array_memory_atomic_rmw_op
+    def atomic_xor_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
+                          mask: Optional["Tile"] = None,
+                          memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
+                          memory_scope: "MemoryScope" = MemoryScope.DEVICE) -> "Tile":
+        """Bulk atomic bitwise XOR on raw array memory at base_ptr + offset.
+
+        For each offset, reads the memory element, computes the bitwise XOR with ``update``,
+        writes the result back, and returns the original value.
+        """
+        return _m_raw_array_memory_atomic_xor(
+            self, offset, update, mask=mask,
+            memory_order=memory_order, memory_scope=memory_scope)
 
 
 class Tile:
@@ -3706,3 +3901,75 @@ def _m_raw_array_memory_store_offset(
         raw_array_memory: RawArrayMemory, offset: TileOrScalar, value: TileOrScalar, /, *,
         mask: Optional[Tile] = None,
         latency: Optional[int] = None) -> None: ...  # RawArrayMemory.store_offset()
+
+
+@function
+def _m_raw_array_memory_atomic_cas(
+        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
+        expected: TileOrScalar, desired: TileOrScalar, /, *,
+        mask: Optional[Tile] = None,
+        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
+        memory_scope: MemoryScope = MemoryScope.DEVICE) -> Tile: ...  # RawArrayMemory.atomic_cas()
+
+
+@function
+def _m_raw_array_memory_atomic_xchg(
+        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
+        update: TileOrScalar, /, *,
+        mask: Optional[Tile] = None,
+        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
+        memory_scope: MemoryScope = MemoryScope.DEVICE) -> Tile: ...  # RawArrayMemory.atomic_xchg()
+
+
+@function
+def _m_raw_array_memory_atomic_add(
+        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
+        update: TileOrScalar, /, *,
+        mask: Optional[Tile] = None,
+        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
+        memory_scope: MemoryScope = MemoryScope.DEVICE) -> Tile: ...  # RawArrayMemory.atomic_add()
+
+
+@function
+def _m_raw_array_memory_atomic_max(
+        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
+        update: TileOrScalar, /, *,
+        mask: Optional[Tile] = None,
+        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
+        memory_scope: MemoryScope = MemoryScope.DEVICE) -> TileOrScalar: ...
+
+
+@function
+def _m_raw_array_memory_atomic_min(
+        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
+        update: TileOrScalar, /, *,
+        mask: Optional[Tile] = None,
+        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
+        memory_scope: MemoryScope = MemoryScope.DEVICE) -> TileOrScalar: ...
+
+
+@function
+def _m_raw_array_memory_atomic_and(
+        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
+        update: TileOrScalar, /, *,
+        mask: Optional[Tile] = None,
+        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
+        memory_scope: MemoryScope = MemoryScope.DEVICE) -> TileOrScalar: ...
+
+
+@function
+def _m_raw_array_memory_atomic_or(
+        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
+        update: TileOrScalar, /, *,
+        mask: Optional[Tile] = None,
+        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
+        memory_scope: MemoryScope = MemoryScope.DEVICE) -> Tile: ...  # RawArrayMemory.atomic_or()
+
+
+@function
+def _m_raw_array_memory_atomic_xor(
+        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
+        update: TileOrScalar, /, *,
+        mask: Optional[Tile] = None,
+        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
+        memory_scope: MemoryScope = MemoryScope.DEVICE) -> Tile: ...  # RawArrayMemory.atomic_xor()

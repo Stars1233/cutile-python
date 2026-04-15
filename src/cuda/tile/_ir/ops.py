@@ -1829,6 +1829,46 @@ def getattr_raw_array_memory_store_offset_impl(object: Var, name: Var):
     return bind_method(object, ct._m_raw_array_memory_store_offset)
 
 
+@impl(getattr, overload=(RawArrayMemoryTy, "atomic_cas_offset"))
+def getattr_raw_array_memory_atomic_cas_impl(object: Var, name: Var):
+    return bind_method(object, ct._m_raw_array_memory_atomic_cas)
+
+
+@impl(getattr, overload=(RawArrayMemoryTy, "atomic_xchg_offset"))
+def getattr_raw_array_memory_atomic_xchg_impl(object: Var, name: Var):
+    return bind_method(object, ct._m_raw_array_memory_atomic_xchg)
+
+
+@impl(getattr, overload=(RawArrayMemoryTy, "atomic_add_offset"))
+def getattr_raw_array_memory_atomic_add_impl(object: Var, name: Var):
+    return bind_method(object, ct._m_raw_array_memory_atomic_add)
+
+
+@impl(getattr, overload=(RawArrayMemoryTy, "atomic_max_offset"))
+def getattr_raw_array_memory_atomic_max_impl(object: Var, name: Var):
+    return bind_method(object, ct._m_raw_array_memory_atomic_max)
+
+
+@impl(getattr, overload=(RawArrayMemoryTy, "atomic_min_offset"))
+def getattr_raw_array_memory_atomic_min_impl(object: Var, name: Var):
+    return bind_method(object, ct._m_raw_array_memory_atomic_min)
+
+
+@impl(getattr, overload=(RawArrayMemoryTy, "atomic_and_offset"))
+def getattr_raw_array_memory_atomic_and_impl(object: Var, name: Var):
+    return bind_method(object, ct._m_raw_array_memory_atomic_and)
+
+
+@impl(getattr, overload=(RawArrayMemoryTy, "atomic_or_offset"))
+def getattr_raw_array_memory_atomic_or_impl(object: Var, name: Var):
+    return bind_method(object, ct._m_raw_array_memory_atomic_or)
+
+
+@impl(getattr, overload=(RawArrayMemoryTy, "atomic_xor_offset"))
+def getattr_raw_array_memory_atomic_xor_impl(object: Var, name: Var):
+    return bind_method(object, ct._m_raw_array_memory_atomic_xor)
+
+
 # ===========================================================================================
 # Module & class attributes
 # ===========================================================================================
@@ -2339,9 +2379,8 @@ def get_raw_memory_impl(array: Var) -> Var:
     return ret
 
 
-@impl(ct._m_raw_array_memory_load_offset)
-def raw_array_memory_load_offset_impl(raw_array_memory: Var, offset: Var, mask: Var,
-                                      padding_value: Var, latency: Var) -> Var:
+def _process_raw_array_memory_pointer_and_mask(
+        raw_array_memory: Var, offset: Var, mask: Optional[Var]):
     raw_mem_ty = require_raw_array_memory_type(raw_array_memory)
     raw_mem_val = raw_array_memory.get_aggregate()
     assert isinstance(raw_mem_val, RawArrayMemoryValue)
@@ -2354,6 +2393,14 @@ def raw_array_memory_load_offset_impl(raw_array_memory: Var, offset: Var, mask: 
     array_dtype = raw_mem_ty.dtype
 
     final_mask = _process_custom_mask(mask, None, pointer_shape)
+    return pointer, pointer_shape, final_mask, array_dtype
+
+
+@impl(ct._m_raw_array_memory_load_offset)
+def raw_array_memory_load_offset_impl(raw_array_memory: Var, offset: Var, mask: Var,
+                                      padding_value: Var, latency: Var) -> Var:
+    pointer, pointer_shape, final_mask, array_dtype = _process_raw_array_memory_pointer_and_mask(
+        raw_array_memory, offset, mask)
 
     if padding_value.is_constant() and padding_value.get_constant() is None:
         padding_var: Optional[Var] = None
@@ -2375,18 +2422,9 @@ def raw_array_memory_load_offset_impl(raw_array_memory: Var, offset: Var, mask: 
 @impl(ct._m_raw_array_memory_store_offset)
 def raw_array_memory_store_offset_impl(raw_array_memory: Var, offset: Var, value: Var,
                                        mask: Var, latency: Var) -> None:
-    raw_mem_ty = require_raw_array_memory_type(raw_array_memory)
-    raw_mem_val = raw_array_memory.get_aggregate()
-    assert isinstance(raw_mem_val, RawArrayMemoryValue)
-    base_ptr = raw_mem_val.base_ptr
+    pointer, pointer_shape, final_mask, array_dtype = _process_raw_array_memory_pointer_and_mask(
+        raw_array_memory, offset, mask)
 
-    offset = astype(offset, datatype.uint64)
-    pointer = pointer_offset(base_ptr, offset)
-    pointer_ty = pointer.get_type()
-    pointer_shape = pointer_ty.shape
-    array_dtype = raw_mem_ty.dtype
-
-    final_mask = _process_custom_mask(mask, None, pointer_shape)
     value = _get_scatter_value(value, pointer_shape, array_dtype, "Value",
                                array_name="RawArrayMemory")
 
@@ -2817,16 +2855,13 @@ class TileAtomicCAS(Operation, opcode="tile_atomic_cas",
         )
 
 
-@impl(ct.atomic_cas)
-def atomic_cas_impl(array: Var, indices: Var, expected: Var, desired: Var, check_bounds: Var,
-                    memory_order: Var, memory_scope: Var) -> Var:
-    array_dtype = array.get_type().dtype
+def _atomic_cas_core(array_dtype: DType,
+                     pointer: Var, pointer_shape,
+                     mask,
+                     expected: Var, desired: Var,
+                     memory_order: Var, memory_scope: Var) -> Var:
     if array_dtype not in int_float_32_64_dtypes:
         raise TileTypeError(f"Unsupported array dtype: {array_dtype}")
-
-    pointer, mask = _gather_scatter_pointer_and_mask(array, indices, check_bounds)
-    pointer_ty = pointer.get_type()
-    pointer_shape = pointer_ty.shape
 
     # Handle the `expected` and `desired` values
     expected = _get_scatter_value(expected, pointer_shape, array_dtype, "Expected value")
@@ -2843,6 +2878,27 @@ def atomic_cas_impl(array: Var, indices: Var, expected: Var, desired: Var, check
                                    mask=mask, memory_order=memory_order,
                                    memory_scope=memory_scope)
     return result
+
+
+@impl(ct.atomic_cas)
+def atomic_cas_impl(array: Var, indices: Var, expected: Var, desired: Var, check_bounds: Var,
+                    memory_order: Var, memory_scope: Var) -> Var:
+    pointer, mask = _gather_scatter_pointer_and_mask(array, indices, check_bounds)
+    pointer_shape = pointer.get_type().shape
+    array_dtype = array.get_type().dtype
+    return _atomic_cas_core(array_dtype, pointer, pointer_shape, mask,
+                            expected, desired, memory_order, memory_scope)
+
+
+@impl(ct._m_raw_array_memory_atomic_cas)
+def raw_array_memory_atomic_cas_impl(raw_array_memory: Var, offset: Var,
+                                     expected: Var, desired: Var,
+                                     mask: Var, memory_order: Var,
+                                     memory_scope: Var) -> Var:
+    pointer, pointer_shape, final_mask, array_dtype = _process_raw_array_memory_pointer_and_mask(
+        raw_array_memory, offset, mask)
+    return _atomic_cas_core(array_dtype, pointer, pointer_shape, final_mask,
+                            expected, desired, memory_order, memory_scope)
 
 
 class AtomicRMWMode(enum.Enum):
@@ -2892,6 +2948,47 @@ int_32_64_dtypes = (datatype.int32, datatype.int64, datatype.uint32, datatype.ui
 int_float_32_64_dtypes = (*int_32_64_dtypes, datatype.float32, datatype.float64)
 
 
+def _atomic_rmw_core(int_mode: Optional[AtomicRMWMode],
+                     uint_mode: Optional[AtomicRMWMode],
+                     float_mode: Optional[AtomicRMWMode],
+                     bitwise: bool,
+                     supported_dtypes: Sequence[DType],
+                     array_dtype: DType,
+                     pointer: Var, pointer_shape,
+                     mask,
+                     update: Var, memory_order: Var, memory_scope: Var) -> Var:
+    if array_dtype not in supported_dtypes:
+        raise TileTypeError(f"Unsupported array dtype: {array_dtype}")
+
+    if is_float(array_dtype):
+        mode = float_mode
+    elif is_integral(array_dtype):
+        mode = int_mode if is_signed(array_dtype) else uint_mode
+    else:
+        mode = None
+    assert mode is not None
+
+    update = _get_scatter_value(update, pointer_shape, array_dtype, "Update",
+                                cast_dtype=not bitwise)
+    if bitwise:
+        update_dtype = update.get_type().dtype
+        if update_dtype != array_dtype:
+            raise TileTypeError("Bitwise atomic read-modify-write operations require"
+                                f" that the update dtype ({update_dtype}) exactly matches"
+                                f" the array dtype ({array_dtype})")
+
+    memory_order = require_constant_enum(memory_order, MemoryOrder)
+    memory_scope = require_constant_enum(memory_scope, MemoryScope)
+    validate_memory_order_and_scope(memory_order, memory_scope, TileAtomicRMW)
+
+    result_ty = make_tile_ty(array_dtype, pointer_shape)
+    result, _token = add_operation(TileAtomicRMW, (result_ty, TokenTy()),
+                                   mode=mode, pointer=pointer, update=update,
+                                   mask=mask, memory_order=memory_order,
+                                   memory_scope=memory_scope)
+    return result
+
+
 @impl(ct.atomic_xchg, fixed_args=[
     AtomicRMWMode.EXCHANGE, AtomicRMWMode.EXCHANGE, AtomicRMWMode.EXCHANGE,
     False, int_float_32_64_dtypes])
@@ -2921,41 +3018,48 @@ def atomic_rmw_impl(int_mode: Optional[AtomicRMWMode],
                     # --- end of fixed args ---
                     array: Var, indices: Var, update: Var,
                     check_bounds: Var, memory_order: Var, memory_scope: Var):
-    array_dtype = array.get_type().dtype
-    if array_dtype not in supported_dtypes:
-        raise TileTypeError(f"Unsupported array dtype: {array_dtype}")
-
-    if is_float(array_dtype):
-        mode = float_mode
-    elif is_integral(array_dtype):
-        mode = int_mode if is_signed(array_dtype) else uint_mode
-    else:
-        mode = None
-    assert mode is not None
-
     pointer, mask = _gather_scatter_pointer_and_mask(array, indices, check_bounds)
-    pointer_ty = pointer.get_type()
-    pointer_shape = pointer_ty.shape
+    pointer_shape = pointer.get_type().shape
+    array_dtype = array.get_type().dtype
+    return _atomic_rmw_core(int_mode, uint_mode, float_mode, bitwise, supported_dtypes,
+                            array_dtype, pointer, pointer_shape, mask,
+                            update, memory_order, memory_scope)
 
-    update = _get_scatter_value(update, pointer_shape, array_dtype, "Update",
-                                cast_dtype=not bitwise)
-    if bitwise:
-        update_dtype = update.get_type().dtype
-        if update_dtype != array_dtype:
-            raise TileTypeError("Bitwise atomic read-modify-write operations require"
-                                f" that the update dtype ({update_dtype}) exactly matches"
-                                f" the array dtype ({array_dtype})")
 
-    memory_order = require_constant_enum(memory_order, MemoryOrder)
-    memory_scope = require_constant_enum(memory_scope, MemoryScope)
-    validate_memory_order_and_scope(memory_order, memory_scope, TileAtomicRMW)
-
-    result_ty = make_tile_ty(array_dtype, pointer_shape)
-    result, _token = add_operation(TileAtomicRMW, (result_ty, TokenTy()),
-                                   mode=mode, pointer=pointer, update=update,
-                                   mask=mask, memory_order=memory_order,
-                                   memory_scope=memory_scope)
-    return result
+@impl(ct._m_raw_array_memory_atomic_xchg, fixed_args=[
+    AtomicRMWMode.EXCHANGE, AtomicRMWMode.EXCHANGE, AtomicRMWMode.EXCHANGE,
+    False, int_float_32_64_dtypes])
+@impl(ct._m_raw_array_memory_atomic_add, fixed_args=[
+    AtomicRMWMode.ADD_INT, AtomicRMWMode.ADD_INT, AtomicRMWMode.ADD_FLOAT,
+    False, (*int_float_32_64_dtypes, datatype.float16)])
+@impl(ct._m_raw_array_memory_atomic_min, fixed_args=[
+    AtomicRMWMode.MIN_SIGNED_INT, AtomicRMWMode.MIN_UNSIGNED_INT, None,
+    False, int_32_64_dtypes])
+@impl(ct._m_raw_array_memory_atomic_max, fixed_args=[
+    AtomicRMWMode.MAX_SIGNED_INT, AtomicRMWMode.MAX_UNSIGNED_INT, None,
+    False, int_32_64_dtypes])
+@impl(ct._m_raw_array_memory_atomic_and, fixed_args=[
+    AtomicRMWMode.BITWISE_AND, AtomicRMWMode.BITWISE_AND, None,
+    True, int_32_64_dtypes])
+@impl(ct._m_raw_array_memory_atomic_or, fixed_args=[
+    AtomicRMWMode.BITWISE_OR, AtomicRMWMode.BITWISE_OR, None,
+    True, int_32_64_dtypes])
+@impl(ct._m_raw_array_memory_atomic_xor, fixed_args=[
+    AtomicRMWMode.BITWISE_XOR, AtomicRMWMode.BITWISE_XOR, None,
+    True, int_32_64_dtypes])
+def raw_array_memory_atomic_rmw_impl(int_mode: Optional[AtomicRMWMode],
+                                     uint_mode: Optional[AtomicRMWMode],
+                                     float_mode: Optional[AtomicRMWMode],
+                                     bitwise: bool,
+                                     supported_dtypes: Sequence[DType],
+                                     # --- end of fixed args ---
+                                     raw_array_memory: Var, offset: Var, update: Var,
+                                     mask: Var, memory_order: Var, memory_scope: Var):
+    pointer, pointer_shape, final_mask, array_dtype = _process_raw_array_memory_pointer_and_mask(
+        raw_array_memory, offset, mask)
+    return _atomic_rmw_core(int_mode, uint_mode, float_mode, bitwise, supported_dtypes,
+                            array_dtype, pointer, pointer_shape, final_mask,
+                            update, memory_order, memory_scope)
 
 
 @dataclass(eq=False)
