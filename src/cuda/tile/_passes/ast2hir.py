@@ -587,15 +587,24 @@ def _do_assign(value: hir.Operand, target, ctx: _Context):
 
 @_register(_stmt_handlers, ast.AugAssign)
 def _aug_assign_stmt(aug: ast.AugAssign, ctx: _Context):
-    if not isinstance(aug.target, ast.Name):
-        raise ctx.unsupported_syntax(aug.target)
     op_func = _binop_map.get(type(aug.op))
     if op_func is None:
         raise ctx.unsupported_syntax()
-    lhs = ctx.load(aug.target.id)
-    rhs = _expr(aug.value, ctx)
-    res = ctx.call(op_func, (lhs, rhs))
-    ctx.store(aug.target.id, res)
+
+    if isinstance(aug.target, ast.Name):
+        lhs = ctx.load(aug.target.id)
+        rhs = _expr(aug.value, ctx)
+        res = ctx.call(op_func, (lhs, rhs))
+        ctx.store(aug.target.id, res)
+    elif isinstance(aug.target, ast.Subscript):
+        object = _expr(aug.target.value, ctx)
+        key = _expr(aug.target.slice, ctx)
+        rhs = _expr(aug.value, ctx)
+        old_value = ctx.call(operator.getitem, (object, key))
+        new_value = ctx.call(op_func, (old_value, rhs))
+        ctx.call(operator.setitem, (object, key, new_value))
+    else:
+        raise ctx.unsupported_syntax(aug.target)
 
 
 @_register(_stmt_handlers, ast.Expr)
