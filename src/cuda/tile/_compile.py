@@ -457,7 +457,7 @@ class _CompilerBinary:
     def run(self,
             args: list[str],
             flags: list[str],
-            timeout_sec: int | None = None):
+            timeout_sec: float | None = None):
         command = [self.path, *args]
 
         logger.debug(f"Invoke tile compiler: {' '.join(command + flags)}\n"
@@ -665,7 +665,7 @@ def compile_cubin(
         fname_bytecode: str,
         compiler_options: CompilerOptions,
         sm_arch: str,
-        timeout_sec: Optional[int]) -> Path:
+        timeout_sec: Optional[float]) -> Path:
     binary = _find_compiler_bin()
     fname_cubin = Path(fname_bytecode).with_suffix(".cubin")
     compiler_hints = compiler_options.specialize_for_target(sm_arch)

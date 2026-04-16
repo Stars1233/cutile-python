@@ -71,6 +71,7 @@ Tile Kernels
 ------------
 
 .. autoclass:: cuda.tile.kernel
+   :members: replace_hints
 
 .. autofunction:: cuda.tile.launch
 

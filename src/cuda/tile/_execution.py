@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
+import dataclasses
 import functools
 from types import FunctionType
 from typing import TYPE_CHECKING
@@ -77,15 +78,6 @@ class kernel(TileDispatcher):
 
     Target-specific values for the compiler options above can be provided
     using a :py:class:`ByTarget` object.
-
-    Examples::
-
-        @ct.kernel
-        def f(a, b, c):
-            pass
-
-        grid = (8, 8)
-        ct.launch(stream, grid, f, (A, B, C))
     """
     def __new__(cls, function=None, /, **kwargs):
         if function is None:
@@ -127,6 +119,38 @@ class kernel(TileDispatcher):
     @property
     def _pyfunc(self):
         return self._annotated_function.pyfunc
+
+    def replace_hints(self, **hints):
+        """Return a new kernel with updated compiler hints.
+
+        Notes::
+
+            Because hints affects compilation, the returned object will have its
+            own JIT cache.
+
+        Examples:
+
+        .. testcode::
+            :template: setup_only.py
+
+            @ct.kernel(num_ctas=2)
+            def kernel():
+                pass
+
+            # compile
+            ct.launch(torch.cuda.current_stream(), (1,), kernel, ())
+            # cache hit
+            ct.launch(torch.cuda.current_stream(), (1,), kernel, ())
+
+            new_kernel = kernel.replace_hints(num_ctas=4)
+
+            # compile with new hints
+            ct.launch(torch.cuda.current_stream(), (1,), kernel, ())
+            # cache hit
+            ct.launch(torch.cuda.current_stream(), (1,), kernel, ())
+        """
+        compiler_options = dataclasses.replace(self._compiler_options, **hints)
+        return kernel(self._pyfunc, **dataclasses.asdict(compiler_options))
 
     def __call__(self, *args, **kwargs):
         raise TypeError("Tile kernels cannot be called directly. Use cuda.tile.launch() instead.")

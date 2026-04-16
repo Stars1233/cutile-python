@@ -150,6 +150,10 @@ from cuda.tile._stub import (
     zeros,
 )
 
+from cuda.tile._context import compiler_timeout
+
+from cuda.tile import tune
+
 from cuda.tile._execution import (
     function,
     kernel
@@ -293,6 +297,10 @@ __all__ = [
     "truediv",
     "where",
     "zeros",
+
+    "compiler_timeout",
+
+    "tune",
 
     "function",
     "kernel",

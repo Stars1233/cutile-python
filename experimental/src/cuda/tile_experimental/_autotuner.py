@@ -15,6 +15,7 @@ import torch
 import logging
 import functools
 import threading
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,9 @@ class _CacheEntry:
 def clear_autotune_cache(*, kernel: TileDispatcher | None = None, key: Any | None = None):
     """Clear entries from the autotuner cache.
 
+    .. deprecated::
+        Use :func:`cuda.tile.tune.exhaustive_search` instead.
+
     The cache is organized as a two-level mapping:
     {kernel_key -> {arg_key -> _CacheEntry}}
 
@@ -118,6 +122,12 @@ def clear_autotune_cache(*, kernel: TileDispatcher | None = None, key: Any | Non
             If provided, restricts clearing to this argument key.
             If ``None``, all keys at the selected level are cleared.
     """
+    warnings.warn(
+        "clear_autotune_cache is deprecated, use cuda.tile.tune.exhaustive_search and "
+        "manage your own cache instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     autotune_cache = default_tile_context.autotune_cache
     if autotune_cache is None:
         return
@@ -188,6 +198,9 @@ def autotune_launch(stream, grid_fn, kernel,
     """
     Run the autotuned kernel and return its result.
 
+    .. deprecated::
+        Use :func:`cuda.tile.tune.exhaustive_search` instead.
+
     It performs the following steps:
     1) picks a configuration from the search space or reuses the cached
         best configuration for the given (kernel, key) pair (unless ``force_retune=True``),
@@ -252,6 +265,11 @@ def autotune_launch(stream, grid_fn, kernel,
             re-run the search. The new best config is then written back
             to the cache.
     """
+    warnings.warn(
+        "autotune_launch is deprecated, use cuda.tile.tune.exhaustive_search instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     import cuda.tile as ct
 
     if callable(search_space):

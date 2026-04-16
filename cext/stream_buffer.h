@@ -74,6 +74,7 @@ private:
 };
 
 StreamBufferPool* stream_buffer_pool_new();
+void stream_buffer_pool_delete(StreamBufferPool* pool);
 
 StreamBufferTransaction stream_buffer_transaction_open(const DriverApi*,
                                                        StreamBufferPool* pool,

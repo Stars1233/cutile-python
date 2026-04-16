@@ -248,3 +248,15 @@ Enums
 
    RoundingMode
    PaddingMode
+
+
+.. _operations-tuning:
+
+Autotuning
+----------
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   tune.exhaustive_search
+   tune.TuningResult

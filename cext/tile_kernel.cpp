@@ -1597,28 +1597,40 @@ static bool try_clarify_invalid_value_error(const DriverApi* driver, const Grid&
     return false;
 }
 
-static Status launch(const DriverApi* driver,
-                     PyObject* dispatcher_pyobj,
-                     Grid grid,
-                     Grid block,
-                     CUstream launch_stream,
-                     PyObject* const* pyargs,
-                     Py_ssize_t num_pyargs) {
-    if (!validate_grid(grid)) return ErrorRaised;
+struct PreparedLaunch {
+    LaunchHelperPtr helper;
+    CUkernel kernel;
+};
+
+static Result<CUcontext> get_stream_context(const DriverApi* driver, CUstream stream) {
+    CUcontext ctx = nullptr;
+    CUresult res = driver->cuStreamGetCtx(stream, &ctx);
+    // INVALID_CONTEXT can happen when it is NULL stream and there is
+    // no active context in current thread. We will still get the context
+    // from the array arguments later during `extract_cuda_args`.
+    if (res != CUDA_SUCCESS && res != CUDA_ERROR_INVALID_CONTEXT) {
+        return raise(PyExc_RuntimeError, "Failed to get a CUDA context from a stream: %s",
+                     get_cuda_error(driver, res));
+    }
+    return ctx;
+}
+
+static Result<PreparedLaunch> prepare_launch(
+        const DriverApi* driver,
+        PyObject* dispatcher_pyobj,
+        CUstream launch_stream,
+        PyObject* const* pyargs,
+        Py_ssize_t num_pyargs,
+        StreamBufferTransaction& tx,
+        StreamBufferPool* sb_pool = nullptr) {
 
     LaunchHelperPtr helper = launch_helper_get();
-    get_pyarg_types(pyargs, num_pyargs, helper->pyarg_types);
-    {
-        CUresult res = driver->cuStreamGetCtx(launch_stream, &helper->cuda_context);
-        // INVALID_CONTEXT can happen when it is NULL stream and there is
-        // no active context in current thread. We will still get the context
-        // from the array arguments later during `extract_cuda_args`.
-        if (res != CUDA_SUCCESS && res != CUDA_ERROR_INVALID_CONTEXT) {
-            return raise(PyExc_RuntimeError, "Failed to get a CUDA context from a stream: %s",
-                         get_cuda_error(driver, res));
-        }
-    }
 
+    Result<CUcontext> stream_context = get_stream_context(driver, launch_stream);
+    if (!stream_context.is_ok()) return ErrorRaised;
+    helper->cuda_context = *stream_context;
+
+    get_pyarg_types(pyargs, num_pyargs, helper->pyarg_types);
     TileDispatcher& dispatcher = py_unwrap<TileDispatcher>(dispatcher_pyobj);
     TileContextDispatcher& ctx_dispatcher = dispatcher.default_context_dispatcher;
     ProfileMap::Item* profile_item = ctx_dispatcher.arg_profiles.find(helper->pyarg_types);
@@ -1663,10 +1675,6 @@ static Status launch(const DriverApi* driver,
         return ErrorRaised;
     }
 
-    ContextGuard ctx_guard(driver);
-    if (!maybe_switch_context(driver, helper->cuda_context, ctx_guard))
-        return ErrorRaised;
-
     KernelMap& kernel_map = profile_item->value.family->kernels_by_constants;
     KernelMap::Item* kernel_item = kernel_map.find(helper->constants);
     if (!kernel_item) {
@@ -1689,10 +1697,13 @@ static Status launch(const DriverApi* driver,
         kernel_item = kernel_map.insert(std::move(helper->constants), std::move(*res));
     }
 
-    StreamBufferTransaction tx;
+    ContextGuard ctx_guard(driver);
+    if (!maybe_switch_context(driver, helper->cuda_context, ctx_guard))
+        return ErrorRaised;
+
+    // Handle list arguments
     if (!helper->list_args.empty()) {
-        {
-            // check stream is not in capturing mode
+        if (!tx) {
             CUstreamCaptureStatus status;
             CUresult res = driver->cuStreamIsCapturing(launch_stream, &status);
             if (res != CUDA_SUCCESS)
@@ -1700,12 +1711,18 @@ static Status launch(const DriverApi* driver,
                         get_cuda_error(driver, res));
             if (status != CU_STREAM_CAPTURE_STATUS_NONE)
                 return raise(PyExc_RuntimeError, "List argument in CUDAGraph isn't supported yet");
-        }
-        Result<StreamBufferPool*> pool_res = get_stream_buffer_pool(driver, helper->cuda_context);
-        if (!pool_res.is_ok()) return ErrorRaised;
 
-        tx = stream_buffer_transaction_open(driver, *pool_res, launch_stream);
-        if (!tx) return raise(PyExc_RuntimeError, "Failed to open a stream buffer transaction");
+            if (!sb_pool) {
+                Result<StreamBufferPool*> pool_res =
+                        get_stream_buffer_pool(driver, helper->cuda_context);
+                if (!pool_res.is_ok()) return ErrorRaised;
+                sb_pool = *pool_res;
+            }
+
+            tx = stream_buffer_transaction_open(driver, sb_pool, launch_stream);
+            if (!tx)
+                return raise(PyExc_RuntimeError, "Failed to open a stream buffer transaction");
+        }
 
         size_t size = helper->nested_arrays.size() * sizeof(helper->nested_arrays[0]);
         DualPointer ptr = tx.allocate(size);
@@ -1732,13 +1749,32 @@ static Status launch(const DriverApi* driver,
     for (Word& arg : helper->cuargs)
         helper->cuarg_pointers.push_back(&arg);
 
+    return PreparedLaunch{std::move(helper), kernel_item->value.cukernel.kernel};
+}
+
+static Status launch(const DriverApi* driver,
+                     PyObject* dispatcher_pyobj,
+                     Grid grid,
+                     Grid block,
+                     CUstream launch_stream,
+                     PyObject* const* pyargs,
+                     Py_ssize_t num_pyargs) {
+    StreamBufferTransaction tx;
+    Result<PreparedLaunch> prep = prepare_launch(
+            driver, dispatcher_pyobj, launch_stream, pyargs, num_pyargs, tx);
+    if (!prep.is_ok()) return ErrorRaised;
+
+    ContextGuard ctx_guard(driver);
+    if (!maybe_switch_context(driver, prep->helper->cuda_context, ctx_guard))
+        return ErrorRaised;
+
     CUresult res = driver->cuLaunchKernel(
-            reinterpret_cast<CUfunction>(kernel_item->value.cukernel.kernel),
+            reinterpret_cast<CUfunction>(prep->kernel),
             grid.dims[0], grid.dims[1], grid.dims[2],
             block.dims[0], block.dims[1], block.dims[2],
             0, // shared memory size set by driver
             launch_stream,
-            helper->cuarg_pointers.data(),
+            prep->helper->cuarg_pointers.data(),
             nullptr);
 
     if (res != CUDA_SUCCESS) {
@@ -1750,6 +1786,146 @@ static Status launch(const DriverApi* driver,
     }
 
     return OK;
+}
+
+static Result<double> benchmark(const DriverApi* driver,
+                                PyObject* dispatcher_pyobj,
+                                Grid grid,
+                                CUstream launch_stream,
+                                PyObject** pyargs,
+                                Py_ssize_t num_pyargs) {
+    struct PoolGuard {
+        StreamBufferPool* p;
+        ~PoolGuard() { stream_buffer_pool_delete(p); }
+    } local_pool{stream_buffer_pool_new()};
+
+    StreamBufferTransaction tx;
+
+    Result<PreparedLaunch> prep = prepare_launch(
+            driver, dispatcher_pyobj, launch_stream, pyargs, num_pyargs,
+            tx, local_pool.p);
+    if (!prep.is_ok()) return ErrorRaised;
+
+    CUcontext ctx = prep->helper->cuda_context;
+    ContextGuard bench_ctx(driver);
+    if (!maybe_switch_context(driver, ctx, bench_ctx))
+        return ErrorRaised;
+
+#define CU_CHECK(name, expr) \
+    do { \
+        CUresult res = (expr); \
+        if (res != CUDA_SUCCESS) \
+            return raise(PyExc_RuntimeError, name ": %s", get_cuda_error(driver, res)); \
+    } while (0)
+
+    CUdevice device;
+    CU_CHECK("cuCtxGetDevice", driver->cuCtxGetDevice(&device));
+
+    // Query L2 cache size for inter-kernel flush
+    int l2_cache_size = 0;
+    CU_CHECK("cuDeviceGetAttribute", driver->cuDeviceGetAttribute(
+             &l2_cache_size, CU_DEVICE_ATTRIBUTE_L2_CACHE_SIZE, device));
+    // In case the returned l2_cache_size is 0, we set it to a small number
+    // so malloc/memset API below will still work.
+    l2_cache_size = std::max(1024, l2_cache_size);
+
+    CudaEvent ev_start(driver);
+    CU_CHECK("cuEventCreate", ev_start.create());
+    CudaEvent ev_end(driver);
+    CU_CHECK("cuEventCreate", ev_end.create());
+
+    CudaGraph graph(driver);
+    CU_CHECK("cuGraphCreate", graph.create());
+
+    // Build graph:
+    //  1. Malloc the L2 flush buffer.
+    //  2. Flush L2 cache using memset.
+    //  3. Record start event
+    //  4. Launch kernel
+    //  5. Record end event
+    //  6. Free the L2 flush buffer.
+
+    CUgraphNode malloc_node = nullptr;
+
+    CUDA_MEM_ALLOC_NODE_PARAMS malloc_params = {};
+    malloc_params.bytesize = l2_cache_size;
+    malloc_params.poolProps.allocType = CU_MEM_ALLOCATION_TYPE_PINNED;
+    malloc_params.poolProps.handleTypes = CU_MEM_HANDLE_TYPE_NONE;
+    malloc_params.poolProps.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+    malloc_params.poolProps.location.id = device;
+
+    CU_CHECK("cuGraphAddMemAllocNode",
+             driver->cuGraphAddMemAllocNode(&malloc_node, graph.get(), nullptr, 0, &malloc_params));
+
+    CUDA_MEMSET_NODE_PARAMS mparams = {};
+    mparams.dst = malloc_params.dptr;
+    mparams.value = 0x5a;
+    mparams.elementSize = 1;
+    mparams.width = l2_cache_size;
+    mparams.height = 1;
+    mparams.pitch = l2_cache_size;
+
+    CUgraphNode flush_node;
+    CU_CHECK("cuGraphAddMemsetNode",
+             driver->cuGraphAddMemsetNode(
+                     &flush_node, graph.get(),
+                     &malloc_node, 1,
+                     &mparams, ctx));
+
+    CUgraphNode start_node;
+    CU_CHECK("cuGraphAddEventRecordNode",
+             driver->cuGraphAddEventRecordNode(
+                     &start_node, graph.get(),
+                     &flush_node, 1,
+                     ev_start.get()));
+
+    // Kernel
+    PreparedLaunch& pl = *prep;
+    CUDA_KERNEL_NODE_PARAMS kparams = {};
+    kparams.func = nullptr;
+    kparams.gridDimX = grid.dims[0];
+    kparams.gridDimY = grid.dims[1];
+    kparams.gridDimZ = grid.dims[2];
+    kparams.blockDimX = 1;
+    kparams.blockDimY = 1;
+    kparams.blockDimZ = 1;
+    kparams.sharedMemBytes = 0;
+    kparams.kernelParams = pl.helper->cuarg_pointers.data();
+    kparams.extra = nullptr;
+    kparams.kern = pl.kernel;
+    kparams.ctx = pl.helper->cuda_context;
+
+    CUgraphNode kernel_node;
+    CU_CHECK("cuGraphAddKernelNode",
+             driver->cuGraphAddKernelNode(&kernel_node, graph.get(), &start_node, 1, &kparams));
+
+    // Event: end of kernel
+    CUgraphNode end_node;
+    CU_CHECK("cuGraphAddEventRecordNode",
+             driver->cuGraphAddEventRecordNode(
+                     &end_node, graph.get(), &kernel_node, 1, ev_end.get()));
+
+
+    CUgraphNode free_node;
+    CU_CHECK("cuGraphAddMemFreeNode",
+             driver->cuGraphAddMemFreeNode(
+                 &free_node, graph.get(), &end_node, 1, malloc_params.dptr));
+
+    // Launch and synchronize
+    CudaGraphExec graph_exec(driver);
+    CU_CHECK("cuGraphInstantiateWithFlags", graph_exec.instantiate(graph));
+    CU_CHECK("cuGraphLaunch", driver->cuGraphLaunch(graph_exec.get(), launch_stream));
+    CU_CHECK("cuStreamSynchronize", driver->cuStreamSynchronize(launch_stream));
+
+    double total_us = 0;
+    float ms;
+    CU_CHECK("cuEventElapsedTime",
+             driver->cuEventElapsedTime(&ms, ev_start.get(), ev_end.get()));
+    total_us = static_cast<double>(ms) * 1000.0;
+
+#undef CU_CHECK
+
+    return total_us;
 }
 
 static Result<Vec<bool>> parse_constant_arg_flags(PyObject* tuple) {
@@ -1915,7 +2091,7 @@ static Result<Grid> parse_grid(PyObject* tuple) {
         }
         grid.dims[i] = val;
     }
-
+    if (!validate_grid(grid)) return ErrorRaised;
     return grid;
 }
 
@@ -1990,13 +2166,11 @@ static PyObject* launch_impl(PyObject* const* args, Py_ssize_t nargs,
     return Py_NewRef(Py_None);
 }
 
-
 #define LAUNCH_SIGNATURE "launch(stream, grid, kernel, kernel_args, /)"
 
 static PyObject* cuda_tile_launch(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
     return launch_impl(args, nargs, LAUNCH_SIGNATURE, /*with_block=*/ false);
 }
-
 
 #define LAUNCH_WITH_BLOCK_SIGNATURE "launch(stream, grid, block, kernel, kernel_args, /)"
 
@@ -2004,6 +2178,23 @@ static PyObject* launch_with_block(PyObject*, PyObject* const* args, Py_ssize_t 
     return launch_impl(args, nargs, LAUNCH_WITH_BLOCK_SIGNATURE, /*with_block=*/ true);
 }
 
+#define BENCHMARK_SIGNATURE "_benchmark(stream, grid, kernel, pyargs_tuples, /)"
+
+static PyObject* cuda_tile_benchmark(PyObject* mod, PyObject* const* args, Py_ssize_t nargs) {
+    LaunchArgs launch_args;
+    if (!parse_launch_args(args, nargs, BENCHMARK_SIGNATURE, false, &launch_args))
+        return nullptr;
+
+    Result<const DriverApi*> driver = get_driver_api();
+    if (!driver.is_ok()) return nullptr;
+
+    Result<double> elapsed_us = benchmark(*driver, launch_args.dispatcher, launch_args.grid,
+                                          launch_args.stream, launch_args.kernel_args,
+                                          launch_args.num_kernel_args);
+    if (!elapsed_us.is_ok()) return nullptr;
+
+    return PyFloat_FromDouble(*elapsed_us);
+}
 
 static Status init_default_tile_context() {
     PyPtr context_module = steal(PyImport_ImportModule("cuda.tile._context"));
@@ -2108,6 +2299,12 @@ static PyMethodDef functions[] = {
     },
     {"get_parameter_constraints_from_pyargs", get_parameter_constraints_from_pyargs,
       METH_VARARGS, ""},
+    {"_benchmark", reinterpret_cast<PyCFunction>(cuda_tile_benchmark), METH_FASTCALL,
+        BENCHMARK_SIGNATURE "\n"
+        "--\n\n"
+        "Benchmark a cuTile kernel using CUDA graphs.\n\n"
+        "Returns total elapsed time in microseconds (L2 flush between invocations).\n"
+    },
     nullptr
 };
 
@@ -2124,7 +2321,6 @@ static Status add_launch_with_block_func(PyObject* m) {
         return ErrorRaised;
     return OK;
 }
-
 
 #define INIT_STRING_CONSTANT(ident) \
     if (!(g_##ident##_pyunicode = PyUnicode_InternFromString(#ident))) return ErrorRaised;

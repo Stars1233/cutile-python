@@ -85,3 +85,13 @@ class CallingConvention:
 
 
 default_tile_context: TileContext
+
+
+def _synchronize_context() -> None: ...
+def _create_stream() -> int: ...
+def _destroy_stream(stream: int) -> None: ...
+def _benchmark(stream: int,
+               grid: tuple[int] | tuple[int, int] | tuple[int, int, int],
+               kernel,
+               pyargs_tuples: tuple[tuple[Any, ...], ...],
+               /) -> float: ...

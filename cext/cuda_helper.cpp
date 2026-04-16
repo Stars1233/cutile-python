@@ -96,6 +96,53 @@ PyObject* get_driver_version(PyObject *self, PyObject *Py_UNUSED(ignored)) {
     return Py_BuildValue("(ii)", major, minor);
 }
 
+// ========== Context helpers ==========
+
+PyObject* synchronize_context(PyObject* self, PyObject* Py_UNUSED(ignored)) {
+    Result<const DriverApi*> driver_result = get_driver_api();
+    if (!driver_result.is_ok()) return NULL;
+    const DriverApi* d = *driver_result;
+
+    CUresult res = d->cuCtxSynchronize();
+    if (res != CUDA_SUCCESS) {
+        return PyErr_Format(PyExc_RuntimeError,
+                            "cuCtxSynchronize: %s", get_cuda_error(d, res));
+    }
+    Py_RETURN_NONE;
+}
+
+// ========== Stream helpers ==========
+
+PyObject* create_stream(PyObject* self, PyObject* Py_UNUSED(ignored)) {
+    Result<const DriverApi*> driver_result = get_driver_api();
+    if (!driver_result.is_ok()) return NULL;
+    const DriverApi* d = *driver_result;
+
+    CUstream stream;
+    CUresult res = d->cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING);
+    if (res != CUDA_SUCCESS) {
+        return PyErr_Format(PyExc_RuntimeError,
+                            "cuStreamCreate: %s", get_cuda_error(d, res));
+    }
+    return PyLong_FromVoidPtr(stream);
+}
+
+PyObject* destroy_stream(PyObject* self, PyObject* arg) {
+    CUstream stream = static_cast<CUstream>(PyLong_AsVoidPtr(arg));
+    if (PyErr_Occurred()) return NULL;
+
+    Result<const DriverApi*> driver_result = get_driver_api();
+    if (!driver_result.is_ok()) return NULL;
+    const DriverApi* d = *driver_result;
+
+    CUresult res = d->cuStreamDestroy(stream);
+    if (res != CUDA_SUCCESS) {
+        return PyErr_Format(PyExc_RuntimeError,
+                            "cuStreamDestroy: %s", get_cuda_error(d, res));
+    }
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef functions[] = {
     {"get_compute_capability", get_compute_capability, METH_NOARGS,
         "Get compute capability of the default CUDA device"},
@@ -103,6 +150,12 @@ static PyMethodDef functions[] = {
         "Get the cuda driver version"},
     {"_get_max_grid_size", get_max_grid_size, METH_VARARGS,
         "Get max grid size of a CUDA device, given device id"},
+    {"_synchronize_context", synchronize_context, METH_NOARGS,
+        "Synchronize the current CUDA context (drain all streams)."},
+    {"_create_stream", create_stream, METH_NOARGS,
+        "Create a non-blocking CUDA stream. Returns int handle."},
+    {"_destroy_stream", destroy_stream, METH_O,
+        "Destroy a CUDA stream given its int handle."},
     NULL
 };
 

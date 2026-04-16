@@ -7,6 +7,7 @@ from conftest import dtype_id, shape_id
 import pytest
 import torch
 import cuda.tile as ct
+from cuda.tile.tune import exhaustive_search
 import itertools
 from math import ceil
 from util import estimate_bench_iter, next_power_of_2, is_ampere_or_ada
@@ -15,8 +16,6 @@ from kernels.rms_norm import (
 )
 from functools import partial
 from types import SimpleNamespace
-
-ct_experimental = pytest.importorskip("cuda.tile_experimental")
 
 
 @pytest.fixture(params=[
@@ -164,24 +163,6 @@ def _static_persistent_autotune_predicate(x, cfg):
     return x.shape[1] * 2 > cfg.TILE_SIZE_N >= x.shape[1]
 
 
-def _rms_norm_static_persistent_base(stream, x, y, weight, eps):
-    ct_experimental.autotune_launch(
-        stream,
-        grid_fn=partial(_static_persistent_autotune_grid, x),
-        kernel=rms_norm_kernel_static_persistent,
-        args_fn=lambda cfg: (x, y, weight, cfg.TILE_SIZE_M, cfg.TILE_SIZE_N, eps),
-        hints_fn=lambda cfg: {
-            "num_ctas": cfg.num_ctas,
-            "occupancy": cfg.occupancy,
-        },
-        search_space=lambda: (
-            cfg for cfg in _static_persistent_autotune_configs()
-            if _static_persistent_autotune_predicate(x, cfg)
-        ),
-    )
-    return y
-
-
 def _standard_autotune_configs():
     """Get autotune configurations for RMS Norm kernel"""
     ts_vals = [2**7, 2**8, 2**9, 2**10, 2**11, 2**12]
@@ -195,32 +176,103 @@ def _standard_autotune_configs():
         )
 
 
+# Autotuning cache
+_tuning_cache = {}
+
+
+def _tuning_cache_key(kind, x: torch.Tensor):
+    return (kind, x.dtype, x.shape[0], x.shape[1])
+
+
+_timeout = 5.0  # sec
+
+
+def _rms_norm_static_persistent_base(stream, x, y, weight, eps):
+    key = _tuning_cache_key("static", x)
+    if (key not in _tuning_cache):
+        search_space = [
+            cfg for cfg in _static_persistent_autotune_configs()
+            if _static_persistent_autotune_predicate(x, cfg)
+        ]
+        with ct.compiler_timeout(_timeout):
+            result = exhaustive_search(
+                search_space,
+                torch.cuda.current_stream(),
+                grid_fn=partial(_static_persistent_autotune_grid, x),
+                kernel=rms_norm_kernel_static_persistent,
+                args_fn=lambda cfg: (x, y.clone(), weight, cfg.TILE_SIZE_M, cfg.TILE_SIZE_N, eps),
+                hints_fn=lambda cfg: {
+                    "num_ctas": cfg.num_ctas,
+                    "occupancy": cfg.occupancy,
+                },
+            )
+        cfg = result.best_config
+        kernel = rms_norm_kernel_static_persistent.replace_hints(num_ctas=cfg.num_ctas,
+                                                                 occupancy=cfg.occupancy)
+        _tuning_cache[key] = kernel, cfg
+
+    kernel, cfg = _tuning_cache[key]
+    grid = _static_persistent_autotune_grid(x, cfg)
+    ct.launch(
+        stream, grid,
+        kernel,
+        (x, y, weight, cfg.TILE_SIZE_M, cfg.TILE_SIZE_N, eps),
+    )
+    return y
+
+
 def _rms_norm_standard_gather_base(stream, x, weight, y, rstd, N, eps):
-    ct_experimental.autotune_launch(
-        stream,
-        grid_fn=lambda cfg: (x.shape[0], ),
-        kernel=rms_norm_kernel_gather,
-        args_fn=lambda cfg: (x, weight, y, rstd, N, eps, cfg.TILE_SIZE),
-        hints_fn=lambda cfg: {
-            "num_ctas": cfg.num_ctas,
-            "occupancy": cfg.occupancy,
-        },
-        search_space=_standard_autotune_configs(),
+    key = _tuning_cache_key("gather", x)
+    if (key not in _tuning_cache):
+        with ct.compiler_timeout(_timeout):
+            result = exhaustive_search(
+                list(_standard_autotune_configs()),
+                torch.cuda.current_stream(),
+                grid_fn=lambda cfg: (x.shape[0], ),
+                kernel=rms_norm_kernel_gather,
+                args_fn=lambda cfg: (x, weight, y.clone(), rstd.clone(), N, eps, cfg.TILE_SIZE),
+                hints_fn=lambda cfg: {
+                    "num_ctas": cfg.num_ctas,
+                    "occupancy": cfg.occupancy,
+                },
+            )
+        cfg = result.best_config
+        kernel = rms_norm_kernel_gather.replace_hints(num_ctas=cfg.num_ctas,
+                                                      occupancy=cfg.occupancy)
+        _tuning_cache[key] = (kernel, cfg)
+
+    kernel, cfg = _tuning_cache[key]
+    ct.launch(
+        stream, (x.shape[0],),
+        kernel,
+        (x, weight, y, rstd, N, eps, cfg.TILE_SIZE),
     )
     return y
 
 
 def _rms_norm_standard_tiled_base(stream, x, weight, y, rstd, N, eps):
-    ct_experimental.autotune_launch(
-        stream,
-        grid_fn=lambda cfg: (x.shape[0], ),
-        kernel=rms_norm_kernel,
-        args_fn=lambda cfg: (x, weight, y, rstd, N, eps, cfg.TILE_SIZE),
-        hints_fn=lambda cfg: {
-            "num_ctas": cfg.num_ctas,
-            "occupancy": cfg.occupancy,
-        },
-        search_space=_standard_autotune_configs(),
+    key = _tuning_cache_key("standard", x)
+    if (key not in _tuning_cache):
+        with ct.compiler_timeout(_timeout):
+            result = exhaustive_search(
+                list(_standard_autotune_configs()),
+                torch.cuda.current_stream(),
+                grid_fn=lambda cfg: (x.shape[0], ),
+                kernel=rms_norm_kernel,
+                args_fn=lambda cfg: (x, weight, y.clone(), rstd.clone(), N, eps, cfg.TILE_SIZE),
+                hints_fn=lambda cfg: {
+                    "num_ctas": cfg.num_ctas,
+                    "occupancy": cfg.occupancy,
+                },
+            )
+        cfg = result.best_config
+        kernel = rms_norm_kernel.replace_hints(num_ctas=cfg.num_ctas, occupancy=cfg.occupancy)
+        _tuning_cache[key] = (kernel, cfg)
+
+    kernel, cfg = _tuning_cache[key]
+    ct.launch(
+        stream, (x.shape[0],), kernel,
+        (x, weight, y, rstd, N, eps, cfg.TILE_SIZE),
     )
     return y
 

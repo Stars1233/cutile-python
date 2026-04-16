@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import atexit
+from contextlib import contextmanager
 import os
 import shutil
 import sys
@@ -14,7 +15,7 @@ from typing import Optional
 @dataclass
 class TileContextConfig:
     temp_dir: str
-    compiler_timeout_sec: Optional[int]
+    compiler_timeout_sec: Optional[float]
     enable_crash_dump: bool
     cache_dir: Optional[str]
     cache_size_limit: int
@@ -34,11 +35,11 @@ def init_context_config_from_env():
     return config
 
 
-def get_compile_timeout_from_env() -> Optional[int]:
+def get_compile_timeout_from_env() -> Optional[float]:
     key = "CUDA_TILE_COMPILER_TIMEOUT_SEC"
     t = os.environ.get(key)
     if t is not None:
-        t = int(t)
+        t = float(t)
         if t <= 0:
             raise ValueError(f"Value of {key} must be positive")
     return t
@@ -102,3 +103,25 @@ def get_cache_dir_from_env() -> Optional[str]:
 
 def get_cache_size_limit_from_env() -> int:
     return int(os.environ.get("CUDA_TILE_CACHE_SIZE", 1 << 31))  # 2GB
+
+
+@contextmanager
+def compiler_timeout(timeout_sec: float):
+    """Context manager that temporarily sets the compiler timeout.
+
+    .. note::
+        This function is not thread-safe. It modifies global state
+        shared by all threads.
+
+    Example::
+
+        with ct.compiler_timeout(10):
+            ct.launch(stream, grid, kernel, args)
+    """
+    from cuda.tile._cext import default_tile_context
+    old = default_tile_context.config.compiler_timeout_sec
+    default_tile_context.config.compiler_timeout_sec = timeout_sec
+    try:
+        yield
+    finally:
+        default_tile_context.config.compiler_timeout_sec = old

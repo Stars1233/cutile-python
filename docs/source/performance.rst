@@ -51,3 +51,26 @@ Example
 .. literalinclude:: ../../test/test_load_store.py
     :start-after: example-begin
     :end-before: example-end
+
+
+Autotuning
+----------
+
+To achieve consistent result with tuning, it is best to fix GPU clock and memory clock.
+
+Enable persistent mode::
+
+    nvidia-smi -i <GPU_ID> -pm 1
+
+Query supported clocks::
+
+    nvidia-smi -i <GPU_ID> --query-supported-clocks=graphics,memory --format=csv | head
+
+Fix graphics and memory clocks::
+
+    nvidia-smi -i <GPU_ID> -lgc <MIN_CLOCK>,<MAX_CLOCK>
+    nvidia-smi -i <GPU_ID> -lmc <MIN_CLOCK>,<MAX_CLOCK>
+
+
+The :ref:`cuda.tile.tune module <operations-tuning>` provides utilities for finding the best
+kernel configuration by benchmarking over a search space.

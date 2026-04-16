@@ -18,6 +18,12 @@ Exception Types
 .. autoclass:: TileCompilerTimeoutError()
 
 
+Compiler Timeout
+----------------
+
+.. autofunction:: cuda.tile.compiler_timeout
+
+
 Environment Variables
 ---------------------
 

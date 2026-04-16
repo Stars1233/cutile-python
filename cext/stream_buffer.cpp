@@ -51,6 +51,10 @@ StreamBufferPool* stream_buffer_pool_new() {
     return new StreamBufferPool();
 }
 
+void stream_buffer_pool_delete(StreamBufferPool* pool) {
+    delete pool;
+}
+
 static void delete_chunk(const DriverApi* driver, Chunk* chunk) {
     dual_ptr_free(driver, chunk->ptr);
     driver->cuEventDestroy(chunk->event);
