@@ -264,7 +264,8 @@ def size_to_bytecode(s: Optional[int]) -> int:
 
 @dataclass(frozen=True)
 class PointerTy(Type):
-    pointee_type: "DType"
+    pointee_type: Type
+    memory_space: Any = None
 
 
 # ============== Tile Type ===============
@@ -308,20 +309,21 @@ def make_tile_ty(dtype, shape: Sequence[int]) -> TileTy:
 # ============== Array Type ===============
 
 
-def array_size_type() -> Type:
-    from .._datatype import int32
-    return TileTy(int32, ())
-
-
 class ArrayTy(Type):
     def __init__(self,
-                 dtype,
+                 element_type: Type,
                  /,
                  shape: Tuple[Optional[int], ...],
-                 strides: Tuple[Optional[int], ...]):
-        self.dtype = dtype
+                 strides: Tuple[Optional[int], ...],
+                 index_dtype=None,
+                 memory_space=None):
+        from .._datatype import int32
+        assert isinstance(element_type, Type)
+        self.element_type = element_type
         self.shape = shape
         self.strides = strides
+        self.index_dtype = int32 if index_dtype is None else index_dtype
+        self.memory_space = memory_space
 
     def is_aggregate(self) -> bool:
         # Even though arrays are actually represented with TensorViews, they can't be
@@ -330,9 +332,9 @@ class ArrayTy(Type):
         return True
 
     def aggregate_item_types(self) -> tuple["Type", ...]:
-        base_ptr_ty = PointerTy(self.dtype)
+        base_ptr_ty = PointerTy(self.element_type, self.memory_space)
         base_ptr_tile_ty = TileTy(base_ptr_ty, ())
-        size_ty = array_size_type()
+        size_ty = TileTy(self.index_dtype, ())
         return (base_ptr_tile_ty,) + (size_ty,) * (self.ndim * 2)
 
     def make_aggregate_value(self, items: tuple["Var", ...]) -> "AggregateValue":
@@ -344,21 +346,36 @@ class ArrayTy(Type):
     def ndim(self):
         return len(self.shape)
 
+    @property
+    def dtype(self) -> "DType":
+        assert isinstance(self.element_type, TileTy)
+        assert self.element_type.shape == ()
+        return self.element_type.dtype
+
     def __eq__(self, other: Type):
         return (isinstance(other, ArrayTy)
-                and self.dtype == other.dtype
+                and self.element_type == other.element_type
                 and self.shape == other.shape
-                and self.strides == other.strides)
+                and self.strides == other.strides
+                and self.index_dtype == other.index_dtype
+                and self.memory_space == other.memory_space)
 
     def __hash__(self):
-        return hash(("ArrayTy", self.dtype, self.shape, self.strides))
+        return hash(("ArrayTy", self.element_type, self.shape, self.strides, self.index_dtype,
+                     self.memory_space))
 
     def __str__(self):
+        from .._datatype import int32
+        if isinstance(self.element_type, TileTy) and self.element_type.shape == ():
+            type_str = str(self.element_type.dtype)
+        else:
+            type_str = str(self.element_type)
         shape_str = ('?' if x is None else str(x) for x in self.shape)
         shape_str = "(" + ','.join(shape_str) + ")"
         strides_str = ('?' if x is None else str(x) for x in self.strides)
         strides_str = "(" + ','.join(strides_str) + ")"
-        return f"Array[{self.dtype},{shape_str}:{strides_str}]"
+        indexty_str = "" if self.index_dtype == int32 else f",index_dtype={self.index_dtype}]"
+        return f"Array[{type_str},{shape_str}:{strides_str}{indexty_str}]"
 
 
 # ============== PartitionView Type ===============
@@ -438,14 +455,20 @@ class TiledViewTy(Type):
 @dataclass(frozen=True)
 class RawArrayMemoryTy(Type):
     """Type for a RawArrayMemory object that allows load/store by element offset (no index math)."""
-    dtype: "DType"
+    element_type: Type
+
+    @property
+    def dtype(self):
+        assert isinstance(self.element_type, TileTy)
+        assert self.element_type.shape == ()
+        return self.element_type.dtype
 
     def is_aggregate(self) -> bool:
         return True
 
     def aggregate_item_types(self) -> tuple["Type", ...]:
-        base_ptr_ty = PointerTy(self.dtype)
-        base_ptr_tile_ty = TileTy(base_ptr_ty, TupleTy(()))
+        base_ptr_ty = PointerTy(self.element_type)
+        base_ptr_tile_ty = TileTy(base_ptr_ty, ())
         return (base_ptr_tile_ty,)
 
     def make_aggregate_value(self, items: tuple["Var", ...]) -> "AggregateValue":
@@ -454,7 +477,11 @@ class RawArrayMemoryTy(Type):
         return RawArrayMemoryValue(items[0])
 
     def __str__(self):
-        return f"RawArrayMemory[{self.dtype}]"
+        if isinstance(self.element_type, TileTy) and self.element_type.shape == ():
+            type_str = str(self.element_type.dtype)
+        else:
+            type_str = str(self.element_type)
+        return f"RawArrayMemory[{type_str}]"
 
 
 # ============== List Type ===============
@@ -469,7 +496,7 @@ class ListTy(Type):
 
     def aggregate_item_types(self) -> tuple["Type", ...]:
         from .._datatype import int32, int64
-        ptr_ty = PointerTy(int64)
+        ptr_ty = PointerTy(TileTy(int64, ()))
         ptr_tile_ty = TileTy(ptr_ty, ())
         len_ty = TileTy(int32, ())
         return ptr_tile_ty, len_ty

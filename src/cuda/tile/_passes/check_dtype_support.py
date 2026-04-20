@@ -52,7 +52,7 @@ def _extract_dtypes(ty: Type | None) -> set[DType]:
     if isinstance(ty, TileTy):
         ty = ty.dtype
     if isinstance(ty, PointerTy):
-        ty = ty.pointee_type
+        ty = ty.pointee_type.dtype
     return {ty} if isinstance(ty, DType) else set()
 
 

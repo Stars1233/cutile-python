@@ -254,7 +254,7 @@ def _analyze_aliases_in_block(block: Block,
             ptr_ty = op.pointer.get_type()
             assert isinstance(ptr_ty.dtype, PointerTy)
             if all(x == 1 for x in ptr_ty.shape):
-                bitwidth = ptr_ty.dtype.pointee_type.bitwidth
+                bitwidth = ptr_ty.dtype.pointee_type.dtype.bitwidth
                 BYTE_BITWIDTH = 8
                 if bitwidth % BYTE_BITWIDTH == 0:
                     offset_divby = state.tracker[op.offset].div_by * (bitwidth // BYTE_BITWIDTH)

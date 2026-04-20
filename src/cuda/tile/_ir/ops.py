@@ -60,7 +60,7 @@ from .type import (
     PartitionViewTy, TupleTy, TileTy, NoneType, BoundMethodTy, ArrayTy,
     ListTy, make_tile_ty, SliceType, DTypeConstructor, RangeIterType, Type,
     NONE, ModuleTy, TypeTy, LooselyTypedScalar, DTypeSpec, StringTy, InvalidType,
-    array_size_type, ClosureTy, LiveCapturedScope, TokenTy, TiledViewTy, FormattedStringTy,
+    ClosureTy, LiveCapturedScope, TokenTy, TiledViewTy, FormattedStringTy,
     StringFormat, FormattedPiece, RawArrayMemoryTy
 )
 from cuda.tile._datatype import (
@@ -2257,7 +2257,7 @@ def array_slice_impl(array: Var, axis: Var, start: Var, stop: Var) -> Var:
 
     new_shape_ty = tuple(None if i == const_axis else dim for i, dim in enumerate(array_ty.shape))
     new_array_ty = ArrayTy(
-        array_ty.dtype,
+        array_ty.element_type,
         shape=new_shape_ty,
         strides=array_ty.strides,
     )
@@ -2273,7 +2273,7 @@ def array_slice_impl(array: Var, axis: Var, start: Var, stop: Var) -> Var:
         offset = binary_arithmetic("mul", start, array_val.strides[const_axis])
 
     new_base_ptr = pointer_offset(array_val.base_ptr, astype(offset, datatype.uint64))
-    axis_new_shape = astype(binary_arithmetic("sub", stop, start), array_size_type().dtype)
+    axis_new_shape = astype(binary_arithmetic("sub", stop, start), array_ty.index_dtype)
     new_shape = tuple(
         axis_new_shape if i == const_axis else s for i, s in enumerate(array_val.shape)
     )
@@ -2374,7 +2374,7 @@ def get_raw_memory_impl(array: Var) -> Var:
     array_val = array.get_aggregate()
     assert isinstance(array_val, ArrayValue)
     base_ptr = array_val.base_ptr
-    raw_mem_ty = RawArrayMemoryTy(array_ty.dtype)
+    raw_mem_ty = RawArrayMemoryTy(TileTy(array_ty.dtype, ()))
     [ret] = unflatten_aggregates((base_ptr,), (raw_mem_ty,), (raw_mem_ty,))
     return ret
 
@@ -2572,7 +2572,8 @@ def load_pointer(pointer: Var, mask: Optional[Var], padding_value: Optional[Var]
                  latency: Optional[int]) -> tuple[Var, Var]:
     pointer_ty = pointer.get_type()
     shape = pointer_ty.shape
-    result_ty = make_tile_ty(pointer_ty.dtype.pointee_type, shape)
+    dtype = pointer_ty.dtype.pointee_type.dtype
+    result_ty = TileTy(dtype, shape)
     return add_operation(LoadPointer, (result_ty, TokenTy()),
                          pointer=pointer, mask=mask, padding_value=padding_value,
                          latency=latency)

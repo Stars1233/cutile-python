@@ -85,8 +85,7 @@ def test_tile_type():
 
 def test_array_type():
     # array with dynamic shape
-    arr = ArrayTy(bfloat16, shape=(None, None),
-                  strides=(None, None))
+    arr = ArrayTy(TileTy(bfloat16, ()), shape=(None, None), strides=(None, None))
     assert arr.dtype == bfloat16
     assert len(arr.shape) == 2
     assert len(arr.strides) == 2

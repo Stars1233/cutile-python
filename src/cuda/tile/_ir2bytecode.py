@@ -27,7 +27,7 @@ from cuda.tile._ir.type import (
 
 def dtype_typeid(tt: bc.TypeTable, dtype: datatype.DType | PointerTy) -> bc.TypeId:
     if isinstance(dtype, PointerTy):
-        pointee = dtype_typeid(tt, dtype.pointee_type)
+        pointee = dtype_typeid(tt, dtype.pointee_type.dtype)
         return tt.pointer(pointee)
     return tt.simple(dtype._bytecode_type)
 

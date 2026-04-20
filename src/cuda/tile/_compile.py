@@ -35,7 +35,7 @@ from cuda.tile._exception import (
 )
 from cuda.tile._ir import ir, hir
 from cuda.tile._ir.ops import loosely_typed_const, flatten_block_parameters, tile_impl_registry
-from cuda.tile._ir.type import TileTy, ArrayTy, ListTy
+from cuda.tile._ir.type import TileTy, ArrayTy, ListTy, make_tile_ty
 from cuda.tile._passes.ast2hir import get_function_hir
 from cuda.tile._passes.code_motion import hoist_loop_invariants
 from cuda.tile._passes.unhoist_partition_views import unhoist_partition_views
@@ -168,7 +168,7 @@ def _get_array_ty(param: ArrayConstraint):
             raise NotImplementedError("Negative strides are currently not supported:"
                                       " please specify stride_lower_bound_incl=0")
 
-    return ArrayTy(param.dtype,
+    return ArrayTy(make_tile_ty(param.dtype, ()),
                    shape=(None,) * param.ndim,
                    strides=param.stride_constant)
 
