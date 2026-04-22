@@ -47,7 +47,7 @@ from sphinx.ext.doctest import (
 from sphinx.util import logging as sphinx_logging
 logger = sphinx_logging.getLogger(__name__)
 
-_libc = ctypes.CDLL('msvcrt' if sys.platform == 'win32' else None)
+_libc = ctypes.CDLL('ucrtbase' if sys.platform == 'win32' else None)
 
 
 class _FdCaptureOut:

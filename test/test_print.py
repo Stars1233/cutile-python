@@ -23,7 +23,7 @@ from cuda.tile._datatype import (bool_,
 # opt_level=0 required for correct print ordering in tileiras < 13.2
 _DEFAULT_OPT_LEVEL = CompilerOptions.__dataclass_fields__['opt_level'].default
 _OPT_LEVEL = 0 if get_tileiras_version() < BytecodeVersion.V_13_2 else _DEFAULT_OPT_LEVEL
-_libc = ctypes.CDLL('msvcrt' if sys.platform == 'win32' else None)
+_libc = ctypes.CDLL('ucrtbase' if sys.platform == 'win32' else None)
 
 
 def _run_kernel(kernel, x, tile):
