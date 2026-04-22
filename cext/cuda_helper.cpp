@@ -143,6 +143,65 @@ PyObject* destroy_stream(PyObject* self, PyObject* arg) {
     Py_RETURN_NONE;
 }
 
+static decltype(cuLaunchKernel)* g_real_cuLaunchKernel;
+static PyObject* g_cuLaunchKernel_spy_callback;
+
+static CUresult shim_cuLaunchKernel(
+        CUfunction f,
+        unsigned int gridDimX,
+        unsigned int gridDimY,
+        unsigned int gridDimZ,
+        unsigned int blockDimX,
+        unsigned int blockDimY,
+        unsigned int blockDimZ,
+        unsigned int sharedMemBytes,
+        CUstream hStream,
+        void** kernelParams,
+        void** extra) {
+
+    PyPtr res = steal(PyObject_CallFunction(
+            g_cuLaunchKernel_spy_callback,
+            "(K III III I K)",
+            reinterpret_cast<unsigned long long>(f),
+            gridDimX, gridDimY, gridDimZ,
+            blockDimX, blockDimY, blockDimZ,
+            sharedMemBytes,
+            reinterpret_cast<unsigned long long>(hStream)
+    ));
+    if (!res) return CUDA_ERROR_LAUNCH_FAILED;
+
+    return g_real_cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ,
+                                 sharedMemBytes, hStream, kernelParams, extra);
+}
+
+static PyObject* spy_on_cuLaunchKernel_begin(PyObject* self, PyObject* arg) {
+    if (g_real_cuLaunchKernel)
+        return PyErr_Format(PyExc_RuntimeError, "Already spying");
+
+    Result<const DriverApi*> driver_result = get_driver_api();
+    if (!driver_result.is_ok()) return nullptr;
+
+    DriverApi* api = const_cast<DriverApi*>(*driver_result);
+    g_real_cuLaunchKernel = api->cuLaunchKernel;
+    g_cuLaunchKernel_spy_callback = Py_NewRef(arg);
+    api->cuLaunchKernel = shim_cuLaunchKernel;
+    return Py_NewRef(Py_None);
+}
+
+static PyObject* spy_on_cuLaunchKernel_end(PyObject* self, PyObject* arg) {
+    if (!g_real_cuLaunchKernel)
+        return PyErr_Format(PyExc_RuntimeError, "Not spying");
+
+    Result<const DriverApi*> driver_result = get_driver_api();
+    if (!driver_result.is_ok()) return nullptr;
+
+    DriverApi* api = const_cast<DriverApi*>(*driver_result);
+    api->cuLaunchKernel = g_real_cuLaunchKernel;
+    g_real_cuLaunchKernel = nullptr;
+    Py_CLEAR(g_cuLaunchKernel_spy_callback);
+    return Py_NewRef(Py_None);
+}
+
 static PyMethodDef functions[] = {
     {"get_compute_capability", get_compute_capability, METH_NOARGS,
         "Get compute capability of the default CUDA device"},
@@ -156,6 +215,8 @@ static PyMethodDef functions[] = {
         "Create a non-blocking CUDA stream. Returns int handle."},
     {"_destroy_stream", destroy_stream, METH_O,
         "Destroy a CUDA stream given its int handle."},
+    {"_spy_on_cuLaunchKernel_begin", spy_on_cuLaunchKernel_begin, METH_O, nullptr},
+    {"_spy_on_cuLaunchKernel_end", spy_on_cuLaunchKernel_end, METH_NOARGS, nullptr},
     NULL
 };
 

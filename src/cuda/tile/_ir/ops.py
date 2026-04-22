@@ -2269,6 +2269,7 @@ def array_slice_impl(array: Var, axis: Var, start: Var, stop: Var) -> Var:
         shape=new_shape_ty,
         strides=array_ty.strides,
         index_dtype=array_ty.index_dtype,
+        memory_space=array_ty.memory_space,
     )
 
     array_val = array.get_aggregate()

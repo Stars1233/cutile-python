@@ -115,7 +115,7 @@ class kernel(TileDispatcher):
         result = compile_tile(self._annotated_function, (signature,),
                               get_sm_arch(), self._compiler_options, context)
         [kernel_sig] = result.kernel_signatures
-        return result.cubin, kernel_sig.symbol
+        return result.cubin, kernel_sig.symbol, None, None
 
     @property
     def _pyfunc(self):

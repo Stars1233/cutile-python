@@ -111,4 +111,4 @@ class _HackKernel(_cext.TileDispatcher):
         for x in signature.parameters:
             assert x.ndim == 1
             assert x.dtype == ct.float32
-        return self._cubin, self._func_name
+        return self._cubin, self._func_name, None, None

@@ -285,8 +285,44 @@ struct HashVector {
     }
 };
 
+// X(Name, #Attrs, MinStack, StackEffect)
+#define FOREACH_SIZE_OPCODE(X) \
+    X(Const, 1, 0, 1) \
+    X(KernelArgI32, 1, 0, 1) \
+    X(Add, 0, 2, -1) \
+    X(Mul, 0, 2, -1)
+
+#define SIZE_OPCODE_ENUM_ENTRY(name, _nattr, _min_st, _stack_eff) \
+    name,
+
+enum class SizeOpcode : uint8_t {
+    FOREACH_SIZE_OPCODE(SIZE_OPCODE_ENUM_ENTRY)
+};
+
+#define SIZE_OPCODE_PARSE(name, nattr, min_st, stack_eff) \
+    if (!PyUnicode_CompareWithASCIIString(opcode_str, #name)) { \
+        *num_attrs = nattr; \
+        *min_stack = min_st; \
+        *stack_effect = stack_eff; \
+        return SizeOpcode::name; \
+    }
+
+static Result<SizeOpcode> size_opcode_parse(PyObject* opcode_str,
+                                            int* num_attrs, int* min_stack, int* stack_effect) {
+    FOREACH_SIZE_OPCODE(SIZE_OPCODE_PARSE);
+    return raise(PyExc_ValueError, "Invalid opcode string %R", opcode_str);
+}
+
+namespace { struct SizeProgram {
+    enum { kMaxStackDepth = 32 };
+
+    Vec<SizeOpcode> opcodes;
+    Vec<int64_t> op_attrs;
+}; }
+
 struct TileKernel {
     CudaKernel cukernel;
+    SizeProgram dyn_smem_size_prog;
 };
 
 using KernelMap = HashMap<Vec<int64_t>, TileKernel>;
@@ -1410,6 +1446,73 @@ struct TileContextDispatcher {
 };
 
 
+static int64_t size_program_eval(const SizeProgram& prog, const Vec<Word>& cuargs) {
+    int64_t stack[SizeProgram::kMaxStackDepth];
+    int64_t* top = stack;
+    const int64_t* op_attrs = prog.op_attrs.data();
+    for (SizeOpcode opcode : prog.opcodes) {
+        switch (opcode) {
+        case SizeOpcode::Const: *top++ = *op_attrs++; break;
+        case SizeOpcode::KernelArgI32: *top++ = cuargs[*op_attrs++].i32; break;
+        case SizeOpcode::Add: top[-2] += top[-1]; --top; break;  // TODO: overflow check?
+        case SizeOpcode::Mul: top[-2] *= top[-1]; --top; break;  // TODO: overflow check?
+        }
+    }
+    return stack[0];
+}
+
+static Result<SizeProgram> size_program_parse(PyObject* opcodes_pylist, PyObject* attrs_pylist) {
+    if (opcodes_pylist == Py_None)
+        return SizeProgram{{SizeOpcode::Const}, {0}};
+
+    Py_ssize_t num_opcodes = PyList_Size(opcodes_pylist);
+    Py_ssize_t num_attrs = PyList_Size(attrs_pylist);
+    if (PyErr_Occurred()) return ErrorRaised;
+
+    SizeProgram prog;
+    Py_ssize_t remaining_attrs = num_attrs;
+    int depth = 0;
+    for (Py_ssize_t i = 0; i < num_opcodes; ++i) {
+        PyObject* py_opcode = PyList_GetItem(opcodes_pylist, i);
+        if (!py_opcode) return ErrorRaised;
+
+        int opcode_attrs, min_stack, stack_eff;
+        Result<SizeOpcode> opcode_res = size_opcode_parse(
+                py_opcode, &opcode_attrs, &min_stack, &stack_eff);
+        if (!opcode_res.is_ok()) return ErrorRaised;
+
+        if (remaining_attrs < opcode_attrs)
+            return raise(PyExc_ValueError,
+                         "Invalid size program (at op #%zd): not enough attributes"
+                         " for opcode %u (need %d, have %zd)",
+                         i, static_cast<unsigned>(*opcode_res), opcode_attrs, remaining_attrs);
+        remaining_attrs -= opcode_attrs;
+
+        if (depth < min_stack)
+            return raise(PyExc_ValueError, "Invalid size program: not enough values on stack");
+        depth += stack_eff;
+        if (depth > SizeProgram::kMaxStackDepth)
+            return raise(PyExc_ValueError, "Invalid size program: stack overflow");
+
+        prog.opcodes.push_back(*opcode_res);
+    }
+
+    if (remaining_attrs != 0)
+        return raise(PyExc_ValueError, "Invalid size program: too many attributes");
+    if (depth != 1)
+        return raise(PyExc_ValueError, "Invalid size program: expected exactly 1 value on stack");
+
+    for (Py_ssize_t i = 0; i < num_attrs; ++i) {
+        PyObject* py_attr = PyList_GetItem(attrs_pylist, i);
+        if (!py_attr) return ErrorRaised;
+
+        prog.op_attrs.push_back(pylong_as<int64_t>(py_attr));
+        if (PyErr_Occurred()) return ErrorRaised;
+    }
+
+    return prog;
+}
+
 namespace { struct TileDispatcher {
     Vec<bool> constant_arg_flags;
     Vec<bool> int64_index_flags;
@@ -1440,20 +1543,25 @@ static Result<TileKernel> compile(const DriverApi* driver,
         return raise(PyExc_TypeError, "Expected compile() to return a tuple, got %s",
                      Py_TYPE(compile_result.get())->tp_name);
 
-    if (PyTuple_GET_SIZE(compile_result.get()) != 2)
-        return raise(PyExc_TypeError, "Expected compile() to return a 2-tuple, got length %zd",
+    if (PyTuple_GET_SIZE(compile_result.get()) != 4)
+        return raise(PyExc_TypeError, "Expected compile() to return a 4-tuple, got length %zd",
                      PyTuple_GET_SIZE(compile_result.get()));
 
     PyObject* py_cubin_bytes = PyTuple_GET_ITEM(compile_result.get(), 0);
     PyObject* py_cufunc_name = PyTuple_GET_ITEM(compile_result.get(), 1);
+    PyObject* py_dyn_smem_size_opcodes = PyTuple_GET_ITEM(compile_result.get(), 2);
+    PyObject* py_dyn_smem_size_opattrs = PyTuple_GET_ITEM(compile_result.get(), 3);
 
-    if (!PyBytes_Check(py_cubin_bytes) || !PyUnicode_Check(py_cufunc_name))
+    if (!PyBytes_Check(py_cubin_bytes)
+            || !PyUnicode_Check(py_cufunc_name)
+            || (py_dyn_smem_size_opcodes != Py_None && !PyList_Check(py_dyn_smem_size_opcodes))
+            || (py_dyn_smem_size_opattrs != Py_None && !PyList_Check(py_dyn_smem_size_opattrs))) {
         return raise(PyExc_TypeError,
-                     "Expected compile() to return (bytes, str),"
+                     "Expected compile() to return (bytes, str, list|None, list|None),"
                      " got %s, %s",
                      Py_TYPE(py_cubin_bytes)->tp_name,
                      Py_TYPE(py_cufunc_name)->tp_name);
-
+    }
 
     char* cubin_data;
     Py_ssize_t cubin_size;
@@ -1466,7 +1574,11 @@ static Result<TileKernel> compile(const DriverApi* driver,
     Result<CudaKernel> cukernel = load_cuda_kernel(driver, cubin_data, cubin_size, cufunc_name);
     if (!cukernel.is_ok()) return ErrorRaised;
 
-    return TileKernel{std::move(*cukernel)};
+    Result<SizeProgram> dyn_smem_size_prog = size_program_parse(
+            py_dyn_smem_size_opcodes, py_dyn_smem_size_opattrs);
+    if (!dyn_smem_size_prog.is_ok()) return ErrorRaised;
+
+    return TileKernel{std::move(*cukernel), std::move(*dyn_smem_size_prog)};
 }
 
 static inline bool has_torch_tensor_input(const Vec<PyTypeObject*>& pyarg_types) {
@@ -1645,6 +1757,7 @@ static bool try_clarify_invalid_value_error(const DriverApi* driver, const Grid&
 struct PreparedLaunch {
     LaunchHelperPtr helper;
     CUkernel kernel;
+    unsigned dynamic_smem_bytes;
 };
 
 static Result<CUcontext> get_stream_context(const DriverApi* driver, CUstream stream) {
@@ -1791,14 +1904,19 @@ static Result<PreparedLaunch> prepare_launch(
     for (Word& arg : helper->cuargs)
         helper->cuarg_pointers.push_back(&arg);
 
-    return PreparedLaunch{std::move(helper), kernel_item->value.cukernel.kernel};
+    int64_t dyn_smem_size = size_program_eval(
+            kernel_item->value.dyn_smem_size_prog, helper->cuargs);
+    if (dyn_smem_size < 0 || dyn_smem_size > UINT_MAX)
+        return raise(PyExc_RuntimeError, "Invalid dynamic shared memory size");
+
+    return PreparedLaunch{std::move(helper), kernel_item->value.cukernel.kernel,
+                          static_cast<unsigned>(dyn_smem_size)};
 }
 
 static Status launch(const DriverApi* driver,
                      PyObject* dispatcher_pyobj,
                      Grid grid,
                      Grid block,
-                     unsigned dynamic_shared_memory_bytes,
                      CUstream launch_stream,
                      PyObject* const* pyargs,
                      Py_ssize_t num_pyargs) {
@@ -1815,7 +1933,7 @@ static Status launch(const DriverApi* driver,
             reinterpret_cast<CUfunction>(prep->kernel),
             grid.dims[0], grid.dims[1], grid.dims[2],
             block.dims[0], block.dims[1], block.dims[2],
-            dynamic_shared_memory_bytes,
+            prep->dynamic_smem_bytes,
             launch_stream,
             prep->helper->cuarg_pointers.data(),
             nullptr);
@@ -1926,7 +2044,7 @@ static Result<double> benchmark(const DriverApi* driver,
     kparams.blockDimX = 1;
     kparams.blockDimY = 1;
     kparams.blockDimZ = 1;
-    kparams.sharedMemBytes = 0;
+    kparams.sharedMemBytes = pl.dynamic_smem_bytes;
     kparams.kernelParams = pl.helper->cuarg_pointers.data();
     kparams.extra = nullptr;
     kparams.kern = pl.kernel;
@@ -2201,8 +2319,7 @@ static Status parse_launch_args(PyObject* const* args, Py_ssize_t nargs, const c
 }
 
 static PyObject* launch_impl(PyObject* const* args, Py_ssize_t nargs,
-                             const char* signature, unsigned dynamic_shared_memory_bytes,
-                             bool with_block) {
+                             const char* signature, bool with_block) {
     LaunchArgs launch_args;
     if (!parse_launch_args(args, nargs, signature, with_block, &launch_args))
         return nullptr;
@@ -2211,8 +2328,7 @@ static PyObject* launch_impl(PyObject* const* args, Py_ssize_t nargs,
     if (!driver.is_ok()) return nullptr;
 
     if (!launch(*driver, launch_args.dispatcher, launch_args.grid, launch_args.block,
-                dynamic_shared_memory_bytes, launch_args.stream, launch_args.kernel_args,
-                launch_args.num_kernel_args))
+                launch_args.stream, launch_args.kernel_args, launch_args.num_kernel_args))
         return nullptr;
 
     return Py_NewRef(Py_None);
@@ -2221,47 +2337,13 @@ static PyObject* launch_impl(PyObject* const* args, Py_ssize_t nargs,
 #define LAUNCH_SIGNATURE "launch(stream, grid, kernel, kernel_args, /)"
 
 static PyObject* cuda_tile_launch(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
-    return launch_impl(args, nargs, LAUNCH_SIGNATURE,
-                       /*dynamic_shared_memory_bytes=*/ 0,
-                       /*with_block=*/ false);
+    return launch_impl(args, nargs, LAUNCH_SIGNATURE, /*with_block=*/ false);
 }
 
-#define LAUNCH_EXTENDED_SIGNATURE "launch(stream, grid, block, kernel, kernel_args, /,"\
-                                  " *, dynamic_shared_memory_bytes=None)"
+#define LAUNCH_EXTENDED_SIGNATURE "launch(stream, grid, block, kernel, kernel_args, /)"
 
-static PyObject* launch_extended(PyObject*, PyObject* const* args, Py_ssize_t nargs,
-                                 PyObject* kwnames) {
-    unsigned dynamic_shared_memory_bytes = 0;
-    if (kwnames) {
-        Py_ssize_t num_kwargs = PyTuple_GET_SIZE(kwnames);
-        if (num_kwargs > 1) {
-            return PyErr_Format(PyExc_TypeError,
-                                "Too many keyword arguments to " LAUNCH_EXTENDED_SIGNATURE);
-        }
-        if (num_kwargs) {
-            PyObject* keyword = PyTuple_GET_ITEM(kwnames, 0);
-            if (PyUnicode_Compare(keyword, g_dynamic_shared_memory_bytes_pyunicode)) {
-                return PyErr_Format(
-                        PyExc_TypeError,
-                        "Unexpected keyword argument '%U' to " LAUNCH_EXTENDED_SIGNATURE,
-                        keyword);
-            }
-            PyObject* py_smem_size = args[nargs];
-            if (py_smem_size != Py_None) {
-                unsigned long smem_size_ul = PyLong_AsUnsignedLong(py_smem_size);
-                if (PyErr_Occurred()) return nullptr;
-
-                if (smem_size_ul > UINT_MAX) {
-                    PyErr_SetString(PyExc_OverflowError,
-                                    "dynamic_shared_memory_bytes is out of range");
-                    return nullptr;
-                }
-                dynamic_shared_memory_bytes = static_cast<unsigned>(smem_size_ul);
-            }
-        }
-    }
-    return launch_impl(args, nargs, LAUNCH_EXTENDED_SIGNATURE, dynamic_shared_memory_bytes,
-                       /*with_block=*/ true);
+static PyObject* launch_extended(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    return launch_impl(args, nargs, LAUNCH_EXTENDED_SIGNATURE, /*with_block=*/ true);
 }
 
 #define BENCHMARK_SIGNATURE "_benchmark(stream, grid, kernel, pyargs_tuples, /)"

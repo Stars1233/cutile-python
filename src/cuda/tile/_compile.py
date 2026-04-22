@@ -123,7 +123,8 @@ def _create_kernel_parameters(parameter_constraints: Sequence[ParameterConstrain
                               constant_parameter_mask: Sequence[bool],
                               parameter_names: Sequence[str],
                               parameter_locations: Sequence[Loc],
-                              ir_ctx: ir.IRContext) -> _KernelParameters:
+                              ir_ctx: ir.IRContext,
+                              array_memory_space=None) -> _KernelParameters:
     aggregate_vars = []
     nonconstant_flat_vars = []
     for pos, (constraint, is_const, name, loc) in enumerate(
@@ -138,10 +139,10 @@ def _create_kernel_parameters(parameter_constraints: Sequence[ParameterConstrain
             if isinstance(constraint, ScalarConstraint):
                 ty = TileTy(constraint.dtype, ())
             elif isinstance(constraint, ArrayConstraint):
-                ty = _get_array_ty(constraint)
+                ty = _get_array_ty(constraint, array_memory_space)
             elif isinstance(constraint, ListConstraint):
                 assert isinstance(constraint.element, ArrayConstraint)
-                array_ty = _get_array_ty(constraint.element)
+                array_ty = _get_array_ty(constraint.element, array_memory_space)
                 ty = ListTy(array_ty)
             else:
                 raise TypeError(f"Unexpected parameter descriptor type"
@@ -155,7 +156,7 @@ def _create_kernel_parameters(parameter_constraints: Sequence[ParameterConstrain
     return _KernelParameters(aggregate_vars, nonconstant_flat_vars)
 
 
-def _get_array_ty(param: ArrayConstraint):
+def _get_array_ty(param: ArrayConstraint, memory_space):
     for static_stride, bound in zip(param.stride_constant, param.stride_lower_bound_incl,
                                     strict=True):
         if static_stride is not None:
@@ -167,7 +168,8 @@ def _get_array_ty(param: ArrayConstraint):
     return ArrayTy(make_tile_ty(param.dtype, ()),
                    shape=(None,) * param.ndim,
                    strides=param.stride_constant,
-                   index_dtype=param.index_dtype)
+                   index_dtype=param.index_dtype,
+                   memory_space=memory_space)
 
 
 def _log_mlir(bytecode_buf):
