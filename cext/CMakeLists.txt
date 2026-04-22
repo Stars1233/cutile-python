@@ -47,7 +47,12 @@ add_library(_cext MODULE module.cpp)
 
 target_compile_options(_cext PUBLIC ${cext_compile_flags} ${nostdlib_flags})
 target_include_directories(_cext PRIVATE ${cext_include_dirs})
-target_link_libraries(_cext PUBLIC _cext_static ${Python_LIBRARIES})
+if (MSVC)
+    # on windows linker resolve symbols eagerly so we must explicitly provide libpython.so
+    target_link_libraries(_cext PUBLIC _cext_static ${Python_LIBRARIES})
+else()
+    target_link_libraries(_cext PUBLIC _cext_static)
+endif()
 target_link_options(_cext PUBLIC ${cext_link_flags} ${nostdlib_flags})
 
 set_target_properties(_cext PROPERTIES SKIP_BUILD_RPATH TRUE)
