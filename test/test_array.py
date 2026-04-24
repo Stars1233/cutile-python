@@ -95,9 +95,11 @@ def test_int64_index_inc1():
 
 
 def test_int64_index_overflow_without_annotation():
-    import pytest
-    x = torch.randn(1, 25165824, 1, 128, device='cuda', dtype=torch.bfloat16)
-    out = torch.zeros(1, 25165824, 1, 128, device='cuda', dtype=torch.bfloat16)
+    # Stride > INT32_MAX triggers OverflowError without allocating 6 GiB.
+    # dim-0 stride 2**32 exceeds INT32_MAX; dim-1 stride 0 keeps storage at 128 elements.
+    base = torch.zeros(128, device='cuda', dtype=torch.bfloat16)
+    x = torch.as_strided(base, (1, 25165824, 1, 128), (2**32, 0, 0, 1))
+    out = torch.as_strided(base, (1, 25165824, 1, 128), (2**32, 0, 0, 1))
 
     @ct.kernel
     def kernel(value, out_):
