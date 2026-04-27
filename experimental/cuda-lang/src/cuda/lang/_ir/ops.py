@@ -217,23 +217,21 @@ def _reinterpret_pointer(pointer: Var, result_ty: TileTy) -> Var:
 
 
 @impl(getattr, overload=(ArrayTy, "get_base_pointer"))
-def array_get_base_pointer_impl(object: Var, name: Var):
-    return bind_method(object, stub._m_array_get_base_pointer)
-
-
-@impl(stub._m_array_get_base_pointer)
-def _m_array_get_base_pointer_impl(array: Var) -> Var:
-    return _get_array_base_pointer(array)
-
-
 @impl(getattr, overload=(ArrayTy, "get_element_pointer"))
-def array_get_element_pointer_impl(object: Var, name: Var):
-    return bind_method(object, stub._m_array_get_element_pointer)
+def getattr_array_method(object: Var, name: Var):
+    name = require_constant_str(name)
+    unbound_func = getattr(stub.Array, name)
+    return bind_method(object, unbound_func)
 
 
-@impl(stub._m_array_get_element_pointer)
-def _m_array_get_element_pointer_impl(array: Var, indices: Var) -> Var:
-    return _array_get_element_pointer(array, require_array_indices(array, indices))
+@impl(stub.Array.get_base_pointer)
+def _m_array_get_base_pointer_impl(self: Var) -> Var:
+    return _get_array_base_pointer(self)
+
+
+@impl(stub.Array.get_element_pointer)
+def _m_array_get_element_pointer_impl(self: Var, indices: Var) -> Var:
+    return _array_get_element_pointer(self, require_array_indices(self, indices))
 
 
 @impl(operator.getitem, overload=(ArrayTy, WILDCARD))
@@ -483,49 +481,33 @@ def reinterpret_pointer_as_array_impl(pointer: Var, dtype: Var, shape: Var, stri
 
 
 @impl(getattr, overload=(TileTy, "load"))
-def pointer_load_impl(object: Var, name: Var):
-    require_pointer_var(object)
-    return bind_method(object, stub._m_pointer_load)
-
-
 @impl(getattr, overload=(TileTy, "store"))
-def pointer_store_impl(object: Var, name: Var):
-    require_pointer_var(object)
-    return bind_method(object, stub._m_pointer_store)
-
-
 @impl(getattr, overload=(TileTy, "load_offset"))
-def pointer_load_offset_impl(object: Var, name: Var):
-    require_pointer_var(object)
-    return bind_method(object, stub._m_pointer_load_offset)
-
-
 @impl(getattr, overload=(TileTy, "store_offset"))
-def pointer_store_offset_impl(object: Var, name: Var):
-    require_pointer_var(object)
-    return bind_method(object, stub._m_pointer_store_offset)
+def getattr_pointer_method(object: Var, name: Var):
+    name = require_constant_str(name)
+    unbound_func = getattr(stub.Pointer, name)
+    return bind_method(object, unbound_func)
 
 
-@impl(stub._m_pointer_load)
-def _m_pointer_load_impl(pointer: Var) -> Operation:
-    return _pointer_load(pointer)
+@impl(stub.Pointer.load)
+def pointer_load_impl(self: Var) -> Operation:
+    return _pointer_load(self)
 
 
-@impl(stub._m_pointer_store)
-def _m_pointer_store_impl(pointer: Var, value: Var) -> Operation:
-    _pointer_store(pointer, value)
-    return None
+@impl(stub.Pointer.store)
+def pointer_store_impl(self: Var, value: Var) -> Var:
+    _pointer_store(self, value)
 
 
-@impl(stub._m_pointer_load_offset)
-def _m_pointer_load_offset_impl(pointer: Var, offset: Var) -> Operation:
-    return _pointer_load(_pointer_with_offset(pointer, offset))
+@impl(stub.Pointer.load_offset)
+def pointer_load_offset_impl(self: Var, offset: Var) -> Var:
+    return _pointer_load(_pointer_with_offset(self, offset))
 
 
-@impl(stub._m_pointer_store_offset)
-def _m_pointer_store_offset_impl(pointer: Var, offset: Var, value: Var) -> Operation:
-    _pointer_store(_pointer_with_offset(pointer, offset), value)
-    return None
+@impl(stub.Pointer.store_offset)
+def pointer_store_offset_impl(self: Var, offset: Var, value: Var) -> Var:
+    _pointer_store(_pointer_with_offset(self, offset), value)
 
 
 @dataclass(eq=False)

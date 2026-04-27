@@ -174,6 +174,7 @@ class Array:
             int (constant):
         """
 
+    @stub
     def slice(self, axis, start, stop) -> "Array":
         """Creates a view of the |array| sliced along a single `axis`.
 
@@ -231,8 +232,8 @@ class Array:
             [12, 13, 14, 15]
 
         """
-        return _m_array_slice(self, axis, start, stop)
 
+    @stub
     def tiled_view(self, tile_shape: Constant[Shape], *,
                    padding_mode: PaddingMode = PaddingMode.UNDETERMINED,
                    traversal_steps: Optional[Constant[Shape]] = None) -> "TiledView":
@@ -291,9 +292,8 @@ class Array:
         .. seealso::
             :ref:`Tiled Views <data-tiled-views>`
         """
-        return _m_array_tiled_view(self, tile_shape, padding_mode=padding_mode,
-                                   traversal_steps=traversal_steps)
 
+    @stub
     def get_raw_memory(self) -> "RawArrayMemory":
         """Returns an object that allows loading and storing by element offset.
 
@@ -305,7 +305,6 @@ class Array:
         Returns:
             RawArrayMemory:
         """
-        return _m_array_get_raw_memory(self)
 
 
 def _doc_raw_array_memory_atomic_rmw_op(f):
@@ -363,6 +362,7 @@ class RawArrayMemory:
             DType (constant):
         """
 
+    @stub
     def load_offset(self, offset: "TileOrScalar", /, *,
                     mask: Optional["Tile"] = None,
                     padding_value: "TileOrScalar" = 0,
@@ -378,9 +378,8 @@ class RawArrayMemory:
         Returns:
             Tile: Loaded tile; shape matches broadcast(offset).
         """
-        return _m_raw_array_memory_load_offset(
-            self, offset, mask=mask, padding_value=padding_value, latency=latency)
 
+    @stub
     def store_offset(self, offset: "TileOrScalar", value: "TileOrScalar", /, *,
                      mask: Optional["Tile"] = None,
                      latency: Optional[int] = None) -> None:
@@ -392,9 +391,8 @@ class RawArrayMemory:
             mask: Optional boolean mask; where False, no store occurs.
             latency: Optional latency hint (1--10).
         """
-        return _m_raw_array_memory_store_offset(
-            self, offset, value, mask=mask, latency=latency)
 
+    @stub
     def atomic_cas_offset(self, offset: "TileOrScalar", expected: "TileOrScalar",
                           desired: "TileOrScalar", /, *,
                           mask: Optional["Tile"] = None,
@@ -446,11 +444,9 @@ class RawArrayMemory:
                 [0, 1, 0, 1]
                 [42, 1, 42, 1]
         """
-        return _m_raw_array_memory_atomic_cas(
-            self, offset, expected, desired, mask=mask,
-            memory_order=memory_order, memory_scope=memory_scope)
 
     @_doc_raw_array_memory_atomic_rmw_op
+    @stub
     def atomic_xchg_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
                            mask: Optional["Tile"] = None,
                            memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
@@ -459,11 +455,9 @@ class RawArrayMemory:
 
         For each offset, stores ``update`` to the memory element and returns the original value.
         """
-        return _m_raw_array_memory_atomic_xchg(
-            self, offset, update, mask=mask,
-            memory_order=memory_order, memory_scope=memory_scope)
 
     @_doc_raw_array_memory_atomic_rmw_op
+    @stub
     def atomic_add_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
                           mask: Optional["Tile"] = None,
                           memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
@@ -473,11 +467,9 @@ class RawArrayMemory:
         For each offset, reads the memory element, adds ``update`` to it, writes the result
         back, and returns the original value.
         """
-        return _m_raw_array_memory_atomic_add(
-            self, offset, update, mask=mask,
-            memory_order=memory_order, memory_scope=memory_scope)
 
     @_doc_raw_array_memory_atomic_rmw_op
+    @stub
     def atomic_max_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
                           mask: Optional["Tile"] = None,
                           memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
@@ -487,11 +479,9 @@ class RawArrayMemory:
         For each offset, reads the memory element, computes the maximum between its value
         and ``update``, writes the result back, and returns the original value.
         """
-        return _m_raw_array_memory_atomic_max(
-            self, offset, update, mask=mask,
-            memory_order=memory_order, memory_scope=memory_scope)
 
     @_doc_raw_array_memory_atomic_rmw_op
+    @stub
     def atomic_min_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
                           mask: Optional["Tile"] = None,
                           memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
@@ -501,11 +491,9 @@ class RawArrayMemory:
         For each offset, reads the memory element, computes the minimum between its value
         and ``update``, writes the result back, and returns the original value.
         """
-        return _m_raw_array_memory_atomic_min(
-            self, offset, update, mask=mask,
-            memory_order=memory_order, memory_scope=memory_scope)
 
     @_doc_raw_array_memory_atomic_rmw_op
+    @stub
     def atomic_and_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
                           mask: Optional["Tile"] = None,
                           memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
@@ -515,11 +503,9 @@ class RawArrayMemory:
         For each offset, reads the memory element, computes the bitwise AND with ``update``,
         writes the result back, and returns the original value.
         """
-        return _m_raw_array_memory_atomic_and(
-            self, offset, update, mask=mask,
-            memory_order=memory_order, memory_scope=memory_scope)
 
     @_doc_raw_array_memory_atomic_rmw_op
+    @stub
     def atomic_or_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
                          mask: Optional["Tile"] = None,
                          memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
@@ -529,11 +515,9 @@ class RawArrayMemory:
         For each offset, reads the memory element, computes the bitwise OR with ``update``,
         writes the result back, and returns the original value.
         """
-        return _m_raw_array_memory_atomic_or(
-            self, offset, update, mask=mask,
-            memory_order=memory_order, memory_scope=memory_scope)
 
     @_doc_raw_array_memory_atomic_rmw_op
+    @stub
     def atomic_xor_offset(self, offset: "TileOrScalar", update: "TileOrScalar", /, *,
                           mask: Optional["Tile"] = None,
                           memory_order: "MemoryOrder" = MemoryOrder.ACQ_REL,
@@ -543,9 +527,6 @@ class RawArrayMemory:
         For each offset, reads the memory element, computes the bitwise XOR with ``update``,
         writes the result back, and returns the original value.
         """
-        return _m_raw_array_memory_atomic_xor(
-            self, offset, update, mask=mask,
-            memory_order=memory_order, memory_scope=memory_scope)
 
 
 class Tile:
@@ -578,6 +559,7 @@ class Tile:
             int (constant):
         """
 
+    @stub
     def item(self) -> "Tile":
         """Equivalent to self.reshape(()).
 
@@ -602,7 +584,6 @@ class Tile:
 
                 [8, 9, 10, 11]
         """
-        return _m_tile_item(self)
 
     def extract(self, index, shape):
         """See :py:func:`extract`."""
@@ -747,7 +728,7 @@ class TiledView:
             tuple[const int,...]:
         """
 
-    @function
+    @stub
     def num_tiles(self, axis) -> int:
         """The number of tiles along a |tiled view|'s given axis.
 
@@ -771,6 +752,7 @@ class TiledView:
             tuple[const int,...]:
         """
 
+    @stub
     def load(self, index: Shape, *,
              latency: Optional[int] = None,
              allow_tma: Optional[bool] = None) -> Tile:
@@ -811,8 +793,8 @@ class TiledView:
 
                 [0, 1, 2, 3]
         """
-        return _m_tiled_view_load(self, index, latency=latency, allow_tma=allow_tma)
 
+    @stub
     def store(self, index: Shape, tile: Tile, *,
               latency: Optional[int] = None,
               allow_tma: Optional[bool] = None) -> None:
@@ -853,7 +835,6 @@ class TiledView:
 
                 [99, 99, 99, 99, 0, 0, 0, 0]
         """
-        _m_tiled_view_store(self, index, tile, latency=latency, allow_tma=allow_tma)
 
 
 ###############################################################################
@@ -3964,143 +3945,3 @@ def static_iter(iterable):
         ([0, 0, 0, 0], [1, 1, 1, 1], [2, 2, 2, 2], [3, 3, 3, 3])
         ([1, 1, 1, 1], [3, 3, 3, 3], [5, 5, 5, 5], [3, 3, 3, 3])
     """
-
-
-# ==== Private stubs ====
-
-
-@stub
-def _m_array_slice(array, axis, start, stop): ...
-# Array.slice(axis, start, stop)
-
-
-@stub
-def _m_tile_item(tile): ...
-# Tile.item()
-
-
-def _inherit_kwdefaults(source):
-    def decorator(f):
-        target = getattr(f, '__wrapped__', f)
-        source_fn = getattr(source, '__wrapped__', source)
-        if kwdefaults := source_fn.__kwdefaults__:
-            kwonly = {name for name, p in inspect.signature(target).parameters.items()
-                      if p.kind == inspect.Parameter.KEYWORD_ONLY}
-            assert kwdefaults.keys() <= kwonly
-            target.__kwdefaults__ = dict(kwdefaults)
-        return f
-    return decorator
-
-
-@_inherit_kwdefaults(Array.tiled_view)
-@stub
-def _m_array_tiled_view(array, tile_shape, *, padding_mode, traversal_steps): ...
-# Array.tiled_view(shape, padding_mode=padding_mode)
-
-
-@stub
-def _m_tiled_view_num_tiles(tiled_view, axis): ...
-# TiledView.num_tiles(axis)
-
-
-@_inherit_kwdefaults(TiledView.load)
-@stub
-def _m_tiled_view_load(tiled_view, index, *, latency, allow_tma): ...
-# TiledView.load(index, latency=latency, allow_tma=allow_tma)
-
-
-@_inherit_kwdefaults(TiledView.store)
-@stub
-def _m_tiled_view_store(tiled_view, index, tile, *, latency, allow_tma): ...
-# TiledView.store(index, tile, latency=latency, allow_tma=allow_tma)
-
-
-@stub
-def _m_array_get_raw_memory(array: Array) -> RawArrayMemory: ...  # Array.get_raw_memory()
-
-
-@stub
-def _m_raw_array_memory_load_offset(
-        raw_array_memory: RawArrayMemory, offset: TileOrScalar, /, *,
-        mask: Optional[Tile] = None,
-        padding_value: TileOrScalar = 0,
-        latency: Optional[int] = None) -> Tile: ...  # RawArrayMemory.load_offset()
-
-
-@stub
-def _m_raw_array_memory_store_offset(
-        raw_array_memory: RawArrayMemory, offset: TileOrScalar, value: TileOrScalar, /, *,
-        mask: Optional[Tile] = None,
-        latency: Optional[int] = None) -> None: ...  # RawArrayMemory.store_offset()
-
-
-@stub
-def _m_raw_array_memory_atomic_cas(
-        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
-        expected: TileOrScalar, desired: TileOrScalar, /, *,
-        mask: Optional[Tile] = None,
-        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
-        memory_scope: MemoryScope = MemoryScope.DEVICE) -> Tile: ...  # RawArrayMemory.atomic_cas()
-
-
-@stub
-def _m_raw_array_memory_atomic_xchg(
-        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
-        update: TileOrScalar, /, *,
-        mask: Optional[Tile] = None,
-        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
-        memory_scope: MemoryScope = MemoryScope.DEVICE) -> Tile: ...  # RawArrayMemory.atomic_xchg()
-
-
-@stub
-def _m_raw_array_memory_atomic_add(
-        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
-        update: TileOrScalar, /, *,
-        mask: Optional[Tile] = None,
-        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
-        memory_scope: MemoryScope = MemoryScope.DEVICE) -> Tile: ...  # RawArrayMemory.atomic_add()
-
-
-@stub
-def _m_raw_array_memory_atomic_max(
-        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
-        update: TileOrScalar, /, *,
-        mask: Optional[Tile] = None,
-        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
-        memory_scope: MemoryScope = MemoryScope.DEVICE) -> TileOrScalar: ...
-
-
-@stub
-def _m_raw_array_memory_atomic_min(
-        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
-        update: TileOrScalar, /, *,
-        mask: Optional[Tile] = None,
-        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
-        memory_scope: MemoryScope = MemoryScope.DEVICE) -> TileOrScalar: ...
-
-
-@stub
-def _m_raw_array_memory_atomic_and(
-        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
-        update: TileOrScalar, /, *,
-        mask: Optional[Tile] = None,
-        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
-        memory_scope: MemoryScope = MemoryScope.DEVICE) -> TileOrScalar: ...
-
-
-@stub
-def _m_raw_array_memory_atomic_or(
-        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
-        update: TileOrScalar, /, *,
-        mask: Optional[Tile] = None,
-        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
-        memory_scope: MemoryScope = MemoryScope.DEVICE) -> Tile: ...  # RawArrayMemory.atomic_or()
-
-
-@stub
-def _m_raw_array_memory_atomic_xor(
-        raw_array_memory: RawArrayMemory, offset: TileOrScalar,
-        update: TileOrScalar, /, *,
-        mask: Optional[Tile] = None,
-        memory_order: MemoryOrder = MemoryOrder.ACQ_REL,
-        memory_scope: MemoryScope = MemoryScope.DEVICE) -> Tile: ...  # RawArrayMemory.atomic_xor()

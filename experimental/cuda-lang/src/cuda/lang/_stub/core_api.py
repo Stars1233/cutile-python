@@ -85,30 +85,6 @@ def grid_dim() -> tuple[int, int, int]:
 
 
 @stub
-def _m_array_get_base_pointer(array: Array): ...
-
-
-@stub
-def _m_array_get_element_pointer(array: Array, indices): ...
-
-
-@stub
-def _m_pointer_load(pointer: Pointer[T]) -> T: ...
-
-
-@stub
-def _m_pointer_store(pointer: Pointer[T], value: T) -> None: ...
-
-
-@stub
-def _m_pointer_load_offset(pointer: Pointer[T], offset) -> T: ...
-
-
-@stub
-def _m_pointer_store_offset(pointer: Pointer[T], offset, value: T) -> None: ...
-
-
-@stub
 def shared_array(
     shape: tuple[int, ...],
     dtype: DType,
@@ -762,10 +738,6 @@ __all__ = (
     "static_eval",
     "static_assert",
     "static_iter",
-    "_m_pointer_load",
-    "_m_pointer_store",
-    "_m_pointer_load_offset",
-    "_m_pointer_store_offset",
     "address_space_cast",
     "reinterpret_pointer_as_array",
 )

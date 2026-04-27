@@ -8,6 +8,7 @@ import math
 import operator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from types import MethodType, BuiltinFunctionType, FunctionType
 from typing import (
     Literal, Sequence, Tuple, Optional, Any, List, Callable, Iterator, Iterable,
 )
@@ -1755,18 +1756,12 @@ def getattr_array_strides_impl(object: Var, name: Var):
 
 
 @impl(getattr, overload=(ArrayTy, "slice"))
-def getattr_array_slice_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_array_slice)
-
-
 @impl(getattr, overload=(ArrayTy, "tiled_view"))
-def getattr_array_tiled_view_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_array_tiled_view)
-
-
 @impl(getattr, overload=(ArrayTy, "get_raw_memory"))
-def getattr_array_get_raw_memory_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_array_get_raw_memory)
+def getattr_array_method(object: Var, name: Var):
+    name = require_constant_str(name)
+    unbound_func = getattr(ct.Array, name)
+    return bind_method(object, unbound_func)
 
 
 # ===========================================================================================
@@ -1789,33 +1784,15 @@ def getattr_tile_ndim_impl(object: Var, name: Var):
 
 
 @impl(getattr, overload=(TileTy, "extract"))
-def getattr_tile_extract_impl(object: Var, name: Var):
-    return bind_method(object, ct.extract)
-
-
 @impl(getattr, overload=(TileTy, "reshape"))
-def getattr_tile_reshape_impl(object: Var, name: Var):
-    return bind_method(object, ct.reshape)
-
-
 @impl(getattr, overload=(TileTy, "astype"))
-def getattr_tile_astype_impl(object: Var, name: Var):
-    return bind_method(object, ct.astype)
-
-
 @impl(getattr, overload=(TileTy, "permute"))
-def getattr_tile_permute_impl(object: Var, name: Var):
-    return bind_method(object, ct.permute)
-
-
 @impl(getattr, overload=(TileTy, "transpose"))
-def getattr_tile_transpose_impl(object: Var, name: Var):
-    return bind_method(object, ct.transpose)
-
-
 @impl(getattr, overload=(TileTy, "item"))
-def getattr_tile_item_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_tile_item)
+def getattr_tile_method(object: Var, name: Var):
+    name = require_constant_str(name)
+    unbound_func = getattr(ct.Tile, name)
+    return bind_method(object, unbound_func)
 
 
 # ===========================================================================================
@@ -1838,18 +1815,12 @@ def getattr_tiled_view_traversal_steps_impl(object: Var, name: Var):
 
 
 @impl(getattr, overload=(TiledViewTy, "num_tiles"))
-def getattr_tiled_view_num_tiles_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_tiled_view_num_tiles)
-
-
 @impl(getattr, overload=(TiledViewTy, "load"))
-def getattr_tiled_view_load_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_tiled_view_load)
-
-
 @impl(getattr, overload=(TiledViewTy, "store"))
-def getattr_tiled_view_store_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_tiled_view_store)
+def getattr_tiled_view_method(object: Var, name: Var):
+    name = require_constant_str(name)
+    unbound_func = getattr(ct.TiledView, name)
+    return bind_method(object, unbound_func)
 
 
 # ===========================================================================================
@@ -1862,53 +1833,19 @@ def getattr_raw_array_memory_dtype_impl(object: Var, name: Var):
 
 
 @impl(getattr, overload=(RawArrayMemoryTy, "load_offset"))
-def getattr_raw_array_memory_load_offset_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_raw_array_memory_load_offset)
-
-
 @impl(getattr, overload=(RawArrayMemoryTy, "store_offset"))
-def getattr_raw_array_memory_store_offset_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_raw_array_memory_store_offset)
-
-
 @impl(getattr, overload=(RawArrayMemoryTy, "atomic_cas_offset"))
-def getattr_raw_array_memory_atomic_cas_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_raw_array_memory_atomic_cas)
-
-
 @impl(getattr, overload=(RawArrayMemoryTy, "atomic_xchg_offset"))
-def getattr_raw_array_memory_atomic_xchg_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_raw_array_memory_atomic_xchg)
-
-
 @impl(getattr, overload=(RawArrayMemoryTy, "atomic_add_offset"))
-def getattr_raw_array_memory_atomic_add_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_raw_array_memory_atomic_add)
-
-
 @impl(getattr, overload=(RawArrayMemoryTy, "atomic_max_offset"))
-def getattr_raw_array_memory_atomic_max_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_raw_array_memory_atomic_max)
-
-
 @impl(getattr, overload=(RawArrayMemoryTy, "atomic_min_offset"))
-def getattr_raw_array_memory_atomic_min_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_raw_array_memory_atomic_min)
-
-
 @impl(getattr, overload=(RawArrayMemoryTy, "atomic_and_offset"))
-def getattr_raw_array_memory_atomic_and_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_raw_array_memory_atomic_and)
-
-
 @impl(getattr, overload=(RawArrayMemoryTy, "atomic_or_offset"))
-def getattr_raw_array_memory_atomic_or_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_raw_array_memory_atomic_or)
-
-
 @impl(getattr, overload=(RawArrayMemoryTy, "atomic_xor_offset"))
-def getattr_raw_array_memory_atomic_xor_impl(object: Var, name: Var):
-    return bind_method(object, ct._m_raw_array_memory_atomic_xor)
+def getattr_raw_array_memory_method(object: Var, name: Var):
+    name = require_constant_str(name)
+    unbound_func = getattr(ct.RawArrayMemory, name)
+    return bind_method(object, unbound_func)
 
 
 # ===========================================================================================
@@ -2292,9 +2229,9 @@ def num_blocks(axis: Var) -> Var:
     return add_operation(TileNumBlocks, make_tile_ty(datatype.default_int_type, ()), axis=axis)
 
 
-@impl(ct._m_array_slice)
-def array_slice_impl(array: Var, axis: Var, start: Var, stop: Var) -> Var:
-    array_ty = require_array_type(array)
+@impl(ct.Array.slice)
+def array_slice_impl(self: Var, axis: Var, start: Var, stop: Var) -> Var:
+    array_ty = require_array_type(self)
     const_axis = normalize_axis(require_constant_int(axis), array_ty.ndim)
     require_signed_integer_0d_tile_type(start)
     require_signed_integer_0d_tile_type(stop)
@@ -2324,7 +2261,7 @@ def array_slice_impl(array: Var, axis: Var, start: Var, stop: Var) -> Var:
         memory_space=array_ty.memory_space,
     )
 
-    array_val = array.get_aggregate()
+    array_val = self.get_aggregate()
     assert isinstance(array_val, ArrayValue)
     static_stride = array_ty.strides[const_axis]
     if static_stride == 1:
@@ -2473,10 +2410,10 @@ def _tile_load_impl_inner(array: Var, index_items: tuple[Var, ...], shape: Seque
     return reshape(result, shape)
 
 
-@impl(ct._m_array_get_raw_memory)
-def get_raw_memory_impl(array: Var) -> Var:
-    array_ty = require_array_type(array)
-    array_val = array.get_aggregate()
+@impl(ct.Array.get_raw_memory)
+def get_raw_memory_impl(self: Var) -> Var:
+    array_ty = require_array_type(self)
+    array_val = self.get_aggregate()
     assert isinstance(array_val, ArrayValue)
     base_ptr = array_val.base_ptr
     raw_mem_ty = RawArrayMemoryTy(TileTy(array_ty.dtype, ()))
@@ -2501,11 +2438,11 @@ def _process_raw_array_memory_pointer_and_mask(
     return pointer, pointer_shape, final_mask, array_dtype
 
 
-@impl(ct._m_raw_array_memory_load_offset)
-def raw_array_memory_load_offset_impl(raw_array_memory: Var, offset: Var, mask: Var,
+@impl(ct.RawArrayMemory.load_offset)
+def raw_array_memory_load_offset_impl(self: Var, offset: Var, mask: Var,
                                       padding_value: Var, latency: Var) -> Var:
     pointer, pointer_shape, final_mask, array_dtype = _process_raw_array_memory_pointer_and_mask(
-        raw_array_memory, offset, mask)
+        self, offset, mask)
 
     if padding_value.is_constant() and padding_value.get_constant() is None:
         padding_var: Optional[Var] = None
@@ -2524,11 +2461,11 @@ def raw_array_memory_load_offset_impl(raw_array_memory: Var, offset: Var, mask: 
     return result
 
 
-@impl(ct._m_raw_array_memory_store_offset)
-def raw_array_memory_store_offset_impl(raw_array_memory: Var, offset: Var, value: Var,
+@impl(ct.RawArrayMemory.store_offset)
+def raw_array_memory_store_offset_impl(self: Var, offset: Var, value: Var,
                                        mask: Var, latency: Var) -> None:
     pointer, pointer_shape, final_mask, array_dtype = _process_raw_array_memory_pointer_and_mask(
-        raw_array_memory, offset, mask)
+        self, offset, mask)
 
     value = _get_scatter_value(value, pointer_shape, array_dtype, "Value",
                                array_name="RawArrayMemory")
@@ -3009,13 +2946,13 @@ def atomic_cas_impl(array: Var, indices: Var, expected: Var, desired: Var, check
                             expected, desired, memory_order, memory_scope)
 
 
-@impl(ct._m_raw_array_memory_atomic_cas)
-def raw_array_memory_atomic_cas_impl(raw_array_memory: Var, offset: Var,
+@impl(ct.RawArrayMemory.atomic_cas_offset)
+def raw_array_memory_atomic_cas_impl(self: Var, offset: Var,
                                      expected: Var, desired: Var,
                                      mask: Var, memory_order: Var,
                                      memory_scope: Var) -> Var:
     pointer, pointer_shape, final_mask, array_dtype = _process_raw_array_memory_pointer_and_mask(
-        raw_array_memory, offset, mask)
+        self, offset, mask)
     return _atomic_cas_core(array_dtype, pointer, pointer_shape, final_mask,
                             expected, desired, memory_order, memory_scope)
 
@@ -3145,25 +3082,25 @@ def atomic_rmw_impl(int_mode: Optional[AtomicRMWMode],
                             update, memory_order, memory_scope)
 
 
-@impl(ct._m_raw_array_memory_atomic_xchg, fixed_args=[
+@impl(ct.RawArrayMemory.atomic_xchg_offset, fixed_args=[
     AtomicRMWMode.EXCHANGE, AtomicRMWMode.EXCHANGE, AtomicRMWMode.EXCHANGE,
     False, int_float_32_64_dtypes])
-@impl(ct._m_raw_array_memory_atomic_add, fixed_args=[
+@impl(ct.RawArrayMemory.atomic_add_offset, fixed_args=[
     AtomicRMWMode.ADD_INT, AtomicRMWMode.ADD_INT, AtomicRMWMode.ADD_FLOAT,
     False, (*int_float_32_64_dtypes, datatype.float16)])
-@impl(ct._m_raw_array_memory_atomic_min, fixed_args=[
+@impl(ct.RawArrayMemory.atomic_min_offset, fixed_args=[
     AtomicRMWMode.MIN_SIGNED_INT, AtomicRMWMode.MIN_UNSIGNED_INT, None,
     False, int_32_64_dtypes])
-@impl(ct._m_raw_array_memory_atomic_max, fixed_args=[
+@impl(ct.RawArrayMemory.atomic_max_offset, fixed_args=[
     AtomicRMWMode.MAX_SIGNED_INT, AtomicRMWMode.MAX_UNSIGNED_INT, None,
     False, int_32_64_dtypes])
-@impl(ct._m_raw_array_memory_atomic_and, fixed_args=[
+@impl(ct.RawArrayMemory.atomic_and_offset, fixed_args=[
     AtomicRMWMode.BITWISE_AND, AtomicRMWMode.BITWISE_AND, None,
     True, int_32_64_dtypes])
-@impl(ct._m_raw_array_memory_atomic_or, fixed_args=[
+@impl(ct.RawArrayMemory.atomic_or_offset, fixed_args=[
     AtomicRMWMode.BITWISE_OR, AtomicRMWMode.BITWISE_OR, None,
     True, int_32_64_dtypes])
-@impl(ct._m_raw_array_memory_atomic_xor, fixed_args=[
+@impl(ct.RawArrayMemory.atomic_xor_offset, fixed_args=[
     AtomicRMWMode.BITWISE_XOR, AtomicRMWMode.BITWISE_XOR, None,
     True, int_32_64_dtypes])
 def raw_array_memory_atomic_rmw_impl(int_mode: Optional[AtomicRMWMode],
@@ -3172,10 +3109,10 @@ def raw_array_memory_atomic_rmw_impl(int_mode: Optional[AtomicRMWMode],
                                      bitwise: bool,
                                      supported_dtypes: Sequence[DType],
                                      # --- end of fixed args ---
-                                     raw_array_memory: Var, offset: Var, update: Var,
+                                     self: Var, offset: Var, update: Var,
                                      mask: Var, memory_order: Var, memory_scope: Var):
     pointer, pointer_shape, final_mask, array_dtype = _process_raw_array_memory_pointer_and_mask(
-        raw_array_memory, offset, mask)
+        self, offset, mask)
     return _atomic_rmw_core(int_mode, uint_mode, float_mode, bitwise, supported_dtypes,
                             array_dtype, pointer, pointer_shape, final_mask,
                             update, memory_order, memory_scope)
@@ -4659,15 +4596,15 @@ def extract_impl(x: Var, index: Var, shape: Var) -> Var:
     return reshape(result, orig_shape)
 
 
-@impl(ct._m_tile_item)
-def tile_item(tile: Var) -> Var:
-    return reshape(tile, ())
+@impl(ct.Tile.item)
+def tile_item(self: Var) -> Var:
+    return reshape(self, ())
 
 
-@impl(ct._m_array_tiled_view)
-def array_tiled_view_impl(array: Var, tile_shape: Var, padding_mode: Var,
+@impl(ct.Array.tiled_view)
+def array_tiled_view_impl(self: Var, tile_shape: Var, padding_mode: Var,
                           traversal_steps: Var) -> Var:
-    array_ty = require_array_type(array)
+    array_ty = require_array_type(self)
     shape_val = require_constant_shape(tile_shape, allow_single_int=True,
                                        expected_rank=array_ty.ndim,
                                        allow_0d_shape=True)
@@ -4687,38 +4624,38 @@ def array_tiled_view_impl(array: Var, tile_shape: Var, padding_mode: Var,
                                                      allow_non_power_of_two=True,
                                                      var_name="traversal_steps")
     view_ty = TiledViewTy(array_ty, shape_val, padding_mode_val, traversal_steps_val)
-    return make_aggregate(TiledViewValue(array), view_ty)
+    return make_aggregate(TiledViewValue(self), view_ty)
 
 
-@impl(ct._m_tiled_view_num_tiles)
-def tiled_view_num_tiles(tiled_view: Var, axis: Var) -> Var:
-    ty = tiled_view.get_type()
-    [array] = tiled_view.get_aggregate().as_tuple()
+@impl(ct.TiledView.num_tiles)
+def tiled_view_num_tiles(self: Var, axis: Var) -> Var:
+    ty = self.get_type()
+    [array] = self.get_aggregate().as_tuple()
     view_shape = num_tiles(array, ty.tile_shape, get_default_order(ty.ndim), ty.traversal_steps)
     axis = require_constant_int(axis)
     axis = normalize_axis(axis, ty.ndim)
     return view_shape[axis]
 
 
-@impl(ct._m_tiled_view_load)
-def tiled_view_load_impl(tiled_view: Var, index: Var, latency: Var, allow_tma: Var) -> Var:
-    view_ty = require_tiled_view_type(tiled_view)
+@impl(ct.TiledView.load)
+def tiled_view_load_impl(self: Var, index: Var, latency: Var, allow_tma: Var) -> Var:
+    view_ty = require_tiled_view_type(self)
     index_ty = require_index_or_index_tuple_type(index)
     index_items = index.get_aggregate().items if isinstance(index_ty, TupleTy) else (index,)
     if view_ty.ndim != len(index_items):
         raise TileTypeError(f"Index size {len(index_items)}"
                             f" does not match the tiled view rank {view_ty.ndim}")
 
-    [array] = tiled_view.get_aggregate().as_tuple()
+    [array] = self.get_aggregate().as_tuple()
     order = get_default_order(view_ty.ndim)
     return _tile_load_impl_inner(array, index_items, view_ty.tile_shape, order,
                                  view_ty.padding_mode, latency, allow_tma,
                                  traversal_steps=view_ty.traversal_steps)
 
 
-@impl(ct._m_tiled_view_store)
-def tiled_view_store_impl(tiled_view: Var, index: Var, tile: Var, latency: Var, allow_tma: Var):
-    view_ty = require_tiled_view_type(tiled_view)
+@impl(ct.TiledView.store)
+def tiled_view_store_impl(self: Var, index: Var, tile: Var, latency: Var, allow_tma: Var):
+    view_ty = require_tiled_view_type(self)
     index_ty = require_index_or_index_tuple_type(index)
     index_items = index.get_aggregate().items if isinstance(index_ty, TupleTy) else (index,)
     if view_ty.ndim != len(index_items):
@@ -4733,7 +4670,7 @@ def tiled_view_store_impl(tiled_view: Var, index: Var, tile: Var, latency: Var, 
     tile = broadcast_to(tile, view_ty.tile_shape)
     tile = _implicit_cast(tile, view_ty.dtype,
                           "Stored tile is incompatible with tiled view's dtype")
-    [array] = tiled_view.get_aggregate().as_tuple()
+    [array] = self.get_aggregate().as_tuple()
     order = get_default_order(view_ty.ndim)
     _tile_store_impl_inner(array, index_items, tile, order, latency, allow_tma,
                            traversal_steps=view_ty.traversal_steps)
@@ -4948,6 +4885,9 @@ def var2sym(var: Var) -> Any:
                          for f in dataclasses.fields(ty.cls)})
     elif isinstance(ty, ClosureTy):
         return SymbolicClosure(var)
+    elif isinstance(ty, BoundMethodTy):
+        self_sym = var2sym(var.get_aggregate().bound_self)
+        return MethodType(ty.func, self_sym)
     else:
         raise NotImplementedError(f"Objects of type {ty} are not supported at compile time")
 
@@ -4967,6 +4907,13 @@ def sym2var(x: Any) -> Var:
         field_vars = tuple(sym2var(getattr(x, f.name))
                            for f in dataclasses.fields(cls))
         return build_dataclass_instance(field_vars, info)
+
+    if isinstance(x, MethodType):
+        self_var = sym2var(x.__self__)
+        if not isinstance(x.__func__, FunctionType | BuiltinFunctionType):
+            raise TileTypeError(f"Object of type {type(x).__name__}"
+                                f" cannot be used as a function for binding a method")
+        return bind_method(self_var, x.__func__)
 
     x = get_constant_value(x)
     return loosely_typed_const(x)

@@ -40,12 +40,6 @@ from .core_api import (
     syncwarp,
     syncthreads,
     inline_ptx,
-    _m_pointer_load,
-    _m_pointer_store,
-    _m_pointer_load_offset,
-    _m_pointer_store_offset,
-    _m_array_get_base_pointer,
-    _m_array_get_element_pointer,
     address_space_cast,
     reinterpret_pointer_as_array,
 )

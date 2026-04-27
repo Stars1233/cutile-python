@@ -5,7 +5,7 @@ import inspect
 import dataclasses
 from dataclasses import dataclass
 from enum import EnumMeta
-from types import ModuleType, FunctionType
+from types import ModuleType, FunctionType, BuiltinFunctionType
 from typing import Any, Callable, Optional, Sequence, Tuple, Iterator
 from functools import reduce
 import operator
@@ -614,7 +614,7 @@ class FunctionTy(Type):
 @dataclass(frozen=True)
 class BoundMethodTy(Type):
     self_ty: Type
-    func: FunctionType
+    func: FunctionType | BuiltinFunctionType
 
     def is_aggregate(self) -> bool:
         return True

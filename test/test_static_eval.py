@@ -218,3 +218,54 @@ def test_too_many_args():
     with pytest.raises(ct.TileSyntaxError,
                        match=re.escape("static_eval() expects a single expression")):
         ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))
+
+
+def test_static_eval_returns_array_method():
+    @ct.kernel
+    def kernel(x):
+        f = ct.static_eval(x.slice)
+        sub = f(0, 1, 2)
+        ct.scatter(x, 0, ct.gather(sub, 0))
+
+    x = torch.tensor([10, 20, 30], dtype=torch.int32, device="cuda")
+    ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))
+    assert x[0].item() == 20
+
+
+def test_static_eval_stored_method():
+    @ct.kernel
+    def kernel(x):
+        m = x.slice
+        f = ct.static_eval(m)
+        sub = f(0, 1, 2)
+        ct.scatter(x, 0, ct.gather(sub, 0))
+
+    x = torch.tensor([10, 20, 30], dtype=torch.int32, device="cuda")
+    ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))
+    assert x[0].item() == 20
+
+
+def test_static_eval_returns_tile_method():
+    shape_after = []
+
+    @ct.kernel
+    def kernel(x):
+        t = ct.load(x, (0,), (4,))
+        f = ct.static_eval(t.reshape)
+        t2 = f((2, 2))
+        ct.static_eval(shape_after.append(t2.shape))
+
+    x = torch.zeros((4,), dtype=torch.int32, device="cuda")
+    ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))
+    assert shape_after == [(2, 2)]
+
+
+def test_static_eval_error_when_calling_bound_method():
+    @ct.kernel
+    def kernel(x):
+        ct.static_eval(x.slice(0, 1, 2))
+
+    x = torch.zeros((3,), dtype=torch.int32, device="cuda")
+    with pytest.raises(ct.TileStaticEvalError,
+                       match=re.escape("Tile functions cannot be called inside static_eval()")):
+        ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))
