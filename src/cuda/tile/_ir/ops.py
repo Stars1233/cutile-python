@@ -44,7 +44,7 @@ from .op_impl import (
     require_0d_tile_maybe_loose_type, require_bool, require_optional_range_type,
     require_tile_or_tile_tuple_type, require_constant_scalar_tuple, require_constant_scalar,
     require_callable_type, require_raw_array_memory_type,
-    OverloadNotFoundError, WILDCARD)
+    OverloadNotFoundError, WILDCARD, require_dataclass_type)
 from .ops_utils import (
     BINOP_REGISTRY, UNARYOP_REGISTRY,
     check_rd_and_ftz, PaddingMode, get_default_order,
@@ -1435,6 +1435,23 @@ def build_dataclass_instance(items: tuple[Var, ...], info: DataclassInfo) -> Var
                            for name, x in zip(info.field_names, items, strict=True)})
         res.set_constant(const_val)
     return res
+
+
+@impl(dataclasses.replace)
+def dataclasses_replace_impl(obj: Var, changes: dict[str, Var]):
+    dataclass_ty = require_dataclass_type(obj)
+    dataclass_val = obj.get_aggregate()
+    assert isinstance(dataclass_val, DataclassValue)
+    name2idx = dataclass_val.info.field_name_to_idx
+    new_items = list(dataclass_val.items)
+    for name, val in changes.items():
+        try:
+            idx = name2idx[name]
+        except KeyError:
+            raise TileTypeError(f"Dataclass '{dataclass_ty.cls.__name__}'"
+                                f" has no such field '{name}'")
+        new_items[idx] = val
+    return build_dataclass_instance(tuple(new_items), dataclass_val.info)
 
 
 @impl(hir_stubs.build_formatted_string)

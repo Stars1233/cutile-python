@@ -104,6 +104,34 @@ def test_dataclass_static_eval_swap_fields():
     assert x.tolist() == [12, 10]
 
 
+def test_dataclasses_replace():
+    @ct.kernel
+    def kern(x):
+        fb = FooBar(2, 7, 13)
+        fb2 = dataclasses.replace(fb, baz=123, bar=(30, 40))
+        ct.scatter(x, 0, fb.foo)
+        ct.scatter(x, 1, fb.bar)
+        ct.scatter(x, 2, fb.baz)
+        ct.scatter(x, 3, fb2.foo)
+        ct.scatter(x, 4, fb2.bar[0])
+        ct.scatter(x, 5, fb2.bar[1])
+        ct.scatter(x, 6, fb2.baz)
+
+    x = torch.zeros((7,), dtype=torch.int32, device="cuda")
+    ct.launch(torch.cuda.current_stream(), (1,), kern, (x,))
+    assert x.tolist() == [2, 7, 13, 2, 30, 40, 123]
+
+
+def test_dataclasses_replace_no_such_field():
+    @ct.kernel
+    def kern():
+        fb = FooBar(2, 7)
+        dataclasses.replace(fb, abracadabra=8)
+
+    with pytest.raises(TileTypeError, match="Dataclass 'FooBar' has no such field 'abracadabra'"):
+        ct.launch(torch.cuda.current_stream(), (1,), kern, ())
+
+
 def test_reject_nonfrozen():
     @dataclass
     class Thawed:

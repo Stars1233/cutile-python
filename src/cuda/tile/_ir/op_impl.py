@@ -22,7 +22,7 @@ from .typing_support import datatype, get_signature
 from .ir import Var, TupleValue, Builder
 from .type import TiledViewTy, TupleTy, TileTy, DTypeSpec, EnumTy, StringTy, ArrayTy, SliceType, \
     ListTy, LooselyTypedScalar, RangeIterType, FunctionTy, ClosureTy, BoundMethodTy, \
-    DTypeConstructor, Type, RawArrayMemoryTy
+    DTypeConstructor, Type, RawArrayMemoryTy, DataclassTy
 
 
 def _verify_params_match(stub_sig: inspect.Signature, func_sig: inspect.Signature):
@@ -516,6 +516,13 @@ def require_tuple_type(var: Var) -> TupleTy:
     ty = var.get_type()
     if not isinstance(ty, TupleTy):
         raise _make_type_error(f"Expected a tuple, but given value has type {ty}", var)
+    return ty
+
+
+def require_dataclass_type(var: Var) -> DataclassTy:
+    ty = var.get_type()
+    if not isinstance(ty, DataclassTy):
+        raise _make_type_error(f"Expected a dataclass instance, but given value has type {ty}", var)
     return ty
 
 
