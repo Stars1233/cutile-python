@@ -336,7 +336,7 @@ def test_scalar_rounding(shape, tile, is_constant, dtype, op, tmp_path):
 @requires_tileiras(BytecodeVersion.V_13_2)
 @pytest.mark.use_mlir
 @pytest.mark.parametrize("dtype", float_dtypes, ids=dtype_id)
-@pytest.mark.parametrize("rounding_mode", [RMd.FULL, RMd.APPROX])
+@pytest.mark.parametrize("rounding_mode", [RMd.FULL, RMd.APPROX, None])
 def test_array_tanh_rounding_mode(shape, tile, dtype, rounding_mode, tmp_path):
     should_raise_dtype = rounding_mode in [RMd.FULL, RMd.APPROX] and dtype != torch.float32
     x = make_tensor(shape, dtype=dtype, device='cuda')
@@ -353,12 +353,44 @@ def test_array_tanh_rounding_mode(shape, tile, dtype, rounding_mode, tmp_path):
             launch_unary(kernel, x, y, tile)
     else:
         bytecode = get_bytecode(kernel, (x, y, tile))
-        if rounding_mode is RMd.FULL:
+        if rounding_mode in (RMd.FULL, None):
             # FULL is the default, not included in mlir text
             check_directive = "// CHECK: %[[RES:.*]] = tanh %[[A:.*]]{{[[:space:]]*}}:"
         else:
             check_directive = (
                 f"// CHECK: %[[RES:.*]] = tanh %[[A:.*]] rounding<{rounding_mode.value}>"
+            )
+        filecheck(bytecode, check_directive)
+        launch_unary(kernel, x, y, tile)
+        assert_close(y, y_ref)
+
+
+@requires_tileiras(BytecodeVersion.V_13_3)
+@pytest.mark.use_mlir
+@pytest.mark.parametrize("dtype", float_dtypes, ids=dtype_id)
+@pytest.mark.parametrize("rounding_mode", [RMd.FULL, RMd.APPROX, None])
+def test_array_exp_rounding_mode(shape, tile, dtype, rounding_mode, tmp_path):
+    should_raise_dtype = rounding_mode in [RMd.FULL, RMd.APPROX] and dtype != torch.float32
+    x = make_tensor(shape, dtype=dtype, device='cuda')
+    y_ref = torch.exp(x)
+    y = torch.zeros_like(y_ref, device="cuda")
+    kernel = array_kernel("exp_rounding_mode",
+                          f"ty = ct.exp(tx, rounding_mode={rounding_mode})",
+                          tmp_path,
+                          globals={"RoundingMode": RMd})
+    if should_raise_dtype:
+        with pytest.raises(TileTypeError,
+                           match=fr"Rounding mode {rounding_mode.value} can only be used for "
+                           "float32 type"):
+            launch_unary(kernel, x, y, tile)
+    else:
+        bytecode = get_bytecode(kernel, (x, y, tile))
+        if rounding_mode in (RMd.FULL, None):
+            # FULL is the default, not included in mlir text
+            check_directive = "// CHECK: %[[RES:.*]] = exp %[[A:.*]]{{[[:space:]]*}}:"
+        else:
+            check_directive = (
+                f"// CHECK: %[[RES:.*]] = exp %[[A:.*]] rounding<{rounding_mode.value}>"
             )
         filecheck(bytecode, check_directive)
         launch_unary(kernel, x, y, tile)

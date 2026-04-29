@@ -53,3 +53,22 @@ def test_tanh_without_rounding_mode_works_on_13_1():
 
     # Should not raise version error
     compile_with_version(kernel, (tensor(), tensor()), "13.1")
+
+
+def test_exp_rounding_mode_requires_13_3():
+    def kernel(x, y):
+        tx = ct.load(x, 0, shape=64)
+        ct.store(y, 0, tile=ct.exp(tx, rounding_mode=RoundingMode.APPROX))
+
+    with pytest.raises(TileUnsupportedFeatureError,
+                       match=r"exp rounding_mode=approx requires tileiras 13\.3"):
+        compile_with_version(kernel, (tensor(), tensor()), "13.2")
+
+
+def test_exp_without_rounding_mode_works_on_13_1():
+    def kernel(x, y):
+        tx = ct.load(x, 0, shape=64)
+        ct.store(y, 0, tile=ct.exp(tx))
+
+    # Should not raise version error
+    compile_with_version(kernel, (tensor(), tensor()), "13.1")

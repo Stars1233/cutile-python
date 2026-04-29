@@ -3255,10 +3255,23 @@ def _doc_unary_op(f):
     return wrapped
 
 
-@_doc_unary_op
 @stub
-def exp(x, /) -> TileOrScalar:
+def exp(x, /, *, rounding_mode: Optional[RoundingMode] = None) -> TileOrScalar:
     """
+    Perform `exp` on a tile.
+
+    Args:
+        x (Tile):
+        rounding_mode (RoundingMode): Supported values:
+
+            - ``RoundingMode.FULL`` (f32 only)
+            - ``RoundingMode.APPROX`` (f32 only)
+
+            (since CTK 13.3)
+
+    Returns:
+        Tile:
+
     Examples:
 
         .. testcode::
@@ -3474,8 +3487,10 @@ def tanh(x, /, *, rounding_mode: Optional[RoundingMode] = None) -> TileOrScalar:
         x (Tile):
         rounding_mode (RoundingMode): Supported values:
 
-            - ``RoundingMode.FULL``
-            - ``RoundingMode.APPROX`` (since CTK 13.2)
+            - ``RoundingMode.FULL`` (f32 only)
+            - ``RoundingMode.APPROX`` (f32 only)
+
+            (since CTK 13.2)
 
     Returns:
         Tile:

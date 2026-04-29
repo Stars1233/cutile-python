@@ -45,6 +45,7 @@ _RD_BASIC = {RoundingMode.RN: None, RoundingMode.RZ: None,
 _RD_TRUEDIV = {**_RD_BASIC, RoundingMode.FULL: None, RoundingMode.APPROX: None}
 _RD_SQRT = {**_RD_BASIC, RoundingMode.APPROX: None}
 _RD_TANH = {RoundingMode.FULL: None, RoundingMode.APPROX: BytecodeVersion.V_13_2}
+_RD_EXP = {RoundingMode.FULL: None, RoundingMode.APPROX: BytecodeVersion.V_13_3}
 
 BINOP_REGISTRY = {
     "add": MathOpDef(lambda x, y: x + y, _RD_BASIC, support_flush_to_zero=True),
@@ -91,7 +92,7 @@ def _invert(x: int | bool, bool_action: Literal['raise'] | Literal['not']):
 UNARYOP_REGISTRY = {
     "abs": MathOpDef(abs),
     "neg": MathOpDef(lambda x: -x),
-    "exp": MathOpDef(math.exp),
+    "exp": MathOpDef(math.exp, _RD_EXP),
     "exp2": MathOpDef(lambda x: 2 ** x, support_flush_to_zero=True),
     "sin": MathOpDef(math.sin),
     "sinh": MathOpDef(math.sinh),
@@ -113,7 +114,7 @@ UNARYOP_REGISTRY = {
 
 
 def get_default_rounding_mode(opname: Optional[str] = None):
-    return RoundingMode.FULL if opname == 'tanh' else RoundingMode.RN
+    return RoundingMode.FULL if opname in ('tanh', 'exp') else RoundingMode.RN
 
 
 rounding_mode_to_bytecode = {

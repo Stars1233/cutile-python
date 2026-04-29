@@ -1522,8 +1522,7 @@ class Unary(Operation, opcode="unaryop"):
             case "neg", False: return bc.encode_NegIOp(ctx.builder, res_type_id, x,
                                                        bc.IntegerOverflow.NONE)
             case "exp", True: return bc.encode_ExpOp(ctx.builder, res_type_id, x,
-                                                     # TODO: expose rounding mode in ct.exp
-                                                     rounding_mode=bc.RoundingMode.FULL)
+                                                     rounding_mode=rounding_mode)
             case "exp2", True: return bc.encode_Exp2Op(ctx.builder, res_type_id, x,
                                                        flush_to_zero=flush_to_zero)
             case "sin", True: return bc.encode_SinOp(ctx.builder, res_type_id, x)
@@ -1653,7 +1652,6 @@ def pos_impl(x: Var):
 @impl(ct.sinh, fixed_args=["sinh", _UNARY_FLOAT])
 @impl(ct.cos, fixed_args=["cos", _UNARY_FLOAT])
 @impl(ct.cosh, fixed_args=["cosh", _UNARY_FLOAT])
-@impl(ct.exp, fixed_args=["exp", _UNARY_FLOAT])
 @impl(ct.bitwise_not, fixed_args=["bitwise_not", _UNARY_BOOL_INT])
 @impl(ct.floor, fixed_args=["floor", _UNARY_STRICT_FLOAT])
 @impl(ct.ceil, fixed_args=["ceil", _UNARY_STRICT_FLOAT])
@@ -1682,6 +1680,7 @@ def unary_impl_with_rd_and_ftz(fn: str, behavior: _UnaryBehavior,
 
 
 @impl(ct.tanh, fixed_args=["tanh", _UNARY_FLOAT])
+@impl(ct.exp, fixed_args=["exp", _UNARY_FLOAT])
 def unary_impl_with_rd(fn: str, behavior: _UnaryBehavior, x: Var, rounding_mode: Var) -> Var:
     rounding_mode = require_optional_constant_enum(rounding_mode, RoundingMode)
     return unary(fn, behavior, x, rounding_mode=rounding_mode)
