@@ -3,83 +3,114 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import math
+import ctypes
 import sys
-import subprocess
-import ast
+import traceback
 import torch
 import numpy as np
 import pytest
-
-from math import ceil
+from util import FdCaptureRunner
 import cuda.tile as ct
 from cuda.tile._bytecode.version import BytecodeVersion
 from cuda.tile._compiler_options import CompilerOptions
 from conftest import get_tileiras_version
 from cuda.tile._datatype import (bool_,
-                                 float16, float32, float64,
-                                 int8, int16, int32, int64,
-                                 uint8, uint16, uint32, uint64,
+                                 float16, float32, float64, bfloat16,
+                                 int64, uint8, uint16, uint32, uint64,
                                  NumericDTypeCategories, is_float)
 
 # opt_level=0 required for correct print ordering in tileiras < 13.2
 _DEFAULT_OPT_LEVEL = CompilerOptions.__dataclass_fields__['opt_level'].default
 _OPT_LEVEL = 0 if get_tileiras_version() < BytecodeVersion.V_13_2 else _DEFAULT_OPT_LEVEL
+_libc = ctypes.CDLL('ucrtbase' if sys.platform == 'win32' else None)
+
+# === Helpers ===
+_kernel_runner = None
+
+
+def _get_kernel_runner():
+    global _kernel_runner
+    if _kernel_runner is None or not _kernel_runner.is_alive():
+        _kernel_runner = FdCaptureRunner(__file__, "start_kernel_runner")
+    return _kernel_runner
+
+
+def _close_kernel_runner():
+    global _kernel_runner
+    if _kernel_runner is not None and _kernel_runner.is_alive():
+        _kernel_runner.close()
+    _kernel_runner = None
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _module_teardown():
+    yield
+    _close_kernel_runner()
+
+
+def _kernel_runner_main():
+    while True:
+        args = FdCaptureRunner.get_cmd_args(sys.stdin.buffer)
+        if args is None:
+            break
+        try:
+            FdCaptureRunner.write_begin_marker()
+            kernel_name, shape_str, dtype_str, tile_str = args
+            kernel = _KERNELS_MAP_[kernel_name]
+            shape = tuple(int(d) for d in shape_str.split(","))
+            dtype = getattr(torch, dtype_str)
+            tile = int(tile_str)
+            x = torch.arange(math.prod(shape), device='cuda').reshape(shape).to(dtype)
+            grid = (math.ceil(shape[0] / tile), 1, 1)
+            ct.launch(torch.cuda.current_stream(), grid, kernel, (x, tile))
+            torch.cuda.synchronize()
+        except Exception:
+            sys.stderr.write(traceback.format_exc())
+        finally:
+            sys.stdout.flush()
+            sys.stderr.flush()
+            _libc.fflush(None)
+            FdCaptureRunner.write_end_marker()
+
+
+def _run_kernel(kernel, shape, dtype_name, tile):
+    stdout_lines, stderr_lines = _get_kernel_runner().run_cmd(
+        kernel._pyfunc.__name__,
+        ",".join(str(d) for d in shape),
+        dtype_name,
+        str(tile))
+    if stderr_lines:
+        raise RuntimeError("Kernel raised an exception\n" + "\n".join(stderr_lines))
+    return stdout_lines
+# === End of helpers ===
 
 
 @ct.kernel(opt_level=_OPT_LEVEL)
-def kernel_printf_float(x, TILE: ct.Constant[int]):
+def kernel_printf(x, TILE: ct.Constant[int]):
     bid = ct.bid(0)
     tx = ct.load(x, index=(bid,), shape=(TILE,))
-    ct.printf("tile[%d]:%.5f\n", bid, tx)
+    if x.dtype == float16 or x.dtype == float32 or x.dtype == bfloat16:
+        ct.printf("tile[%d]:%.5f\n", bid, tx)
+    elif x.dtype == float64:
+        ct.printf("tile[%d]:%.5lf\n", bid, tx)
+    elif x.dtype == int64:
+        ct.printf("tile[%d]:%lld\n", bid, tx)
+    elif x.dtype == uint8 or x.dtype == uint16 or x.dtype == uint32:
+        ct.printf("tile[%d]:%u\n", bid, tx)
+    elif x.dtype == uint64:
+        ct.printf("tile[%d]:%llu\n", bid, tx)
+    else:
+        ct.printf("tile[%d]:%d\n", bid, tx)
 
 
 @ct.kernel(opt_level=_OPT_LEVEL)
-def kernel_printf_int(x, TILE: ct.Constant[int]):
+def kernel_print(x, TILE: ct.Constant[int]):
     bid = ct.bid(0)
     tx = ct.load(x, index=(bid,), shape=(TILE,))
-    ct.printf("tile[%d]:%d\n", bid, tx)
-
-
-@ct.kernel(opt_level=_OPT_LEVEL)
-def kernel_printf_int64(x, TILE: ct.Constant[int]):
-    bid = ct.bid(0)
-    tx = ct.load(x, index=(bid,), shape=(TILE,))
-    ct.printf("tile[%d]:%lld\n", bid, tx)
-
-
-@ct.kernel(opt_level=_OPT_LEVEL)
-def kernel_printf_float64(x, TILE: ct.Constant[int]):
-    bid = ct.bid(0)
-    tx = ct.load(x, index=(bid,), shape=(TILE,))
-    ct.printf("tile[%d]:%.5lf\n", bid, tx)
-
-
-@ct.kernel(opt_level=_OPT_LEVEL)
-def kernel_printf_uint(x, TILE: ct.Constant[int]):
-    bid = ct.bid(0)
-    tx = ct.load(x, index=(bid,), shape=(TILE,))
-    ct.printf("tile[%d]:%u\n", bid, tx)
-
-
-@ct.kernel(opt_level=_OPT_LEVEL)
-def kernel_printf_uint64(x, TILE: ct.Constant[int]):
-    bid = ct.bid(0)
-    tx = ct.load(x, index=(bid,), shape=(TILE,))
-    ct.printf("tile[%d]:%llu\n", bid, tx)
-
-
-@ct.kernel(opt_level=_OPT_LEVEL)
-def kernel_print_int(x, TILE: ct.Constant[int]):
-    bid = ct.bid(0)
-    tx = ct.load(x, index=(bid,), shape=(TILE,))
-    ct.print(f"tile[{bid}]:{tx}")
-
-
-@ct.kernel(opt_level=_OPT_LEVEL)
-def kernel_print_float(x, TILE: ct.Constant[int]):
-    bid = ct.bid(0)
-    tx = ct.load(x, index=(bid,), shape=(TILE,))
-    ct.print(f"tile[{bid}]:{tx:.5f}")
+    if x.dtype == float16 or x.dtype == float32 or x.dtype == float64 or x.dtype == bfloat16:
+        ct.print(f"tile[{bid}]:{tx:.5f}")
+    else:
+        ct.print(f"tile[{bid}]:{tx}")
 
 
 @ct.kernel(opt_level=_OPT_LEVEL)
@@ -104,17 +135,13 @@ def kernel_print_no_end(x, TILE: ct.Constant[int]):
 
 
 @ct.kernel(opt_level=_OPT_LEVEL)
-def kernel_builtin_print_int(x, TILE: ct.Constant[int]):
+def kernel_builtin_print(x, TILE: ct.Constant[int]):
     bid = ct.bid(0)
     tx = ct.load(x, index=(bid,), shape=(TILE,))
-    print(f"tile[{bid}]:{tx}")
-
-
-@ct.kernel(opt_level=_OPT_LEVEL)
-def kernel_builtin_print_float(x, TILE: ct.Constant[int]):
-    bid = ct.bid(0)
-    tx = ct.load(x, index=(bid,), shape=(TILE,))
-    print(f"tile[{bid}]:{tx:.5f}")
+    if x.dtype == float16 or x.dtype == float32 or x.dtype == float64 or x.dtype == bfloat16:
+        print(f"tile[{bid}]:{tx:.5f}")
+    else:
+        print(f"tile[{bid}]:{tx}")
 
 
 @ct.kernel(opt_level=_OPT_LEVEL)
@@ -201,58 +228,32 @@ def kernel_print_tuple_tile_shape(x, TILE: ct.Constant[int]):
 
 
 _KERNELS_MAP_ = {
-    "kernel_printf_float": kernel_printf_float,
-    "kernel_printf_int": kernel_printf_int,
-    "kernel_printf_int64": kernel_printf_int64,
-    "kernel_printf_float64": kernel_printf_float64,
-    "kernel_printf_uint": kernel_printf_uint,
-    "kernel_printf_uint64": kernel_printf_uint64,
-    "kernel_print_int": kernel_print_int,
-    "kernel_print_float": kernel_print_float,
+    "kernel_printf": kernel_printf,
+    "kernel_print": kernel_print,
     "kernel_print_sep": kernel_print_sep,
     "kernel_print_two_vars_with_expr": kernel_print_two_vars_with_expr,
     "kernel_print_no_end": kernel_print_no_end,
-    "kernel_builtin_print_int": kernel_builtin_print_int,
-    "kernel_builtin_print_float": kernel_builtin_print_float,
+    "kernel_builtin_print": kernel_builtin_print,
     "kernel_fstring_nested": kernel_fstring_nested,
     "kernel_print_aliases": kernel_print_aliases,
     "kernel_print_tuple": kernel_print_tuple,
     "kernel_print_nested_tuple": kernel_print_nested_tuple,
+    "kernel_print_tuple_escaped_str": kernel_print_tuple_escaped_str,
+    "kernel_print_tuple_fstring": kernel_print_tuple_fstring,
     "kernel_print_empty_tuple": kernel_print_empty_tuple,
     "kernel_print_single_tuple": kernel_print_single_tuple,
-    "kernel_print_tuple_escaped_str": kernel_print_tuple_escaped_str,
     "kernel_print_tuple_w_tile": kernel_print_tuple_w_tile,
-    "kernel_print_tuple_fstring": kernel_print_tuple_fstring,
     "kernel_print_tuple_tile_shape": kernel_print_tuple_tile_shape,
 }
 
 
-def _run_kernel_subprocess(kernel_name: str, shape: str, dtype_str: str, tile: str):
-    shape = ast.literal_eval(shape)
-    dtype = getattr(torch, 'bool' if dtype_str == 'bool_' else dtype_str)
-    tile = int(tile)
-    x = torch.arange(torch.prod(torch.tensor(shape)), device='cuda').reshape(shape).to(dtype)
-    grid = (ceil(shape[0] / tile), 1, 1)
-    kernel = _KERNELS_MAP_[kernel_name]
-    ct.launch(torch.cuda.current_stream(), grid, kernel, (x, tile))
-    torch.cuda.synchronize()
+def _test_print_1d(shape, tile, kernel, dtype):
+    dtype_name = 'bool' if dtype.__name__ == 'bool_' else dtype.__name__
+    actual_outs = _run_kernel(kernel, shape, dtype_name, tile)
 
-
-def _run_kernel_proc(kernel_name, shape, dtype_str, tile):
-    return subprocess.run(
-        [sys.executable, __file__, "run_kernel",
-         kernel_name, str(shape), dtype_str, str(tile)],
-        capture_output=True,
-    )
-
-
-def _test_print_1d(shape, tile, kernel_name, dtype):
-    proc = _run_kernel_proc(kernel_name, shape, dtype.__name__, tile)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
-    x = np.arange(np.prod(shape)).reshape(shape).astype(dtype.__name__)
+    # Numpy does not support bfloat16
+    np_dtype = dtype.__name__ if dtype.__name__ != 'bfloat16' else 'float16'
+    x = np.arange(np.prod(shape)).reshape(shape).astype(np_dtype)
     num_tiles = math.ceil(shape[0] / tile)
     for i in range(num_tiles):
         start_idx, end_idx = tile * i, tile * (i + 1)
@@ -266,60 +267,32 @@ def _test_print_1d(shape, tile, kernel_name, dtype):
 
 @pytest.mark.parametrize("shape", [(8,), (16,)])
 @pytest.mark.parametrize("tile", [8])
-@pytest.mark.parametrize("kernel_name,dtype", [
-    ("kernel_printf_float",        float16),
-    ("kernel_printf_float",        float32),
-    ("kernel_printf_float64",      float64),
-    ("kernel_printf_int",          int8),
-    ("kernel_printf_int",          int16),
-    ("kernel_printf_int",          int32),
-    ("kernel_printf_int64",        int64),
-    ("kernel_printf_uint",         uint8),
-    ("kernel_printf_uint",         uint16),
-    ("kernel_printf_uint",         uint32),
-    ("kernel_printf_uint64",       uint64),
-])
-def test_printf(shape, tile, kernel_name, dtype):
-    _test_print_1d(shape, tile, kernel_name, dtype)
+@pytest.mark.parametrize("dtype", [*NumericDTypeCategories.Integral, *NumericDTypeCategories.Float])
+def test_printf(shape, tile, dtype):
+    _test_print_1d(shape, tile, kernel_printf, dtype)
 
 
 @pytest.mark.parametrize("shape", [(8,), (16,)])
 @pytest.mark.parametrize("tile", [8])
-@pytest.mark.parametrize("dtype", NumericDTypeCategories.Integral)
-@pytest.mark.parametrize("kernel_name", ["kernel_print_int", "kernel_builtin_print_int"],
+@pytest.mark.parametrize("dtype", [*NumericDTypeCategories.Integral, *NumericDTypeCategories.Float])
+@pytest.mark.parametrize("kernel", [kernel_print, kernel_builtin_print],
                          ids=["ct_print", "builtin_print"])
-def test_int_with_ct_print_and_builtin_print(shape, tile, kernel_name, dtype):
-    _test_print_1d(shape, tile, kernel_name, dtype)
+def test_ct_print_and_builtin_print(shape, tile, kernel, dtype):
+    _test_print_1d(shape, tile, kernel, dtype)
 
 
 @pytest.mark.parametrize("shape", [(8,), (16,)])
 @pytest.mark.parametrize("tile", [8])
-@pytest.mark.parametrize("dtype", [float16, float32, float64])
-@pytest.mark.parametrize("kernel_name", ["kernel_print_float", "kernel_builtin_print_float"],
-                         ids=["ct_print", "builtin_print"])
-def test_float_with_ct_print_and_builtin_print(shape, tile, kernel_name, dtype):
-    _test_print_1d(shape, tile, kernel_name, dtype)
-
-
-@pytest.mark.parametrize("shape", [(8,), (16,)])
-@pytest.mark.parametrize("tile", [8])
-@pytest.mark.parametrize("kernel_name", [
-    "kernel_printf_int",
-    "kernel_print_int",
-    "kernel_builtin_print_int",
-], ids=["ct_printf", "ct_print", "builtin_print"])
-def test_bool(shape, tile, kernel_name):
-    _test_print_1d(shape, tile, kernel_name, bool_)
+@pytest.mark.parametrize("kernel", [kernel_printf, kernel_print, kernel_builtin_print],
+                         ids=["ct_printf", "ct_print", "builtin_print"])
+def test_bool(shape, tile, kernel):
+    _test_print_1d(shape, tile, kernel, bool_)
 
 
 @pytest.mark.parametrize("shape", [(8,),])
 @pytest.mark.parametrize("tile", [8])
 def test_ct_print_sep(shape, tile):
-    proc = _run_kernel_proc("kernel_print_sep", shape, "int32", tile)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    actual_outs = _run_kernel(kernel_print_sep, shape, "int32", tile)
     x = np.arange(np.prod(shape)).reshape(shape).astype(np.int32)
     formatted_x = ', '.join([f"{elem}" for elem in x[:tile]])
     expected = f"tile:[{formatted_x}]"
@@ -329,11 +302,7 @@ def test_ct_print_sep(shape, tile):
 @pytest.mark.parametrize("shape", [(8,), (16,)])
 @pytest.mark.parametrize("tile", [8])
 def test_ct_print_two_vars(shape, tile):
-    proc = _run_kernel_proc("kernel_print_two_vars_with_expr", shape, "float32", tile)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    actual_outs = _run_kernel(kernel_print_two_vars_with_expr, shape, "float32", tile)
     x = np.arange(np.prod(shape)).reshape(shape).astype(np.float32)
     num_tiles = math.ceil(shape[0] / tile)
     for i in range(num_tiles):
@@ -347,13 +316,10 @@ def test_ct_print_two_vars(shape, tile):
 @pytest.mark.parametrize("shape", [(8,),])
 @pytest.mark.parametrize("tile", [8])
 def test_ct_print_no_end(shape, tile):
-    proc = _run_kernel_proc("kernel_print_no_end", shape, "int32", tile)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-    stdout = proc.stdout.decode("UTF-8")
+    actual_outs = _run_kernel(kernel_print_no_end, shape, "int32", tile)
     x = np.arange(np.prod(shape)).reshape(shape).astype(np.int32)
     formatted_x = ', '.join([f"{elem}" for elem in x[:tile]])
-    assert f"[{formatted_x}]" in stdout
+    assert f"[{formatted_x}]" in actual_outs
 
 
 def test_ct_print_error_conversion():
@@ -386,11 +352,7 @@ def test_ct_print_error_dynamic_format_spec():
 @pytest.mark.parametrize("shape", [(8,)])
 @pytest.mark.parametrize("tile", [8])
 def test_fstring_nested(shape, tile):
-    proc = _run_kernel_proc("kernel_fstring_nested", shape, "float32", tile)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    actual_outs = _run_kernel(kernel_fstring_nested, shape, "float32", tile)
     x = np.arange(np.prod(shape)).reshape(shape).astype(np.float32)
     num_tiles = math.ceil(shape[0] / tile)
     for i in range(num_tiles):
@@ -404,11 +366,7 @@ def test_fstring_nested(shape, tile):
 @pytest.mark.parametrize("shape", [(8,)])
 @pytest.mark.parametrize("tile", [8])
 def test_print_aliases(shape, tile):
-    proc = _run_kernel_proc("kernel_print_aliases", shape, "int32", tile)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    actual_outs = _run_kernel(kernel_print_aliases, shape, "int32", tile)
     x = np.arange(np.prod(shape)).reshape(shape).astype(np.int32)
     num_tiles = math.ceil(shape[0] / tile)
     for i in range(num_tiles):
@@ -420,10 +378,7 @@ def test_print_aliases(shape, tile):
 
 
 def test_ct_print_tuple():
-    proc = _run_kernel_proc("kernel_print_tuple", (2, 4), "int32", 2)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    actual_outs = _run_kernel(kernel_print_tuple, (2, 4), "int32", 2)
     assert actual_outs[0] == "(2, 4)"          # ct.print(x.shape)
     assert actual_outs[1] == "(2, 4)"          # print(x.shape)
     assert actual_outs[2] == "shape = (2, 4)"  # ct.print(f"shape = {x.shape}")
@@ -431,19 +386,13 @@ def test_ct_print_tuple():
 
 
 def test_ct_print_nested_tuple():
-    proc = _run_kernel_proc("kernel_print_nested_tuple", (2, 4), "int32", 2)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    actual_outs = _run_kernel(kernel_print_nested_tuple, (2, 4), "int32", 2)
     assert actual_outs[0] == "nested tuple: (((2, 4), (2, 4)), 0)"
     assert actual_outs[1] == "(((2, 4), (2, 4)), 0)"
 
 
 def test_ct_print_tuple_with_escaped_str():
-    proc = _run_kernel_proc("kernel_print_tuple_escaped_str", (2, 4), "int32", 2)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    actual_outs = _run_kernel(kernel_print_tuple_escaped_str, (2, 4), "int32", 2)
     assert actual_outs[0] == "tuple w/ escaped str: (((2, 4), '%d'), '%%d')"
     assert actual_outs[1] == "('foo', \"'''foo'''\", '\"foo\\\'')"
     assert actual_outs[2] == "('foo0', \"'''foo0'''\", '\"foo0\\\'')"
@@ -451,19 +400,13 @@ def test_ct_print_tuple_with_escaped_str():
 
 
 def test_ct_print_empty_tuple():
-    proc = _run_kernel_proc("kernel_print_empty_tuple", (8,), "int32", 8)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    actual_outs = _run_kernel(kernel_print_empty_tuple, (8,), "int32", 8)
     assert actual_outs[0] == "empty tuple: ()"
     assert actual_outs[1] == "()"
 
 
 def test_ct_print_single_tuple():
-    proc = _run_kernel_proc("kernel_print_single_tuple", (8,), "int32", 8)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    actual_outs = _run_kernel(kernel_print_single_tuple, (8,), "int32", 8)
     assert actual_outs[0] == "single tuple: (0,)"
     assert actual_outs[1] == "(0,)"
 
@@ -471,32 +414,21 @@ def test_ct_print_single_tuple():
 def test_ct_print_tuple_w_tile():
     shape = (8,)
     tile = 8
-    proc = _run_kernel_proc("kernel_print_tuple_w_tile", shape, "int32", tile)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-
+    actual_outs = _run_kernel(kernel_print_tuple_w_tile, shape, "int32", tile)
     x = np.arange(np.prod(shape)).reshape(shape).astype(np.int32)
     formatted_x = ', '.join([f"{elem}" for elem in x[:tile]])
-
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
     assert actual_outs[0] == f"tuple w/ tile: ([{formatted_x}],)"
     assert actual_outs[1] == f"([{formatted_x}],)"
 
 
 def test_ct_print_tuple_tile_shape():
-    proc = _run_kernel_proc("kernel_print_tuple_tile_shape", (8,), "int32", 8)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    actual_outs = _run_kernel(kernel_print_tuple_tile_shape, (8,), "int32", 8)
     assert actual_outs[0] == "Tile shape: (8,)"
     assert actual_outs[1] == "(8,)"
 
 
 def test_ct_print_tuple_fstring():
-    proc = _run_kernel_proc("kernel_print_tuple_fstring", (8,), "int32", 8)
-    print(proc.stderr.decode(), file=sys.stderr)
-    assert proc.returncode == 0
-    actual_outs = [line for line in proc.stdout.decode("UTF-8").splitlines() if line]
+    actual_outs = _run_kernel(kernel_print_tuple_fstring, (8,), "int32", 8)
     assert actual_outs[0] == "('bid=0', 0)"
 
 
@@ -513,5 +445,5 @@ def test_ct_print_tuple_format_spec_error():
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "run_kernel":
-        _run_kernel_subprocess(*sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "start_kernel_runner":
+        _kernel_runner_main()

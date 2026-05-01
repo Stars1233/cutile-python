@@ -32,6 +32,7 @@ fd-level output capture:
 import ctypes
 import os
 import re
+import sys
 import tempfile
 import textwrap
 from docutils import nodes
@@ -46,7 +47,7 @@ from sphinx.ext.doctest import (
 from sphinx.util import logging as sphinx_logging
 logger = sphinx_logging.getLogger(__name__)
 
-_libc = ctypes.CDLL(None)
+_libc = ctypes.CDLL('ucrtbase' if sys.platform == 'win32' else None)
 
 
 class _FdCaptureOut:

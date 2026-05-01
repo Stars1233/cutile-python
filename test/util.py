@@ -3,18 +3,19 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import Enum
+import os
 import re
 import shutil
 import subprocess
 from contextlib import contextmanager
 from io import BytesIO
-
+import sys
 import pytest
 import torch
 import numpy as np
 from typing import Union, Optional
 from math import ceil
-
+import struct
 from torch.testing import make_tensor
 import cuda.tile as ct
 import tempfile
@@ -301,3 +302,79 @@ def ref_atomic_bitwise(x, y, operation):
     ref_x = operation(x.view(int_dtype), y.view(int_dtype)).view(x.dtype)
     ref_z = x.clone()
     return ref_x, ref_z
+
+
+class FdCaptureRunner:
+    def __init__(self, script_path, *args):
+        self._proc = subprocess.Popen(
+            [sys.executable, "-u", script_path, *args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    def is_alive(self):
+        return self._proc is not None and self._proc.poll() is None
+
+    def close(self):
+        if not self.is_alive():
+            return
+        self._proc.stdin.close()
+        try:
+            self._proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._proc.terminate()
+            self._proc.wait()
+        self._proc = None
+
+    def run_cmd(self, *args: str) -> tuple[list[str], list[str]]:
+        if not self.is_alive():
+            raise RuntimeError("FdCaptureRunner is not running")
+        buf = struct.pack("!I", len(args))
+        for arg in args:
+            encoded = arg.encode('utf-8')
+            buf += struct.pack("!I", len(encoded)) + encoded
+        self._proc.stdin.write(buf)
+        self._proc.stdin.flush()
+        return self._read_response(self._proc.stdout), self._read_response(self._proc.stderr)
+
+    @staticmethod
+    def get_cmd_args(stdin) -> list[str] | None:
+        count_bytes = stdin.read(4)
+        if not count_bytes:
+            return None
+        count = struct.unpack("!I", count_bytes)[0]
+        args = []
+        for _ in range(count):
+            length = struct.unpack("!I", stdin.read(4))[0]
+            args.append(stdin.read(length).decode('utf-8'))
+        return args
+
+    _BEGIN_MARKER = "# begin-snippet"
+    _END_MARKER = "# end-snippet"
+
+    @staticmethod
+    def write_begin_marker() -> None:
+        os.write(1, f"\n{FdCaptureRunner._BEGIN_MARKER}\n".encode('utf-8'))
+        os.write(2, f"\n{FdCaptureRunner._BEGIN_MARKER}\n".encode('utf-8'))
+
+    @staticmethod
+    def write_end_marker() -> None:
+        os.write(1, f"\n{FdCaptureRunner._END_MARKER}\n".encode('utf-8'))
+        os.write(2, f"\n{FdCaptureRunner._END_MARKER}\n".encode('utf-8'))
+
+    def _read_response(self, stream) -> list[str]:
+        captured_output = []
+        capturing = False
+        while True:
+            line = stream.readline()
+            if not line:
+                break
+            decoded = line.decode('utf-8').rstrip('\r\n')
+            if decoded == FdCaptureRunner._BEGIN_MARKER:
+                capturing = True
+            elif decoded == FdCaptureRunner._END_MARKER:
+                break
+            elif capturing and decoded:
+                captured_output.append(decoded)
+        return captured_output
