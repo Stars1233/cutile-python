@@ -4,6 +4,7 @@
 
 import pytest
 import cuda.lang as cl
+from cuda.tile import static_iter
 import torch
 from cuda.lang._compile import compile_simt
 from cuda.lang._exception import TileError
@@ -12,22 +13,117 @@ from cuda.lang.compilation import KernelSignature
 from .util import make_symbolic_tensor, make_symbolic_scalar, compile_for_arguments
 
 
-def test_pointer_ldst_offset():
+@pytest.mark.parametrize("volatile", [True, False])
+@pytest.mark.parametrize("element_count", [2, 4, 8])
+@pytest.mark.parametrize(
+    "torch_dtype,dtype",
+    [
+        (
+            torch.float16,
+            cl.float16,
+        ),
+        (
+            torch.float32,
+            cl.float32,
+        ),
+        (
+            torch.float64,
+            cl.float64,
+        ),
+        (
+            torch.int8,
+            cl.int8,
+        ),
+        (
+            torch.int16,
+            cl.int16,
+        ),
+        (
+            torch.int32,
+            cl.int32,
+        ),
+        (
+            torch.int64,
+            cl.int64,
+        ),
+    ],
+)
+def test_pointer_vector_ldst(volatile, element_count, torch_dtype, dtype):
+    assert (element_count & (element_count - 1)) == 0
+    num_bytes = dtype.bitwidth // 8
+    alignment = num_bytes * element_count
+
     @cl.kernel
     def kernel(A):
-        a_ptr = A.get_base_pointer()
-        a_element = a_ptr.load_offset(0)
-        a_ptr.store_offset(0, a_element + 1)
+        larr = cl.local_array(element_count, dtype, alignment=alignment)
+        sarr = cl.shared_array(element_count, dtype, alignment=alignment)
+        for i in static_iter(range(element_count)):
+            larr[i] = dtype(i)
+        v = larr.get_base_pointer().load(
+            count=element_count,
+            alignment=alignment,
+            volatile=volatile,
+        )
+        sarr.get_base_pointer().store(
+            v,
+            alignment=alignment,
+            volatile=volatile,
+        )
+        for i in static_iter(range(element_count)):
+            A[i] = sarr[i]
 
-    A = torch.zeros(3, 3, dtype=torch.int32).cuda()
-    cl.launch(
-        torch.cuda.current_stream(),
-        (1,),
-        (1,),
-        kernel,
-        (A,),
-    )
-    assert A[0, 0] == 1
+    A = torch.zeros(element_count, dtype=torch_dtype).cuda()
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (A,))
+    got = A.cpu().tolist()
+    expect = list(range(element_count))
+    assert got == expect, f"{expect=} {got=}"
+
+
+def test_vector_apis():
+    @cl.kernel
+    def kernel(out):
+        larr = cl.local_array(4, cl.int32, alignment=16)
+        p = larr.get_base_pointer()
+        vec = p.load(count=4, alignment=16)
+        out[0] = cl.int32(vec.dtype == p.dtype)
+        out[1] = cl.int32(p.dtype == cl.int32)
+        out[2] = cl.int32(p.dtype == larr.dtype)
+        out[3] = vec.element_count
+
+    out = torch.zeros(4, dtype=torch.int32).cuda()
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (out,))
+    assert out.cpu().tolist() == [1, 1, 1, 4]
+
+
+def test_pointer_vector_ldst_bool():
+    alignment = (cl.bool_.bitwidth // 8) * 4
+
+    @cl.kernel
+    def kernel(A):
+        larr = cl.local_array(4, cl.bool_, alignment=alignment)
+        sarr = cl.shared_array(4, cl.bool_, alignment=alignment)
+        value = True
+        for i in static_iter(range(4)):
+            larr[i] = value
+            value = not value
+        v = larr.get_base_pointer().load(
+            count=4,
+            alignment=alignment,
+            volatile=True,
+        )
+        sarr.get_base_pointer().store(
+            v,
+            alignment=alignment,
+            volatile=True,
+        )
+        for i in static_iter(range(4)):
+            A[i] = sarr[i]
+
+    A = torch.zeros(4, dtype=torch.bool).cuda()
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (A,))
+    got = A.cpu().tolist()
+    expect = [True, False, True, False]
+    assert got == expect, f"{expect=} {got=}"
 
 
 def test_pointer_gep():
@@ -83,14 +179,14 @@ def test_pointer_smem():
     assert A.cpu().tolist() == [[1, 0, 0], [0, 0, 0], [0, 0, 0]]
 
 
-def test_pointer_ldst():
+def test_pointer_sub_ldst():
     @cl.kernel
     def kernel(A):
-        a_ptr = A.get_base_pointer()
-        a_element = a_ptr.load()
-        a_ptr.store(a_element + 1)
+        p = A.get_element_pointer(3)
+        for i in range(A.shape[0]):
+            (p - i).store(i * i)
 
-    A = torch.zeros(3, 3, dtype=torch.int32).cuda()
+    A = torch.zeros(4, dtype=torch.int32).cuda()
     cl.launch(
         torch.cuda.current_stream(),
         (1,),
@@ -98,7 +194,25 @@ def test_pointer_ldst():
         kernel,
         (A,),
     )
-    assert A[0, 0] == 1
+    assert A.cpu().tolist() == [9, 4, 1, 0]
+
+
+def test_pointer_add_ldst():
+    @cl.kernel
+    def kernel(A):
+        p = A.get_base_pointer()
+        for i in range(A.shape[0]):
+            (p + i).store(i * i)
+
+    A = torch.zeros(4, dtype=torch.int32).cuda()
+    cl.launch(
+        torch.cuda.current_stream(),
+        (1,),
+        (1,),
+        kernel,
+        (A,),
+    )
+    assert A.cpu().tolist() == [0, 1, 4, 9]
 
 
 @pytest.mark.parametrize(
@@ -200,7 +314,12 @@ def test_device_allocation_invalid_alignment(allocator, alignment):
     def kernel():
         allocator(shape=(1,), dtype=cl.int32, alignment=alignment)
 
-    with pytest.raises(TileError, match="alignment must"):
+    match = (
+        "Expected an integer constant"
+        if isinstance(alignment, bool)
+        else "alignment must be a positive power of two"
+    )
+    with pytest.raises(TileError, match=match):
         compile_for_arguments(kernel, ())
 
 
@@ -209,7 +328,7 @@ def test_device_allocation_alignment_must_be_constant(allocator):
     def kernel(alignment):
         allocator(shape=(1,), dtype=cl.int32, alignment=alignment)
 
-    with pytest.raises(TileError, match="alignment must be a compile-time constant"):
+    with pytest.raises(TileError, match="Expected an integer constant"):
         compile_for_arguments(kernel, (make_symbolic_scalar(cl.int32),))
 
 

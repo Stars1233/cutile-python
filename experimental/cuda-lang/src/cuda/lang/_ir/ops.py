@@ -6,8 +6,10 @@ import re
 import operator
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Optional
 
 from cuda.tile._ir.op_impl import (
+    require_optional_constant_int,
     require_tuple_type,
     require_constant_str,
     require_dtype_spec,
@@ -19,9 +21,12 @@ from cuda.tile._ir.op_impl import (
     WILDCARD,
     require_tile_type, require_constant_bool,
 )
-from cuda.lang._ir.type import OpaquePointerTy
+from cuda.lang._ir.type import OpaquePointerTy, VectorTy
 from cuda.tile._ir.ops import (
+    binary_arithmetic,
+    loosely_typed_const,
     tile_impl_registry,
+    add_impl as tile_add_impl,
     bind_method,
     build_tuple,
     strictly_typed_const,
@@ -47,8 +52,6 @@ from cuda.tile._ir.ops import (
     Continue,
     Break,
     PointerOffset,
-    LoadPointer,
-    StorePointer,
     TilePrintf,
     printf_impl,
     Unary,
@@ -68,7 +71,6 @@ from .type import (
     PointerTy,
     TileTy,
     TupleTy,
-    TokenTy,
 )
 
 from .ir import (
@@ -86,6 +88,21 @@ from .ir import (
 cuda_lang_impl_registry = tile_impl_registry.clone()
 impl = cuda_lang_impl_registry.impl
 overload_dispatcher = cuda_lang_impl_registry.overload_dispatcher
+
+
+@dataclass(eq=False)
+class StorePointer(Operation, opcode="store_pointer", memory_effect=MemoryEffect.STORE):
+    pointer: Var = operand()
+    value: Var = operand()
+    alignment: Optional[int] = attribute()
+    volatile: bool = attribute(default=False)
+
+
+@dataclass(eq=False)
+class LoadPointer(Operation, opcode="load_pointer", memory_effect=MemoryEffect.LOAD):
+    pointer: Var = operand()
+    alignment: Optional[int] = attribute()
+    volatile: bool = attribute(default=False)
 
 
 @dataclass(eq=False)
@@ -239,14 +256,12 @@ def array_getitem(object: Var, key: Var) -> Var:
     array_ty = require_array_type(object)
     indices = require_array_indices(object, key)
     pointer = _array_get_element_pointer(object, indices)
-    [result, _token] = add_operation(
+    [result] = add_operation(
         LoadPointer,
-        (make_tile_ty(array_ty.dtype, ()), TokenTy()),
+        (make_tile_ty(array_ty.dtype, ()),),
         pointer=pointer,
-        mask=None,
-        padding_value=None,
-        token=None,
-        latency=None,
+        alignment=None,
+        volatile=False,
     )
     return result
 
@@ -263,12 +278,11 @@ def array_setitem(object: Var, key: Var, value: Var):
     pointer = _array_get_element_pointer(object, indices)
     add_operation(
         StorePointer,
-        (TokenTy(),),
+        (),
         pointer=pointer,
         value=value,
-        mask=None,
-        token=None,
-        latency=None,
+        alignment=None,
+        volatile=False,
     )
 
 
@@ -376,49 +390,94 @@ def atomic_cas_impl(A: Var, idx: Var, old: Var, val: Var) -> Var:
 def require_pointer_var(var: Var) -> TileTy:
     ty = require_tile_type(var)
     if ty.shape != () or not isinstance(ty.dtype, PointerTy):
-        raise TileTypeError(f"Expected a scalar pointer, got {ty}")
+        raise TileTypeError(f"Expected a pointer, got {ty}")
     return ty
 
 
-def _pointer_load(pointer: Var) -> Var:
+def require_vector_var(var: Var) -> VectorTy:
+    ty = var.get_type()
+    if not isinstance(ty, VectorTy):
+        raise TileTypeError("Expected a vector, got {ty}")
+    return ty
+
+
+def _pointer_load(pointer: Var, count: Var, alignment: Var, volatile: Var) -> Var:
     pointer_tile_ty = require_pointer_var(pointer)
     pointee = pointer_tile_ty.dtype.pointee_type
     assert isinstance(pointee, TileTy)
     assert pointee.shape == ()
-    result_ty = TileTy(pointee.dtype, pointer_tile_ty.shape)
-    [result, _token] = add_operation(
+    count = require_optional_constant_int(count)
+    volatile = require_constant_bool(volatile)
+    alignment = require_optional_alignment(alignment)
+    if count is None or count == 1:
+        result_ty = TileTy(pointee.dtype, ())
+    else:
+        result_ty = VectorTy(pointee.dtype, count)
+    [result] = add_operation(
         LoadPointer,
-        (result_ty, TokenTy()),
+        (result_ty,),
         pointer=pointer,
-        mask=None,
-        padding_value=None,
-        token=None,
-        latency=None,
+        volatile=volatile,
+        alignment=alignment,
     )
     return result
 
 
-def _pointer_store(pointer: Var, value: Var) -> None:
+def _pointer_store(pointer: Var, value: Var, alignment: Var, volatile: Var) -> None:
+    volatile = require_constant_bool(volatile)
+    alignment = require_optional_alignment(alignment)
     add_operation(
         StorePointer,
-        (TokenTy(),),
+        (),
         pointer=pointer,
         value=value,
-        mask=None,
-        token=None,
-        latency=None,
+        volatile=volatile,
+        alignment=alignment
     )
 
 
 def _pointer_with_offset(pointer: Var, offset: Var) -> Var:
     require_pointer_var(pointer)
-    offset = astype(offset, datatype.uint64)
+    offset = astype(offset, datatype.int64)
     return add_operation(
         PointerOffset,
         pointer.get_type(),
         pointer=pointer,
         offset=offset,
     )
+
+
+def _is_pointer_type(ty):
+    return isinstance(ty, TileTy) and isinstance(ty.dtype, (PointerTy, OpaquePointerTy))
+
+
+@impl(operator.add)
+def add_impl(x: Var, y: Var) -> Var:
+    xty, yty = x.get_type(), y.get_type()
+    if _is_pointer_type(yty):
+        xty, yty = yty, xty
+    if _is_pointer_type(xty):
+        offset_dtype = require_scalar_tile_type(y).dtype
+        if not datatype.is_integral(offset_dtype):
+            raise TileTypeError(f"Expected integer pointer offset, got {offset_dtype}")
+        return _pointer_with_offset(x, y)
+    return tile_add_impl(x, y)
+
+
+@impl(operator.sub)
+def sub_impl(x: Var, y: Var) -> Var:
+    xty, yty = x.get_type(), y.get_type()
+    if _is_pointer_type(xty):
+        offset_dtype = require_scalar_tile_type(y).dtype
+        if not datatype.is_integral(offset_dtype):
+            raise TileTypeError(f"Expected integer pointer offset, got {offset_dtype}")
+        y = astype(y, datatype.int64)
+        c0 = loosely_typed_const(0)
+        offset = binary_arithmetic('sub', c0, y)
+        return _pointer_with_offset(x, offset)
+    if _is_pointer_type(yty):
+        raise TileTypeError('It is invalid to subtract a pointer from an integer')
+    return binary_arithmetic('sub', x, y)
 
 
 @impl(stub.address_space_cast)
@@ -480,10 +539,30 @@ def reinterpret_pointer_as_array_impl(pointer: Var, dtype: Var, shape: Var, stri
     return result
 
 
+@impl(getattr, overload=(VectorTy, "dtype"))
+def vector_dtype_impl(object: Var, name: Var):
+    ty = require_vector_var(object)
+    return loosely_typed_const(ty.dtype)
+
+
+@impl(getattr, overload=(VectorTy, "element_count"))
+def vector_element_count_impl(object: Var, name: Var):
+    ty = require_vector_var(object)
+    return loosely_typed_const(ty.num_elements)
+
+
+@impl(getattr, overload=(TileTy, "dtype"))
+def tile_dtype_impl(object: Var, name: Var):
+    dtype = require_tile_type(object).dtype
+    if isinstance(dtype, PointerTy):
+        pointee_ty = dtype.pointee_type
+        assert isinstance(pointee_ty, TileTy)
+        return loosely_typed_const(pointee_ty.dtype)
+    return loosely_typed_const(dtype)
+
+
 @impl(getattr, overload=(TileTy, "load"))
 @impl(getattr, overload=(TileTy, "store"))
-@impl(getattr, overload=(TileTy, "load_offset"))
-@impl(getattr, overload=(TileTy, "store_offset"))
 def getattr_pointer_method(object: Var, name: Var):
     name = require_constant_str(name)
     unbound_func = getattr(stub.Pointer, name)
@@ -491,23 +570,23 @@ def getattr_pointer_method(object: Var, name: Var):
 
 
 @impl(stub.Pointer.load)
-def pointer_load_impl(self: Var) -> Operation:
-    return _pointer_load(self)
+def pointer_load_impl(
+    self: Var,
+    count: Var,
+    alignment: Var,
+    volatile: Var,
+) -> Operation:
+    return _pointer_load(self, count, alignment, volatile)
 
 
 @impl(stub.Pointer.store)
-def pointer_store_impl(self: Var, value: Var) -> Var:
-    _pointer_store(self, value)
-
-
-@impl(stub.Pointer.load_offset)
-def pointer_load_offset_impl(self: Var, offset: Var) -> Var:
-    return _pointer_load(_pointer_with_offset(self, offset))
-
-
-@impl(stub.Pointer.store_offset)
-def pointer_store_offset_impl(self: Var, offset: Var, value: Var) -> Var:
-    _pointer_store(_pointer_with_offset(self, offset), value)
+def pointer_store_impl(
+    self: Var,
+    value: Var,
+    alignment: Var,
+    volatile: Var,
+) -> None:
+    _pointer_store(self, value, alignment, volatile)
 
 
 @dataclass(eq=False)
@@ -583,28 +662,23 @@ def _dtype_byte_width(dtype: datatype.DType) -> int:
     return dtype.bitwidth // 8
 
 
-def _require_optional_alignment(alignment: Var) -> int | None:
-    if not alignment.is_constant():
-        raise TileTypeError("alignment must be a compile-time constant")
+def require_optional_alignment(alignment: Var) -> int | None:
+    alignment = require_optional_constant_int(alignment)
 
-    value = alignment.get_constant()
-    if value is None:
+    if alignment is None:
         return None
 
-    if type(value) is not int:
-        raise TileTypeError("alignment must be an integer or None")
-
-    if value <= 0 or value & (value - 1):
+    if alignment <= 0 or alignment & (alignment - 1):
         raise TileTypeError("alignment must be a positive power of two")
 
-    return value
+    return alignment
 
 
 @impl(stub.local_array)
 def local_array_impl(shape: Var, dtype: Var, alignment: Var) -> Operation:
     shape = require_constant_int_tuple(shape, allow_single_int=True)
     dtype = require_dtype_spec(dtype)
-    alignment = _require_optional_alignment(alignment)
+    alignment = require_optional_alignment(alignment)
     dtype_byte_width = _dtype_byte_width(dtype)
     if alignment is not None and alignment < dtype_byte_width:
         raise TileTypeError(f"Requested {alignment=} is less than {dtype_byte_width}")
@@ -615,12 +689,12 @@ def local_array_impl(shape: Var, dtype: Var, alignment: Var) -> Operation:
         shape=shape,
         strides=strides,
         index_dtype=index_dtype,
-        memory_space=MemorySpace.LOCAL,
+        memory_space=MemorySpace.GENERIC,
     )
     base_ptr = add_operation(
         MemoryAllocation,
         _array_base_pointer_type(array_type),
-        memory_space=MemorySpace.LOCAL,
+        memory_space=MemorySpace.GENERIC,
         shape=shape,
         element_type=dtype,
         alignment=alignment,
@@ -665,7 +739,7 @@ def shared_array_impl(shape: Var, dtype: Var, dynamic: Var, alignment: Var) -> O
         sizes = tuple_val.items
 
     dtype = require_dtype_spec(dtype)
-    alignment = _require_optional_alignment(alignment)
+    alignment = require_optional_alignment(alignment)
     dtype_byte_width = _dtype_byte_width(dtype)
     if alignment is not None and alignment < dtype_byte_width:
         raise TileTypeError(f"Requested {alignment=} is less than {dtype_byte_width=}")

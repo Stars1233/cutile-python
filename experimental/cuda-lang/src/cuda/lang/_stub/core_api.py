@@ -24,24 +24,84 @@ class Array(TileArray, Generic[T]):
     """
 
     @stub
-    def get_base_pointer(self): ...
+    def get_base_pointer(self) -> "Pointer[T]": ...
 
     @stub
-    def get_element_pointer(self, indices): ...
+    def get_element_pointer(self, indices: int | tuple[int, ...]) -> "Pointer[T]": ...
+
+    @stub
+    def __setitem__(self, indices: int | tuple[int, ...], value: T): ...
+
+    @stub
+    def __getitem__(self, indices: int | tuple[int, ...]) -> T: ...
+
+
+class Vector(Generic[T]):
+
+    @property
+    @stub
+    def dtype(self) -> "DType": ...
+
+    @property
+    @stub
+    def element_count(self) -> int: ...
 
 
 class Pointer(Generic[T]):
+
+    @property
     @stub
-    def load(self) -> T: ...
+    def dtype(self) -> "DType": ...
 
     @stub
-    def store(self, value: T) -> None: ...
+    def load(
+        self,
+        *,
+        count: int | None = None,
+        alignment: int | None = None,
+        volatile: bool = False,
+    ) -> T:
+        '''
+        Low-level API to read from memory.
+
+        Args:
+            count: If count is provided, a vector will be returned.
+                For best performance, vector loads should be aligned to the
+                number of bytes in the vector.
+            alignment: Inform the compiler that the address being loaded from
+                is aligned to at least this many bytes.
+                The user is responsible for ensuring aligned loads occur only
+                on appropriately aligned pointers.
+                If alignment is None, do not give the compiler any alignment
+                hints.
+            volatile: If True, the compiler will not modify the number of times
+                this load is performed nor the order of execution with respect
+                to other volatile operations.
+        '''
 
     @stub
-    def load_offset(self, offset) -> T: ...
+    def store(
+        self,
+        value: T,
+        *,
+        alignment: int | None = None,
+        volatile: bool = False,
+    ) -> None:
+        '''
+        Low-level API to store to memory.
 
-    @stub
-    def store_offset(self, offset, value: T) -> None: ...
+        Args:
+            value: Scalar or vector to be stored to the given address.
+            alignment: Inform the compiler that the address being stored to
+                is aligned to at least this many bytes.
+                The user is responsible for ensuring aligned loads occur only
+                on appropriately aligned pointers.
+                If alignment is None, do not give the compiler any alignment
+                hints.
+            volatile: If True, the compiler will not modify the number of times
+                this store is performed nor the order of execution with respect
+                to other volatile operations.
+        '''
 
 
 @function

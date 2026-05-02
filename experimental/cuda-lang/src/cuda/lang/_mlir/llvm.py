@@ -727,26 +727,6 @@ class TBAANodeAttr(Attribute):
 
 
 @dataclass(kw_only=True)
-class FastmathFlagsAttr(Attribute, dialect='llvm', mnemonic='fastmath'):
-    value: "FastmathFlags"
-
-    def _print_mlir_unqualified(self, p):
-        p("<")
-        self.value._print_mlir_unqualified(p)
-        p(">")
-
-
-@dataclass(kw_only=True)
-class IntegerOverflowFlagsAttr(Attribute, dialect='llvm', mnemonic='overflow'):
-    value: "IntegerOverflowFlags"
-
-    def _print_mlir_unqualified(self, p):
-        p("<")
-        self.value._print_mlir_unqualified(p)
-        p(">")
-
-
-@dataclass(kw_only=True)
 class CConvAttr(Attribute, dialect='llvm', mnemonic='cconv'):
     CallingConv: "CConv"
 
@@ -2499,6 +2479,26 @@ class WorkgroupAttributionAttr(Attribute, dialect='llvm', mnemonic='mlir.workgro
         self.num_elements._print_mlir_unqualified(p)
         p(", ")
         self.element_type._print_mlir_unqualified(p)
+        p(">")
+
+
+@dataclass(kw_only=True)
+class FastmathFlagsAttr(Attribute, dialect='llvm', mnemonic='fastmath'):
+    value: "FastmathFlags"
+
+    def _print_mlir_unqualified(self, p):
+        p("<")
+        self.value._print_mlir_unqualified(p)
+        p(">")
+
+
+@dataclass(kw_only=True)
+class IntegerOverflowFlagsAttr(Attribute, dialect='llvm', mnemonic='overflow'):
+    value: "IntegerOverflowFlags"
+
+    def _print_mlir_unqualified(self, p):
+        p("<")
+        self.value._print_mlir_unqualified(p)
         p(">")
 
 

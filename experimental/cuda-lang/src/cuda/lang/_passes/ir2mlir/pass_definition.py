@@ -676,20 +676,27 @@ class IR2MLIR:
         assert isinstance(pointer_type, ir_type.PointerTy), (
             f"Expected a typed pointer, got {pointer_type}"
         )
-        element_type = ir_type_to_mlir_type(pointer_type.pointee_type)
+        result_type = ir_type_to_mlir_type(operation.result_var.get_type())
         pointer = self.get_var(operation.pointer)
         result = mlir.llvm.add_LoadOp(
-            res_type=element_type,
+            res_type=result_type,
             addr=pointer,
+            alignment=operation.alignment,
+            volatile_=operation.volatile,
         )
-        return [result, None]
+        return [result]
 
     @lower_operation.register
     def lower_store_pointer(self, operation: ops.StorePointer) -> Sequence[mlir.Value]:
         pointer = self.get_var(operation.pointer)
         value = self.get_var(operation.value)
-        mlir.llvm.add_StoreOp(value=value, addr=pointer)
-        return [None]
+        mlir.llvm.add_StoreOp(
+            value=value,
+            addr=pointer,
+            alignment=operation.alignment,
+            volatile_=operation.volatile,
+        )
+        return []
 
     @lower_operation.register
     def lower_memory_allocation(
@@ -698,7 +705,7 @@ class IR2MLIR:
         match operation.memory_space:
             case ops.MemorySpace.SHARED:
                 return self.lower_static_shared_memory_allocation(operation)
-            case ops.MemorySpace.LOCAL:
+            case ops.MemorySpace.GENERIC:
                 return self.lower_local_memory_allocation(operation)
             case _:
                 raise NotImplementedError(f"Memory space: {operation.memory_space}")

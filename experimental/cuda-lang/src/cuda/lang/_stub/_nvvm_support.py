@@ -31,8 +31,8 @@ def satisfies_vector_constraint(value):
 @stub
 def _raw_nvvm_intrinsic(
     intrinsic: str,
-    result_dtypes: tuple[datatype.TypeSpec, ...],
-    operands: tuple[Any, ...],
+    result_dtypes: tuple[datatype.TypeSpec, ...] = (),
+    operands: tuple[Any, ...] = (),
 ):
     '''
     Call an NVVM intrinsic directly.

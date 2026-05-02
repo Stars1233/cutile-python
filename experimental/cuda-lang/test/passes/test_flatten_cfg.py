@@ -23,14 +23,14 @@ def test_flatten_ifelse():
             A[0] = 0
 
     # BEFORE: A{{.+}}: Array[int32,(?):(?)] = make_tensor_view
-    # BEFORE: $[[ITEM:[0-9]+]]: Tile[int32,()], ${{[0-9]+}}: Token = load_pointer
+    # BEFORE: $[[ITEM:[0-9]+]]: Tile[int32,()] = load_pointer
     # BEFORE: $[[ITEM_CASTED:[0-9]+]]: Tile[bool_,()] = tile_astype(x=$[[ITEM]])
     # BEFORE: if(cond=$[[ITEM_CASTED]])
     # BEFORE: then
-    # BEFORE:   ${{[0-9]+}}: Token = store_pointer
+    # BEFORE:   store_pointer
     # BEFORE:   yield
     # BEFORE: else
-    # BEFORE:   ${{[0-9]+}}: Token = store_pointer
+    # BEFORE:   store_pointer
     # BEFORE:   yield
     # BEFORE: return
     body = get_ir(test_kernel, [make_symbolic_tensor((1,), cl.int32)])
@@ -38,14 +38,14 @@ def test_flatten_ifelse():
 
     # AFTER: ^entry({{.+}}):
     # AFTER:   A{{.+}}: Array[int32,(?):(?)] = make_tensor_view
-    # AFTER:   $[[ITEM:[0-9]+]]: Tile[int32,()], ${{[0-9]+}}: Token = load_pointer
+    # AFTER:   $[[ITEM:[0-9]+]]: Tile[int32,()] = load_pointer
     # AFTER:   $[[ITEM_CASTED:[0-9]+]]: Tile[bool_,()] = tile_astype(x=$[[ITEM]])
     # AFTER:   cond_br $[[ITEM_CASTED]]: Tile[bool_,()] ^then() ^else()
     # AFTER: ^then():
-    # AFTER:   ${{[0-9]+}}: Token = store_pointer
+    # AFTER:   store_pointer
     # AFTER:   br ^phi()
     # AFTER: ^else():
-    # AFTER:   ${{[0-9]+}}: Token = store_pointer
+    # AFTER:   store_pointer
     # AFTER:   br ^phi()
     # AFTER: ^phi():
     # AFTER:   return
@@ -88,23 +88,23 @@ def test_flatten_ifelse_nested():
 
 def test_flatten_ifelse_phi_merge():
     def test_kernel(A):
-        # CHECK: $[[ITEM:[0-9]+]]: Tile[int32,()], ${{[0-9]+}}: Token = load_pointer
+        # CHECK: $[[ITEM:[0-9]+]]: Tile[int32,()] = load_pointer
         # CHECK: $[[ITEM_BOOL:[0-9]+]]: Tile[bool_,()] = tile_astype(x=$[[ITEM]])
         # CHECK: cond_br $[[ITEM_BOOL]]: Tile[bool_,()] ^then() ^else()
         if A[0]:
-            # CHECK: $[[ITEM_1:[0-9]+]]: Tile[int32,()], ${{[0-9]+}}: Token = load_pointer
+            # CHECK: $[[ITEM_1:[0-9]+]]: Tile[int32,()] = load_pointer
             # CHECK: x{{.*}}: Tile[int32,()] = $[[ITEM_1]]
             # CHECK: br ^phi(x{{.*}}: Tile[int32,()])
             x = A[1]
         else:
-            # CHECK: $[[ITEM_2:[0-9]+]]: Tile[int32,()], ${{[0-9]+}}: Token = load_pointer
+            # CHECK: $[[ITEM_2:[0-9]+]]: Tile[int32,()] = load_pointer
             # CHECK: x{{.*}}: Tile[int32,()] = $[[ITEM_2]]
             # CHECK: br ^phi(x{{.*}}: Tile[int32,()])
             x = A[2]
 
         # CHECK: ^phi($[[RESULT:[0-9]+]]: Tile[int32,()]):
         # CHECK: [[RESULT1:x\.[0-9]+]]: Tile[int32,()] = $[[RESULT]]
-        # CHECK: ${{[0-9]+}}: Token = store_pointer(pointer=
+        # CHECK: store_pointer
         A[0] = x
 
     body = get_ir(test_kernel, [make_symbolic_tensor((3,), cl.int32)])

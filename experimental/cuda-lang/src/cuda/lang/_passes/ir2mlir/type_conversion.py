@@ -64,12 +64,7 @@ def basic_scalar_type_to_mlir_type(src_type: dtype.DType) -> mlir.Type:
 
 @ir_type_to_mlir_type.register
 def vector_type_to_mlir_type(src_type: ir_type.VectorTy) -> mlir.Type:
-    if src_type.dtype == dtype.bool_:
-        element_type = mlir.IntegerType(
-            width=1, signedness=mlir.SignednessSemantics.SIGNLESS
-        )
-    else:
-        element_type = ir_type_to_mlir_type(src_type.dtype)
+    element_type = ir_type_to_mlir_type(src_type.dtype)
     return mlir.VectorType(
         shape=src_type.shape,
         elementType=element_type,
