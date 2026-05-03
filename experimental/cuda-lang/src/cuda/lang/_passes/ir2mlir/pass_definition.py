@@ -966,6 +966,14 @@ class IR2MLIR:
         return [result]
 
     @lower_operation.register
+    def lower_dummy(
+        self, operation: ops.MakeDummy
+    ) -> Sequence[mlir.Value]:
+        result_type = ir_type_to_mlir_type(operation.result_var.get_type())
+        dummy = mlir_constant_of_type(result_type, 0)
+        return [dummy]
+
+    @lower_operation.register
     def lower_foreign_function(
         self, operation: ops.ForeignFunction
     ) -> Sequence[mlir.Value]:

@@ -4,6 +4,7 @@
 
 import pytest
 import cuda.lang as cl
+from cuda.tile import static_assert, static_eval
 from cuda.lang._exception import TileTypeError
 import torch
 
@@ -72,6 +73,23 @@ def test_negative_stride():
             kernel,
             (),
         )
+
+
+def test_static_eval_return_with_static_assert_else_makedummy():
+    @cl.function
+    def choose(flag: cl.Constant[int]):
+        if static_eval(flag == 0):
+            return cl.int32(7)
+        else:
+            static_assert(False, "unsupported flag")
+
+    @cl.kernel
+    def kernel(flag: cl.Constant[int], out):
+        out[0] = choose(flag)
+
+    out = torch.empty(1, dtype=torch.int32, device="cuda")
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (0, out))
+    assert out.cpu().item() == 7
 
 
 # TODO: test while loop inside a for loop to ensure continue correctly
