@@ -18,6 +18,14 @@ from . import nvvm
 T = TypeVar("T")
 
 
+class LocalArrayContextManager:
+    @stub
+    def __enter__(self) -> "Array": ...
+
+    @stub
+    def __exit__(self, exc_type, exc_val, exc_tb): ...
+
+
 class Array(TileArray, Generic[T]):
     """
     N-dimensional array type.
@@ -45,6 +53,12 @@ class Vector(Generic[T]):
     @property
     @stub
     def element_count(self) -> int: ...
+
+    @stub
+    def __getitem__(self, item): ...
+
+    @stub
+    def __setitem__(self, key, value): ...
 
 
 class Pointer(Generic[T]):
@@ -216,10 +230,10 @@ def shared_array(
 
 @stub
 def local_array(
-    shape: tuple[int, ...],
+    shape: int | tuple[int, ...],
     dtype: DType,
     alignment: int | None = None,
-) -> Array:
+) -> LocalArrayContextManager:
     """Create an on-device array in local memory.
 
     Local arrays must be declared at the beginning of the kernel

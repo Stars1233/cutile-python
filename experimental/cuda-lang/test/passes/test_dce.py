@@ -9,8 +9,9 @@ Ensure cudalang ops with memory effects are not removed by DCE
 import cuda.lang as cl
 from cuda.lang._compile import _transform_ir
 from cuda.lang._ir.ir import Operation
-from cuda.lang._ir.ops import AtomicRMW, InlinePTX, MemoryAllocation, RawNVVMIntrinsic, Return
-from cuda.tile._ir.ops import LoadPointer
+from cuda.lang._ir.ops import (
+    AtomicRMW, InlinePTX, AllocStaticSharedMemory, RawNVVMIntrinsic, Return, LoadPointer
+)
 
 from ..util import get_ir, make_symbolic_scalar, make_symbolic_tensor
 
@@ -75,7 +76,7 @@ class TestOpsSurviveDCE:
         def kernel(A, n):
             cl.shared_array(shape=(32,), dtype=cl.int32)
 
-        assert kernel.has_op(MemoryAllocation)
+        assert kernel.has_op(AllocStaticSharedMemory)
 
     def test_unused_dynamic_shared_memory_is_preserved_in_size_program(self):
         @ir_wrapper

@@ -824,6 +824,20 @@ def _return_stmt(stmt: ast.Return, ctx: _Context) -> None:
         ctx.set_block_jump(hir.Jump.BREAK)
 
 
+@_register(_stmt_handlers, ast.With)
+def _with_stmt(stmt: ast.With, ctx: _Context) -> None:
+    for item in stmt.items:
+        manager = _expr(item.context_expr, ctx)
+        val = ctx.call(hir_stubs.enter_context, (manager,))
+        if item.optional_vars is not None:
+            _do_assign(val, item.optional_vars, ctx)
+
+    _stmt_list(stmt.body, ctx)
+
+    for _ in stmt.items:
+        ctx.call(hir_stubs.pop_context, ())
+
+
 @_register(_stmt_handlers, ast.Pass)
 def _pass_stmt(stmt: ast.Pass, ctx: _Context) -> None:
     pass

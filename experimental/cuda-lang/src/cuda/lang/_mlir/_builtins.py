@@ -246,7 +246,7 @@ class Block:
 
     @contextmanager
     def prepend_here(self):
-        with _Cursor(self, prepend=True).as_current():
+        with _Cursor(self, insert_pos=0).as_current():
             yield self
 
     def append(self, op: Operation):
@@ -267,9 +267,9 @@ class Region:
 
 
 class _Cursor:
-    def __init__(self, block: Block, prepend: bool = False):
+    def __init__(self, block: Block, insert_pos: int | None = None):
         self._block = block
-        self._prepend = prepend
+        self._insert_pos = insert_pos
 
     @staticmethod
     def current() -> Optional["_Cursor"]:
@@ -319,10 +319,11 @@ class _Cursor:
 
         op = Operation(name=name, results=results, operands=operands, properties=properties,
                        attributes=attributes, regions=regions, successors=successors)
-        if self._prepend:
-            self._block.operations.insert(0, op)
-        else:
+        if self._insert_pos is None:
             self._block.append(op)
+        else:
+            self._block.operations.insert(self._insert_pos, op)
+            self._insert_pos += 1
         return ret
 
 

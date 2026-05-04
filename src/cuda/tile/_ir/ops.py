@@ -65,7 +65,8 @@ from .type import (
     ListTy, make_tile_ty, SliceType, DTypeConstructor, RangeIterType, Type,
     NONE, ModuleTy, TypeTy, LooselyTypedScalar, DTypeSpec, StringTy, InvalidType,
     ClosureTy, LiveCapturedScope, TokenTy, TiledViewTy, FormattedStringTy,
-    StringFormat, FormattedPiece, RawArrayMemoryTy, DataclassTy, IndexSliceTy
+    StringFormat, FormattedPiece, RawArrayMemoryTy, DataclassTy, IndexSliceTy,
+    ContextManagerLifecycle, ContextManagerTy
 )
 from cuda.tile._datatype import (
     DType, is_integral, is_float, is_signed, is_boolean,
@@ -520,6 +521,9 @@ def continue_():
     assert info is not None
     assert not info.flatten
 
+    for ctx_state in scope.context_stack[scope.loop_context_stack_depth:]:
+        ctx_state.exit_callback()
+
     builder = Builder.get_current()
     builder.add_operation(Continue, (), dict(values=()))
     op = builder.ops[-1]
@@ -550,6 +554,9 @@ def break_():
 
     if info.flatten:
         return
+
+    for ctx_state in scope.context_stack[scope.loop_context_stack_depth:]:
+        ctx_state.exit_callback()
 
     builder = Builder.get_current()
     builder.add_operation(Break, (), dict(values=()))
@@ -5009,6 +5016,31 @@ def load_var_impl(name):
         return loosely_typed_const(val)
     else:
         raise TileSyntaxError(f"Undefined variable {name} used")
+
+
+@overload_dispatcher(hir_stubs.enter_context)
+def enter_context_overload_dispatcher(manager: Var):
+    ty = manager.get_type()
+    if not isinstance(ty, ContextManagerTy):
+        raise TileTypeError(f"Object of type {ty} cannot be used as a context manager")
+
+    state = ty.get_context_manager_state()
+    if state.lifecycle != ContextManagerLifecycle.FRESH:
+        raise TileTypeError("Context manager cannot be reused")
+    state.lifecycle = ContextManagerLifecycle.ENTERED
+    Scope.get_current().context_stack.append(state)
+
+    try:
+        yield (type(ty),)
+    except OverloadNotFoundError:
+        raise TileTypeError(f"Object of type {ty} cannot be used as a context manager")
+
+
+@impl(hir_stubs.pop_context)
+def pop_context_impl():
+    ctx_state = Scope.get_current().context_stack.pop()
+    ctx_state.lifecycle = ContextManagerLifecycle.EXITED
+    ctx_state.exit_callback()
 
 
 @impl(hir_stubs.make_closure)

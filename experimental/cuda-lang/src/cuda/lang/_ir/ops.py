@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 import dataclasses
+import math
 import re
 import operator
 from dataclasses import dataclass
@@ -21,7 +22,9 @@ from cuda.tile._ir.op_impl import (
     WILDCARD,
     require_tile_type, require_constant_bool,
 )
-from cuda.lang._ir.type import OpaquePointerTy, VectorTy
+from cuda.lang._ir.type import (
+    OpaquePointerTy, VectorTy, LocalArrayContextManagerTy, ContextManagerState
+)
 from cuda.tile._ir.ops import (
     binary_arithmetic,
     loosely_typed_const,
@@ -32,7 +35,6 @@ from cuda.tile._ir.ops import (
     strictly_typed_const,
     astype,
     raw_binary_arithmetic,
-    unflatten_aggregates,
     Return,
     return_,
     Assign,
@@ -82,9 +84,9 @@ from .ir import (
     Var,
     add_operation,
     format_var,
-    TupleValue,
+    TupleValue, LocalArrayContextManagerValue,
 )
-
+from ...tile._ir import hir_stubs
 
 cuda_lang_impl_registry = tile_impl_registry.clone()
 impl = cuda_lang_impl_registry.impl
@@ -642,11 +644,16 @@ def cond_branch(
 
 
 @dataclass(eq=False)
-class MemoryAllocation(Operation, opcode="alloc", memory_effect=MemoryEffect.STORE):
-    memory_space: MemorySpace = attribute()
-    shape: tuple[int, ...] = attribute()
-    element_type: datatype.DType = attribute()
+class AllocLocalMemory(Operation, opcode="alloc_local_memory", memory_effect=MemoryEffect.STORE):
+    count: int = attribute()
     alignment: int | None = attribute()
+
+
+@dataclass(eq=False)
+class DeallocLocalMemory(Operation,
+                         opcode="dealloc_local_memory",
+                         memory_effect=MemoryEffect.STORE):
+    ptr: Var = operand()
 
 
 def _contiguous_strides(shape: tuple[int, ...]) -> tuple[int, ...]:
@@ -676,37 +683,56 @@ def require_optional_alignment(alignment: Var) -> int | None:
 
 
 @impl(stub.local_array)
-def local_array_impl(shape: Var, dtype: Var, alignment: Var) -> Operation:
+def local_array_impl(shape: Var, dtype: Var, alignment: Var) -> Var:
     shape = require_constant_int_tuple(shape, allow_single_int=True)
     dtype = require_dtype_spec(dtype)
     alignment = require_optional_alignment(alignment)
     dtype_byte_width = _dtype_byte_width(dtype)
     if alignment is not None and alignment < dtype_byte_width:
         raise TileTypeError(f"Requested {alignment=} is less than {dtype_byte_width}")
-    strides = _contiguous_strides(shape)
+
+    state = ContextManagerState()
+    agg_ty = LocalArrayContextManagerTy(dtype, shape, alignment, state)
+    agg_val = LocalArrayContextManagerValue()
+    return make_aggregate(agg_val, agg_ty)
+
+
+@impl(hir_stubs.enter_context, overload=(LocalArrayContextManagerTy,))
+def enter_context_local_array_impl(manager: Var):
+    mgr_ty = manager.get_type()
+    assert isinstance(mgr_ty, LocalArrayContextManagerTy)
+
+    dtype_byte_width = _dtype_byte_width(mgr_ty.dtype)
+    if mgr_ty.alignment is not None and mgr_ty.alignment < dtype_byte_width:
+        raise TileTypeError(f"Requested alignment {mgr_ty.alignment}"
+                            f" is less than item size {dtype_byte_width}")
+    strides = _contiguous_strides(mgr_ty.shape)
     index_dtype = datatype.int32
     array_type = ArrayTy(
-        TileTy(dtype, ()),
-        shape=shape,
+        TileTy(mgr_ty.dtype, ()),
+        shape=mgr_ty.shape,
         strides=strides,
         index_dtype=index_dtype,
         memory_space=MemorySpace.GENERIC,
     )
-    base_ptr = add_operation(
-        MemoryAllocation,
-        _array_base_pointer_type(array_type),
-        memory_space=MemorySpace.GENERIC,
-        shape=shape,
-        element_type=dtype,
-        alignment=alignment,
-    )
     size_ty = TileTy(index_dtype, ())
-    shape_vars = tuple(strictly_typed_const(extent, size_ty) for extent in shape)
+    shape_vars = tuple(strictly_typed_const(extent, size_ty) for extent in mgr_ty.shape)
     stride_vars = tuple(strictly_typed_const(extent, size_ty) for extent in strides)
-    [ret] = unflatten_aggregates(
-        (base_ptr,) + shape_vars + stride_vars, (array_type,), (array_type,)
+
+    base_ptr = add_operation(
+        AllocLocalMemory,
+        _array_base_pointer_type(array_type),
+        count=math.prod(mgr_ty.shape),
+        alignment=mgr_ty.alignment,
     )
-    return ret
+
+    def exit_callback():
+        add_operation(DeallocLocalMemory, (), ptr=base_ptr)
+
+    mgr_ty.state.exit_callback = exit_callback
+
+    array_val = ArrayValue(base_ptr, shape_vars, stride_vars)
+    return make_aggregate(array_val, array_type)
 
 
 @dataclass(eq=False)
@@ -718,6 +744,13 @@ def get_dyn_shared_memory_base_ptr():
     u8_ty = TileTy(datatype.uint8, ())
     result_ty = TileTy(PointerTy(u8_ty, MemorySpace.SHARED), ())
     return add_operation(GetDynSharedMemoryBasePtr, result_ty)
+
+
+@dataclass(eq=False)
+class AllocStaticSharedMemory(Operation, opcode="alloc_static_shared_memory",
+                              memory_effect=MemoryEffect.STORE):
+    count: int = attribute()
+    alignment: int | None = attribute()
 
 
 @dataclass(eq=False)
@@ -797,14 +830,10 @@ def shared_array_impl(shape: Var, dtype: Var, dynamic: Var, alignment: Var) -> O
         if total_size is None:
             raise TileTypeError("Shape must be constant when `dynamic` is False")
 
-        base_ptr = add_operation(
-            MemoryAllocation,
-            _array_base_pointer_type(array_type),
-            memory_space=MemorySpace.SHARED,
-            shape=ty_shape,
-            element_type=dtype,
-            alignment=alignment,
-        )
+        base_ptr = add_operation(AllocStaticSharedMemory,
+                                 _array_base_pointer_type(array_type),
+                                 count=total_size,
+                                 alignment=alignment)
 
     array_value = ArrayValue(base_ptr=base_ptr, shape=tuple(shape_vars), strides=tuple(stride_vars))
     return make_aggregate(array_value, array_type)

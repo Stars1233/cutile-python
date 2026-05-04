@@ -55,15 +55,15 @@ def test_pointer_vector_ldst(volatile, element_count, torch_dtype, dtype):
 
     @cl.kernel
     def kernel(A):
-        larr = cl.local_array(element_count, dtype, alignment=alignment)
         sarr = cl.shared_array(element_count, dtype, alignment=alignment)
-        for i in static_iter(range(element_count)):
-            larr[i] = dtype(i)
-        v = larr.get_base_pointer().load(
-            count=element_count,
-            alignment=alignment,
-            volatile=volatile,
-        )
+        with cl.local_array(element_count, dtype, alignment=alignment) as larr:
+            for i in static_iter(range(element_count)):
+                larr[i] = dtype(i)
+            v = larr.get_base_pointer().load(
+                count=element_count,
+                alignment=alignment,
+                volatile=volatile,
+            )
         sarr.get_base_pointer().store(
             v,
             alignment=alignment,
@@ -82,13 +82,13 @@ def test_pointer_vector_ldst(volatile, element_count, torch_dtype, dtype):
 def test_vector_apis():
     @cl.kernel
     def kernel(out):
-        larr = cl.local_array(4, cl.int32, alignment=16)
-        p = larr.get_base_pointer()
-        vec = p.load(count=4, alignment=16)
-        out[0] = cl.int32(vec.dtype == p.dtype)
-        out[1] = cl.int32(p.dtype == cl.int32)
-        out[2] = cl.int32(p.dtype == larr.dtype)
-        out[3] = vec.element_count
+        with cl.local_array(4, cl.int32, alignment=16) as larr:
+            p = larr.get_base_pointer()
+            vec = p.load(count=4, alignment=16)
+            out[0] = cl.int32(vec.dtype == p.dtype)
+            out[1] = cl.int32(p.dtype == cl.int32)
+            out[2] = cl.int32(p.dtype == larr.dtype)
+            out[3] = vec.element_count
 
     out = torch.zeros(4, dtype=torch.int32).cuda()
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (out,))
@@ -100,24 +100,24 @@ def test_pointer_vector_ldst_bool():
 
     @cl.kernel
     def kernel(A):
-        larr = cl.local_array(4, cl.bool_, alignment=alignment)
-        sarr = cl.shared_array(4, cl.bool_, alignment=alignment)
-        value = True
-        for i in static_iter(range(4)):
-            larr[i] = value
-            value = not value
-        v = larr.get_base_pointer().load(
-            count=4,
-            alignment=alignment,
-            volatile=True,
-        )
-        sarr.get_base_pointer().store(
-            v,
-            alignment=alignment,
-            volatile=True,
-        )
-        for i in static_iter(range(4)):
-            A[i] = sarr[i]
+        with cl.local_array(4, cl.bool_, alignment=alignment) as larr:
+            sarr = cl.shared_array(4, cl.bool_, alignment=alignment)
+            value = True
+            for i in static_iter(range(4)):
+                larr[i] = value
+                value = not value
+            v = larr.get_base_pointer().load(
+                count=4,
+                alignment=alignment,
+                volatile=True,
+            )
+            sarr.get_base_pointer().store(
+                v,
+                alignment=alignment,
+                volatile=True,
+            )
+            for i in static_iter(range(4)):
+                A[i] = sarr[i]
 
     A = torch.zeros(4, dtype=torch.bool).cuda()
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (A,))
@@ -215,26 +215,26 @@ def test_pointer_add_ldst():
     assert A.cpu().tolist() == [0, 1, 4, 9]
 
 
-@pytest.mark.parametrize(
-    "allocator,expected_memspace",
-    [
-        (cl.local_array, [1, 0, 0]),
-        (cl.shared_array, [0, 0, 1]),
-    ],
-)
-def test_device_alloc_memspace(allocator, expected_memspace):
+def test_device_alloc_memspace():
     @cl.kernel
     def kernel(memspace):
-        A = allocator(shape=(3, 3), dtype=cl.int32)
+        A = cl.shared_array(shape=(3, 3), dtype=cl.int32)
         p = A.get_base_pointer()
         p = cl.address_space_cast(p, cl.MemorySpace.GENERIC)
         if cl.thread_idx()[0] == 0:
             memspace[0] = cl.int32(cl.nvvm.isspacep_local(p))
             memspace[1] = cl.int32(cl.nvvm.isspacep_global(p))
             memspace[2] = cl.int32(cl.nvvm.isspacep_shared(p))
-        cl.syncthreads()
 
-    memspace = torch.zeros(3, dtype=torch.int32, device="cuda")
+        with cl.local_array(shape=(3, 3), dtype=cl.int32) as B:
+            p = B.get_base_pointer()
+            p = cl.address_space_cast(p, cl.MemorySpace.GENERIC)
+            if cl.thread_idx()[0] == 0:
+                memspace[3] = cl.int32(cl.nvvm.isspacep_local(p))
+                memspace[4] = cl.int32(cl.nvvm.isspacep_global(p))
+                memspace[5] = cl.int32(cl.nvvm.isspacep_shared(p))
+
+    memspace = torch.zeros(6, dtype=torch.int32, device="cuda")
     cl.launch(
         torch.cuda.current_stream(),
         (1,),
@@ -242,10 +242,9 @@ def test_device_alloc_memspace(allocator, expected_memspace):
         kernel,
         (memspace,),
     )
-    assert memspace.cpu().tolist() == expected_memspace
+    assert memspace.cpu().tolist() == [0, 0, 1, 1, 0, 0]
 
 
-@pytest.mark.parametrize("allocator", [cl.local_array, cl.shared_array])
 @pytest.mark.parametrize(
     "torch_dtype,cl_dtype",
     [
@@ -255,11 +254,11 @@ def test_device_alloc_memspace(allocator, expected_memspace):
         (torch.float64, cl.float64),
     ],
 )
-def test_device_allocations(allocator, torch_dtype, cl_dtype):
+def test_static_shared_array(torch_dtype, cl_dtype):
 
     @cl.kernel
-    def kernel(out, memspace):
-        A = allocator(shape=(3, 3), dtype=cl_dtype)
+    def kernel(out):
+        A = cl.shared_array(shape=(3, 3), dtype=cl_dtype)
         p = A.get_base_pointer()
         p = cl.address_space_cast(p, cl.MemorySpace.GENERIC)
         A[0, 0] = cl_dtype(1)
@@ -270,18 +269,13 @@ def test_device_allocations(allocator, torch_dtype, cl_dtype):
         out[2, 2] = A[2, 2]
         cl.syncthreads()
 
-        memspace[0] = cl.int32(cl.nvvm.isspacep_local(p))
-        memspace[1] = cl.int32(cl.nvvm.isspacep_global(p))
-        memspace[2] = cl.int32(cl.nvvm.isspacep_shared(p))
-
     A = torch.zeros(3, 3, dtype=torch_dtype).cuda()
-    memspace = torch.zeros(1, dtype=torch.int32).cuda()
     cl.launch(
         torch.cuda.current_stream(),
         (1,),
         (1,),
         kernel,
-        (A, memspace),
+        (A,),
     )
     A = A.cpu()
     assert A[0, 0] == 1
@@ -292,10 +286,10 @@ def test_device_allocations(allocator, torch_dtype, cl_dtype):
 def test_device_allocation_alignment_lowering():
     @cl.kernel
     def kernel():
-        local = cl.local_array(shape=(4,), dtype=cl.int32, alignment=16)
         shared = cl.shared_array(shape=(4,), dtype=cl.int32, alignment=128)
-        local[0] = cl.int32(1)
-        shared[0] = local[0]
+        with cl.local_array(shape=(4,), dtype=cl.int32, alignment=16) as local:
+            local[0] = cl.int32(1)
+            shared[0] = local[0]
 
     result = compile_simt(
         kernel,
@@ -308,7 +302,12 @@ def test_device_allocation_alignment_lowering():
     assert "alignment = 128 : i64" in result.mlir
 
 
-@pytest.mark.parametrize("allocator", [cl.local_array, cl.shared_array])
+def make_local_array(shape, dtype, alignment):
+    with cl.local_array(shape, dtype, alignment):
+        pass
+
+
+@pytest.mark.parametrize("allocator", [make_local_array, cl.shared_array])
 @pytest.mark.parametrize("alignment", [0, -1, 3, True])
 def test_device_allocation_invalid_alignment(allocator, alignment):
     def kernel():
@@ -323,7 +322,7 @@ def test_device_allocation_invalid_alignment(allocator, alignment):
         compile_for_arguments(kernel, ())
 
 
-@pytest.mark.parametrize("allocator", [cl.local_array, cl.shared_array])
+@pytest.mark.parametrize("allocator", [make_local_array, cl.shared_array])
 def test_device_allocation_alignment_must_be_constant(allocator):
     def kernel(alignment):
         allocator(shape=(1,), dtype=cl.int32, alignment=alignment)
@@ -332,23 +331,20 @@ def test_device_allocation_alignment_must_be_constant(allocator):
         compile_for_arguments(kernel, (make_symbolic_scalar(cl.int32),))
 
 
-@pytest.mark.parametrize("allocator", [cl.local_array, cl.shared_array])
-def test_allocate_in_runtime_conditional(allocator):
-    def kernel(tensor, cond):
+def test_allocate_shmem_in_runtime_conditional():
+    def kernel(tensor):
         if tensor[0]:
-            allocator(shape=(1,), dtype=cl.int32)
+            cl.shared_array(shape=(1,), dtype=cl.int32)
 
     tensor_constraint = make_symbolic_tensor(shape=(2,), dtype=cl.float32)
-    bool_constraint = make_symbolic_scalar(dtype=cl.bool_)
     with pytest.raises(TileError, match="Memory allocated in dynamic control flow"):
-        compile_for_arguments(kernel, (tensor_constraint, bool_constraint))
+        compile_for_arguments(kernel, (tensor_constraint,))
 
 
-@pytest.mark.parametrize("allocator", [cl.local_array, cl.shared_array])
-def test_allocate_in_runtime_loop(allocator):
+def test_allocate_shmem_in_runtime_loop():
     def kernel(tensor, cond):
         for i in range(cl.int32(tensor[0])):
-            allocator(shape=(1,), dtype=cl.int32)
+            cl.shared_array(shape=(1,), dtype=cl.int32)
 
     tensor_constraint = make_symbolic_tensor(shape=(2,), dtype=cl.float32)
     bool_constraint = make_symbolic_scalar(dtype=cl.bool_)

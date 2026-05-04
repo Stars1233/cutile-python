@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from cuda.lang._ir.ops import AllocDynSharedMemory, IfElse, Loop, MemoryAllocation
+from cuda.lang._ir.ops import AllocDynSharedMemory, IfElse, Loop, AllocStaticSharedMemory
 from cuda.lang._ir.ir import IRContext, Block, TileBlock, Operation
 from cuda.lang._exception import TileError
 
@@ -19,7 +19,7 @@ def visit_op(op: Operation, in_control_flow: bool) -> None:
             visit_block(op.else_block, True)
         case Loop():
             visit_block(op.body, True)
-        case (MemoryAllocation() | AllocDynSharedMemory()) if in_control_flow:
+        case (AllocStaticSharedMemory() | AllocDynSharedMemory()) if in_control_flow:
             raise TileError(
                 "Memory allocated in dynamic control flow",
                 op.loc

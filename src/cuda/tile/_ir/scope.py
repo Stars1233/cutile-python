@@ -13,7 +13,7 @@ from cuda.tile._exception import Loc, TileSyntaxError
 from cuda.tile._ir import hir
 from cuda.tile._ir.hir import ResolvedName
 from cuda.tile._ir.ir import Operation, Var, IRContext
-from cuda.tile._ir.type import InvalidType
+from cuda.tile._ir.type import InvalidType, ContextManagerState
 
 
 @dataclass
@@ -142,6 +142,8 @@ class Scope:
     call_site: Loc | None
     hir2ir_varmap: IntMap[Var]
     func_hir: hir.Function
+    context_stack: list[ContextManagerState] = dataclasses.field(default_factory=list)
+    loop_context_stack_depth: int | None = None
 
     def get_local_index(self, name: str) -> int:
         rn: ResolvedName = self.func_hir.used_names[name]
@@ -171,12 +173,15 @@ class Scope:
 
     @contextmanager
     def change_loop_info(self, new: ControlFlowInfo):
+        old_stack_depth = self.loop_context_stack_depth
         old = self.loop_info
         self.loop_info = new
+        self.loop_context_stack_depth = len(self.context_stack)
         try:
             yield
         finally:
             self.loop_info = old
+            self.loop_context_stack_depth = old_stack_depth
 
     @contextmanager
     def change_if_else_info(self, new: ControlFlowInfo):

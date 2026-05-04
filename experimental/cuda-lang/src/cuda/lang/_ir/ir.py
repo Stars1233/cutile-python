@@ -18,7 +18,7 @@ from cuda.tile._ir.ir import (
     attribute,
     add_operation,
     format_var,
-    TupleValue,
+    TupleValue, AggregateValue,
 )
 
 
@@ -125,6 +125,10 @@ class Region:
 
     def __str__(self) -> str:
         return self.to_string()
+
+
+class LocalArrayContextManagerValue(AggregateValue):
+    pass
 
 
 __all__ = (

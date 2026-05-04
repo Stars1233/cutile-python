@@ -20,9 +20,7 @@ def launch_extended(stream,
                     block: tuple[int] | tuple[int, int] | tuple[int, int, int],
                     kernel,
                     kernel_args: tuple[Any, ...],
-                    /,
-                    *,
-                    dynamic_shared_memory_bytes=None):
+                    /):
     ...
 
 

@@ -14,6 +14,7 @@ from . import DestructurableTypeInterface
 from . import DictionaryAttr
 from . import DistinctAttr
 from . import FlatSymbolRefAttr
+from . import Float64Type
 from . import FloatAttr
 from . import FloatType
 from . import FusedLoc
@@ -27,6 +28,7 @@ from . import VectorElementTypeInterface
 from . import VectorType
 from . import _util
 from . import ptr
+from ._builtins import APFloat
 from ._builtins import APInt
 from ._builtins import Attribute
 from ._builtins import BlockLabel
@@ -724,6 +726,26 @@ class DIVariableAttr(DINodeAttr):
 
 class TBAANodeAttr(Attribute):
     pass
+
+
+@dataclass(kw_only=True)
+class FastmathFlagsAttr(Attribute, dialect='llvm', mnemonic='fastmath'):
+    value: "FastmathFlags"
+
+    def _print_mlir_unqualified(self, p):
+        p("<")
+        self.value._print_mlir_unqualified(p)
+        p(">")
+
+
+@dataclass(kw_only=True)
+class IntegerOverflowFlagsAttr(Attribute, dialect='llvm', mnemonic='overflow'):
+    value: "IntegerOverflowFlags"
+
+    def _print_mlir_unqualified(self, p):
+        p("<")
+        self.value._print_mlir_unqualified(p)
+        p(">")
 
 
 @dataclass(kw_only=True)
@@ -2479,26 +2501,6 @@ class WorkgroupAttributionAttr(Attribute, dialect='llvm', mnemonic='mlir.workgro
         self.num_elements._print_mlir_unqualified(p)
         p(", ")
         self.element_type._print_mlir_unqualified(p)
-        p(">")
-
-
-@dataclass(kw_only=True)
-class FastmathFlagsAttr(Attribute, dialect='llvm', mnemonic='fastmath'):
-    value: "FastmathFlags"
-
-    def _print_mlir_unqualified(self, p):
-        p("<")
-        self.value._print_mlir_unqualified(p)
-        p(">")
-
-
-@dataclass(kw_only=True)
-class IntegerOverflowFlagsAttr(Attribute, dialect='llvm', mnemonic='overflow'):
-    value: "IntegerOverflowFlags"
-
-    def _print_mlir_unqualified(self, p):
-        p("<")
-        self.value._print_mlir_unqualified(p)
         p(">")
 
 
@@ -4653,6 +4655,3936 @@ def add_ZeroOp(
     all_props = []
     return add_operation(
         name="llvm.mlir.zero",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ACosOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.acos",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ASinOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.asin",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ATan2Op(
+    *,
+    a: Value,
+    b: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.atan2",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ATanOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.atan",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_AbsOp(
+    *,
+    res_type: Type,
+    in_: Value,
+    is_int_min_poison: bool,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('is_int_min_poison',
+                      IntegerAttr.make(IntegerType.signless(1), int(is_int_min_poison))))
+    return add_operation(
+        name="llvm.intr.abs",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_Annotation(
+    *,
+    integer: Value,
+    annotation: Value,
+    fileName: Value,
+    line: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = integer.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.annotation",
+        result_type=res_type,
+        operands=[integer, annotation, fileName, line],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_AssumeOp(
+    *,
+    cond: Value,
+    op_bundle_operands: Sequence[Value],
+    op_bundle_sizes: Sequence[int],
+    op_bundle_tags: Optional[ArrayAttr] = None,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('op_bundle_sizes', DenseI32ArrayAttr(op_bundle_sizes)))
+    if op_bundle_tags is not None:
+        all_props.append(('op_bundle_tags', op_bundle_tags))
+    return add_operation(
+        name="llvm.intr.assume",
+        result_type=None,
+        operands=[cond, *op_bundle_operands],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_BitReverseOp(
+    *,
+    in_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.bitreverse",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ByteSwapOp(
+    *,
+    in_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.bswap",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConstrainedFAddIntr(
+    *,
+    arg_0: Value,
+    arg_1: Value,
+    roundingmode: RoundingMode,
+    fpExceptionBehavior: FPExceptionBehavior,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = arg_0.type
+    all_props = []
+    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
+    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
+    return add_operation(
+        name="llvm.intr.experimental.constrained.fadd",
+        result_type=res_type,
+        operands=[arg_0, arg_1],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConstrainedFDivIntr(
+    *,
+    arg_0: Value,
+    arg_1: Value,
+    roundingmode: RoundingMode,
+    fpExceptionBehavior: FPExceptionBehavior,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = arg_0.type
+    all_props = []
+    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
+    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
+    return add_operation(
+        name="llvm.intr.experimental.constrained.fdiv",
+        result_type=res_type,
+        operands=[arg_0, arg_1],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConstrainedFMAIntr(
+    *,
+    arg_0: Value,
+    arg_1: Value,
+    arg_2: Value,
+    roundingmode: RoundingMode,
+    fpExceptionBehavior: FPExceptionBehavior,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = arg_0.type
+    all_props = []
+    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
+    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
+    return add_operation(
+        name="llvm.intr.experimental.constrained.fma",
+        result_type=res_type,
+        operands=[arg_0, arg_1, arg_2],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConstrainedFMulAddIntr(
+    *,
+    arg_0: Value,
+    arg_1: Value,
+    arg_2: Value,
+    roundingmode: RoundingMode,
+    fpExceptionBehavior: FPExceptionBehavior,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = arg_0.type
+    all_props = []
+    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
+    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
+    return add_operation(
+        name="llvm.intr.experimental.constrained.fmuladd",
+        result_type=res_type,
+        operands=[arg_0, arg_1, arg_2],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConstrainedFMulIntr(
+    *,
+    arg_0: Value,
+    arg_1: Value,
+    roundingmode: RoundingMode,
+    fpExceptionBehavior: FPExceptionBehavior,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = arg_0.type
+    all_props = []
+    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
+    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
+    return add_operation(
+        name="llvm.intr.experimental.constrained.fmul",
+        result_type=res_type,
+        operands=[arg_0, arg_1],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConstrainedFPExtIntr(
+    *,
+    res_type: Type,
+    arg_0: Value,
+    fpExceptionBehavior: FPExceptionBehavior,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
+    return add_operation(
+        name="llvm.intr.experimental.constrained.fpext",
+        result_type=res_type,
+        operands=[arg_0],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConstrainedFPTruncIntr(
+    *,
+    res_type: Type,
+    arg_0: Value,
+    roundingmode: RoundingMode,
+    fpExceptionBehavior: FPExceptionBehavior,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
+    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
+    return add_operation(
+        name="llvm.intr.experimental.constrained.fptrunc",
+        result_type=res_type,
+        operands=[arg_0],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConstrainedFRemIntr(
+    *,
+    arg_0: Value,
+    arg_1: Value,
+    roundingmode: RoundingMode,
+    fpExceptionBehavior: FPExceptionBehavior,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = arg_0.type
+    all_props = []
+    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
+    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
+    return add_operation(
+        name="llvm.intr.experimental.constrained.frem",
+        result_type=res_type,
+        operands=[arg_0, arg_1],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConstrainedFSubIntr(
+    *,
+    arg_0: Value,
+    arg_1: Value,
+    roundingmode: RoundingMode,
+    fpExceptionBehavior: FPExceptionBehavior,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = arg_0.type
+    all_props = []
+    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
+    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
+    return add_operation(
+        name="llvm.intr.experimental.constrained.fsub",
+        result_type=res_type,
+        operands=[arg_0, arg_1],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConstrainedSIToFP(
+    *,
+    res_type: Type,
+    arg_0: Value,
+    roundingmode: RoundingMode,
+    fpExceptionBehavior: FPExceptionBehavior,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
+    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
+    return add_operation(
+        name="llvm.intr.experimental.constrained.sitofp",
+        result_type=res_type,
+        operands=[arg_0],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConstrainedUIToFP(
+    *,
+    res_type: Type,
+    arg_0: Value,
+    roundingmode: RoundingMode,
+    fpExceptionBehavior: FPExceptionBehavior,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
+    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
+    return add_operation(
+        name="llvm.intr.experimental.constrained.uitofp",
+        result_type=res_type,
+        operands=[arg_0],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CopySignOp(
+    *,
+    a: Value,
+    b: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.copysign",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CoroAlignOp(
+    *,
+    res_type: Type,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.coro.align",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CoroBeginOp(
+    *,
+    res_type: Type,
+    token: Value,
+    mem: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.coro.begin",
+        result_type=res_type,
+        operands=[token, mem],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CoroEndOp(
+    *,
+    res_type: Type,
+    handle: Value,
+    unwind: Value,
+    retvals: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.coro.end",
+        result_type=res_type,
+        operands=[handle, unwind, retvals],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CoroFreeOp(
+    *,
+    res_type: Type,
+    id: Value,
+    handle: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.coro.free",
+        result_type=res_type,
+        operands=[id, handle],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CoroIdOp(
+    *,
+    res_type: Type,
+    align: Value,
+    promise: Value,
+    coroaddr: Value,
+    fnaddrs: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.coro.id",
+        result_type=res_type,
+        operands=[align, promise, coroaddr, fnaddrs],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CoroPromiseOp(
+    *,
+    res_type: LLVMPointerType,
+    handle: Value,
+    align: Value,
+    from_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.coro.promise",
+        result_type=res_type,
+        operands=[handle, align, from_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CoroResumeOp(
+    *,
+    handle: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.coro.resume",
+        result_type=None,
+        operands=[handle],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CoroSaveOp(
+    *,
+    res_type: Type,
+    handle: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.coro.save",
+        result_type=res_type,
+        operands=[handle],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CoroSizeOp(
+    *,
+    res_type: Type,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.coro.size",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CoroSuspendOp(
+    *,
+    res_type: Type,
+    save: Value,
+    final: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.coro.suspend",
+        result_type=res_type,
+        operands=[save, final],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CosOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.cos",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CoshOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.cosh",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CountLeadingZerosOp(
+    *,
+    in_: Value,
+    is_zero_poison: bool,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('is_zero_poison',
+                      IntegerAttr.make(IntegerType.signless(1), int(is_zero_poison))))
+    return add_operation(
+        name="llvm.intr.ctlz",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CountTrailingZerosOp(
+    *,
+    in_: Value,
+    is_zero_poison: bool,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('is_zero_poison',
+                      IntegerAttr.make(IntegerType.signless(1), int(is_zero_poison))))
+    return add_operation(
+        name="llvm.intr.cttz",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_CtPopOp(
+    *,
+    in_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.ctpop",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_DbgDeclareOp(
+    *,
+    addr: Value,
+    varInfo: DILocalVariableAttr,
+    locationExpr: DIExpressionAttr = DIExpressionAttr(),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('varInfo', varInfo))
+    all_props.append(('locationExpr', locationExpr))
+    return add_operation(
+        name="llvm.intr.dbg.declare",
+        result_type=None,
+        operands=[addr],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_DbgLabelOp(
+    *,
+    label: DILabelAttr,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('label', label))
+    return add_operation(
+        name="llvm.intr.dbg.label",
+        result_type=None,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_DbgValueOp(
+    *,
+    value: Value,
+    varInfo: DILocalVariableAttr,
+    locationExpr: DIExpressionAttr = DIExpressionAttr(),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('varInfo', varInfo))
+    all_props.append(('locationExpr', locationExpr))
+    return add_operation(
+        name="llvm.intr.dbg.value",
+        result_type=None,
+        operands=[value],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_DebugTrap(
+    *,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.debugtrap",
+        result_type=None,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_EhTypeidForOp(
+    *,
+    res_type: Type,
+    type_info: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.eh.typeid.for",
+        result_type=res_type,
+        operands=[type_info],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_Exp2Op(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.exp2",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_Exp10Op(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.exp10",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ExpOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.exp",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ExpectOp(
+    *,
+    val: Value,
+    expected: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = val.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.expect",
+        result_type=res_type,
+        operands=[val, expected],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ExpectWithProbabilityOp(
+    *,
+    val: Value,
+    expected: Value,
+    prob: APFloat,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = expected.type
+    all_props = []
+    all_props.append(('prob', FloatAttr(type=Float64Type(), value=prob)))
+    return add_operation(
+        name="llvm.intr.expect.with.probability",
+        result_type=res_type,
+        operands=[val, expected],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_FAbsOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.fabs",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_FCeilOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.ceil",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_FFloorOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.floor",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_FMAOp(
+    *,
+    a: Value,
+    b: Value,
+    c: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.fma",
+        result_type=res_type,
+        operands=[a, b, c],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_FMulAddOp(
+    *,
+    a: Value,
+    b: Value,
+    c: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.fmuladd",
+        result_type=res_type,
+        operands=[a, b, c],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_FTruncOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.trunc",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_FakeUseOp(
+    *,
+    args: Sequence[Value],
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.fake.use",
+        result_type=None,
+        operands=list(args),
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_FractionExpOp(
+    *,
+    res_type: Type,
+    val: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.frexp",
+        result_type=res_type,
+        operands=[val],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_FshlOp(
+    *,
+    a: Value,
+    b: Value,
+    c: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.fshl",
+        result_type=res_type,
+        operands=[a, b, c],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_FshrOp(
+    *,
+    a: Value,
+    b: Value,
+    c: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.fshr",
+        result_type=res_type,
+        operands=[a, b, c],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_GetActiveLaneMaskOp(
+    *,
+    res_type: Type,
+    base: Value,
+    n: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.get.active.lane.mask",
+        result_type=res_type,
+        operands=[base, n],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_InvariantEndOp(
+    *,
+    start: Value,
+    size: int,
+    ptr: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('size', IntegerAttr.make(IntegerType.signless(64), size)))
+    return add_operation(
+        name="llvm.intr.invariant.end",
+        result_type=None,
+        operands=[start, ptr],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_InvariantStartOp(
+    *,
+    size: int,
+    ptr: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = LLVMPointerType(0)
+    all_props = []
+    all_props.append(('size', IntegerAttr.make(IntegerType.signless(64), size)))
+    return add_operation(
+        name="llvm.intr.invariant.start",
+        result_type=res_type,
+        operands=[ptr],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_IsConstantOp(
+    *,
+    val: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = IntegerType.signless(1)
+    all_props = []
+    return add_operation(
+        name="llvm.intr.is.constant",
+        result_type=res_type,
+        operands=[val],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_IsFPClass(
+    *,
+    res_type: Type,
+    in_: Value,
+    bit: int,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('bit', IntegerAttr.make(IntegerType.signless(32), bit)))
+    return add_operation(
+        name="llvm.intr.is.fpclass",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_LaunderInvariantGroupOp(
+    *,
+    ptr: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = ptr.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.launder.invariant.group",
+        result_type=res_type,
+        operands=[ptr],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_LifetimeEndOp(
+    *,
+    ptr: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.lifetime.end",
+        result_type=None,
+        operands=[ptr],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_LifetimeStartOp(
+    *,
+    ptr: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.lifetime.start",
+        result_type=None,
+        operands=[ptr],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_LlrintOp(
+    *,
+    res_type: Type,
+    val: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.llrint",
+        result_type=res_type,
+        operands=[val],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_LlroundOp(
+    *,
+    res_type: Type,
+    val: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.llround",
+        result_type=res_type,
+        operands=[val],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_LoadExpOp(
+    *,
+    res_type: Type,
+    val: Value,
+    power: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.ldexp",
+        result_type=res_type,
+        operands=[val, power],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_Log2Op(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.log2",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_Log10Op(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.log10",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_LogOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.log",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_LrintOp(
+    *,
+    res_type: Type,
+    val: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.lrint",
+        result_type=res_type,
+        operands=[val],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_LroundOp(
+    *,
+    res_type: Type,
+    val: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.lround",
+        result_type=res_type,
+        operands=[val],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MaskedLoadOp(
+    *,
+    res_type: VectorType,
+    data: Value,
+    mask: Value,
+    pass_thru: Optional[Value] = None,
+    alignment: int,
+    nontemporal: bool = False,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('alignment', IntegerAttr.make(IntegerType.signless(32), alignment)))
+    if nontemporal:
+        all_props.append(('nontemporal', UnitAttr()))
+    return add_operation(
+        name="llvm.intr.masked.load",
+        result_type=res_type,
+        operands=[data, mask, *([] if pass_thru is None else [pass_thru])],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MaskedStoreOp(
+    *,
+    value: Value,
+    data: Value,
+    mask: Value,
+    alignment: int,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('alignment', IntegerAttr.make(IntegerType.signless(32), alignment)))
+    return add_operation(
+        name="llvm.intr.masked.store",
+        result_type=None,
+        operands=[value, data, mask],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MatrixColumnMajorLoadOp(
+    *,
+    res_type: VectorType,
+    data: Value,
+    stride: Value,
+    isVolatile: bool,
+    rows: int,
+    columns: int,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('isVolatile', IntegerAttr.make(IntegerType.signless(1), int(isVolatile))))
+    all_props.append(('rows', IntegerAttr.make(IntegerType.signless(32), rows)))
+    all_props.append(('columns', IntegerAttr.make(IntegerType.signless(32), columns)))
+    return add_operation(
+        name="llvm.intr.matrix.column.major.load",
+        result_type=res_type,
+        operands=[data, stride],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MatrixColumnMajorStoreOp(
+    *,
+    matrix: Value,
+    data: Value,
+    stride: Value,
+    isVolatile: bool,
+    rows: int,
+    columns: int,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('isVolatile', IntegerAttr.make(IntegerType.signless(1), int(isVolatile))))
+    all_props.append(('rows', IntegerAttr.make(IntegerType.signless(32), rows)))
+    all_props.append(('columns', IntegerAttr.make(IntegerType.signless(32), columns)))
+    return add_operation(
+        name="llvm.intr.matrix.column.major.store",
+        result_type=None,
+        operands=[matrix, data, stride],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MatrixMultiplyOp(
+    *,
+    res_type: VectorType,
+    lhs: Value,
+    rhs: Value,
+    lhs_rows: int,
+    lhs_columns: int,
+    rhs_columns: int,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('lhs_rows', IntegerAttr.make(IntegerType.signless(32), lhs_rows)))
+    all_props.append(('lhs_columns', IntegerAttr.make(IntegerType.signless(32), lhs_columns)))
+    all_props.append(('rhs_columns', IntegerAttr.make(IntegerType.signless(32), rhs_columns)))
+    return add_operation(
+        name="llvm.intr.matrix.multiply",
+        result_type=res_type,
+        operands=[lhs, rhs],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MatrixTransposeOp(
+    *,
+    res_type: VectorType,
+    matrix: Value,
+    rows: int,
+    columns: int,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('rows', IntegerAttr.make(IntegerType.signless(32), rows)))
+    all_props.append(('columns', IntegerAttr.make(IntegerType.signless(32), columns)))
+    return add_operation(
+        name="llvm.intr.matrix.transpose",
+        result_type=res_type,
+        operands=[matrix],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MaxNumOp(
+    *,
+    a: Value,
+    b: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.maxnum",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MaximumOp(
+    *,
+    a: Value,
+    b: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.maximum",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MemcpyInlineOp(
+    *,
+    dst: Value,
+    src: Value,
+    len: IntegerAttr,
+    isVolatile: bool,
+    access_groups: Optional[ArrayAttr] = None,
+    alias_scopes: Optional[ArrayAttr] = None,
+    noalias_scopes: Optional[ArrayAttr] = None,
+    tbaa: Optional[ArrayAttr] = None,
+    arg_attrs: Optional[ArrayAttr] = None,
+    res_attrs: Optional[ArrayAttr] = None,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('len', len))
+    all_props.append(('isVolatile', IntegerAttr.make(IntegerType.signless(1), int(isVolatile))))
+    if access_groups is not None:
+        all_props.append(('access_groups', access_groups))
+    if alias_scopes is not None:
+        all_props.append(('alias_scopes', alias_scopes))
+    if noalias_scopes is not None:
+        all_props.append(('noalias_scopes', noalias_scopes))
+    if tbaa is not None:
+        all_props.append(('tbaa', tbaa))
+    if arg_attrs is not None:
+        all_props.append(('arg_attrs', arg_attrs))
+    if res_attrs is not None:
+        all_props.append(('res_attrs', res_attrs))
+    return add_operation(
+        name="llvm.intr.memcpy.inline",
+        result_type=None,
+        operands=[dst, src],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MemcpyOp(
+    *,
+    dst: Value,
+    src: Value,
+    len: Value,
+    isVolatile: bool,
+    access_groups: Optional[ArrayAttr] = None,
+    alias_scopes: Optional[ArrayAttr] = None,
+    noalias_scopes: Optional[ArrayAttr] = None,
+    tbaa: Optional[ArrayAttr] = None,
+    arg_attrs: Optional[ArrayAttr] = None,
+    res_attrs: Optional[ArrayAttr] = None,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('isVolatile', IntegerAttr.make(IntegerType.signless(1), int(isVolatile))))
+    if access_groups is not None:
+        all_props.append(('access_groups', access_groups))
+    if alias_scopes is not None:
+        all_props.append(('alias_scopes', alias_scopes))
+    if noalias_scopes is not None:
+        all_props.append(('noalias_scopes', noalias_scopes))
+    if tbaa is not None:
+        all_props.append(('tbaa', tbaa))
+    if arg_attrs is not None:
+        all_props.append(('arg_attrs', arg_attrs))
+    if res_attrs is not None:
+        all_props.append(('res_attrs', res_attrs))
+    return add_operation(
+        name="llvm.intr.memcpy",
+        result_type=None,
+        operands=[dst, src, len],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MemmoveOp(
+    *,
+    dst: Value,
+    src: Value,
+    len: Value,
+    isVolatile: bool,
+    access_groups: Optional[ArrayAttr] = None,
+    alias_scopes: Optional[ArrayAttr] = None,
+    noalias_scopes: Optional[ArrayAttr] = None,
+    tbaa: Optional[ArrayAttr] = None,
+    arg_attrs: Optional[ArrayAttr] = None,
+    res_attrs: Optional[ArrayAttr] = None,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('isVolatile', IntegerAttr.make(IntegerType.signless(1), int(isVolatile))))
+    if access_groups is not None:
+        all_props.append(('access_groups', access_groups))
+    if alias_scopes is not None:
+        all_props.append(('alias_scopes', alias_scopes))
+    if noalias_scopes is not None:
+        all_props.append(('noalias_scopes', noalias_scopes))
+    if tbaa is not None:
+        all_props.append(('tbaa', tbaa))
+    if arg_attrs is not None:
+        all_props.append(('arg_attrs', arg_attrs))
+    if res_attrs is not None:
+        all_props.append(('res_attrs', res_attrs))
+    return add_operation(
+        name="llvm.intr.memmove",
+        result_type=None,
+        operands=[dst, src, len],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MemsetInlineOp(
+    *,
+    dst: Value,
+    val: Value,
+    len: IntegerAttr,
+    isVolatile: bool,
+    access_groups: Optional[ArrayAttr] = None,
+    alias_scopes: Optional[ArrayAttr] = None,
+    noalias_scopes: Optional[ArrayAttr] = None,
+    tbaa: Optional[ArrayAttr] = None,
+    arg_attrs: Optional[ArrayAttr] = None,
+    res_attrs: Optional[ArrayAttr] = None,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('len', len))
+    all_props.append(('isVolatile', IntegerAttr.make(IntegerType.signless(1), int(isVolatile))))
+    if access_groups is not None:
+        all_props.append(('access_groups', access_groups))
+    if alias_scopes is not None:
+        all_props.append(('alias_scopes', alias_scopes))
+    if noalias_scopes is not None:
+        all_props.append(('noalias_scopes', noalias_scopes))
+    if tbaa is not None:
+        all_props.append(('tbaa', tbaa))
+    if arg_attrs is not None:
+        all_props.append(('arg_attrs', arg_attrs))
+    if res_attrs is not None:
+        all_props.append(('res_attrs', res_attrs))
+    return add_operation(
+        name="llvm.intr.memset.inline",
+        result_type=None,
+        operands=[dst, val],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MemsetOp(
+    *,
+    dst: Value,
+    val: Value,
+    len: Value,
+    isVolatile: bool,
+    access_groups: Optional[ArrayAttr] = None,
+    alias_scopes: Optional[ArrayAttr] = None,
+    noalias_scopes: Optional[ArrayAttr] = None,
+    tbaa: Optional[ArrayAttr] = None,
+    arg_attrs: Optional[ArrayAttr] = None,
+    res_attrs: Optional[ArrayAttr] = None,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('isVolatile', IntegerAttr.make(IntegerType.signless(1), int(isVolatile))))
+    if access_groups is not None:
+        all_props.append(('access_groups', access_groups))
+    if alias_scopes is not None:
+        all_props.append(('alias_scopes', alias_scopes))
+    if noalias_scopes is not None:
+        all_props.append(('noalias_scopes', noalias_scopes))
+    if tbaa is not None:
+        all_props.append(('tbaa', tbaa))
+    if arg_attrs is not None:
+        all_props.append(('arg_attrs', arg_attrs))
+    if res_attrs is not None:
+        all_props.append(('res_attrs', res_attrs))
+    return add_operation(
+        name="llvm.intr.memset",
+        result_type=None,
+        operands=[dst, val, len],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MinNumOp(
+    *,
+    a: Value,
+    b: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.minnum",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_MinimumOp(
+    *,
+    a: Value,
+    b: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.minimum",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_NearbyintOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.nearbyint",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_NoAliasScopeDeclOp(
+    *,
+    scope: AliasScopeAttr,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('scope', scope))
+    return add_operation(
+        name="llvm.intr.experimental.noalias.scope.decl",
+        result_type=None,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_PowIOp(
+    *,
+    res_type: Type,
+    val: Value,
+    power: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.powi",
+        result_type=res_type,
+        operands=[val, power],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_PowOp(
+    *,
+    a: Value,
+    b: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.pow",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_Prefetch(
+    *,
+    addr: Value,
+    rw: int,
+    hint: int,
+    cache: int,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('rw', IntegerAttr.make(IntegerType.signless(32), rw)))
+    all_props.append(('hint', IntegerAttr.make(IntegerType.signless(32), hint)))
+    all_props.append(('cache', IntegerAttr.make(IntegerType.signless(32), cache)))
+    return add_operation(
+        name="llvm.intr.prefetch",
+        result_type=None,
+        operands=[addr],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_PtrAnnotation(
+    *,
+    ptr: Value,
+    annotation: Value,
+    fileName: Value,
+    line: Value,
+    attr: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = ptr.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.ptr.annotation",
+        result_type=res_type,
+        operands=[ptr, annotation, fileName, line, attr],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_PtrMaskOp(
+    *,
+    ptr: Value,
+    mask: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = ptr.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.ptrmask",
+        result_type=res_type,
+        operands=[ptr, mask],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_RintOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.rint",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_RoundEvenOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.roundeven",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_RoundOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.round",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SAddSat(
+    *,
+    a: Value,
+    b: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.sadd.sat",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SAddWithOverflowOp(
+    *,
+    res_type: Type,
+    operand_0: Value,
+    operand_1: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.sadd.with.overflow",
+        result_type=res_type,
+        operands=[operand_0, operand_1],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SCmpOp(
+    *,
+    res_type: Type,
+    a: Value,
+    b: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.scmp",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SMaxOp(
+    *,
+    a: Value,
+    b: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.smax",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SMinOp(
+    *,
+    a: Value,
+    b: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.smin",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SMulWithOverflowOp(
+    *,
+    res_type: Type,
+    operand_0: Value,
+    operand_1: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.smul.with.overflow",
+        result_type=res_type,
+        operands=[operand_0, operand_1],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SSACopyOp(
+    *,
+    operand: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = operand.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.ssa.copy",
+        result_type=res_type,
+        operands=[operand],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SSHLSat(
+    *,
+    a: Value,
+    b: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.sshl.sat",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SSubSat(
+    *,
+    a: Value,
+    b: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.ssub.sat",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SSubWithOverflowOp(
+    *,
+    res_type: Type,
+    operand_0: Value,
+    operand_1: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.ssub.with.overflow",
+        result_type=res_type,
+        operands=[operand_0, operand_1],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SinOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.sin",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SincosOp(
+    *,
+    res_type: Type,
+    val: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.sincos",
+        result_type=res_type,
+        operands=[val],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SinhOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.sinh",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_SqrtOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.sqrt",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_StackRestoreOp(
+    *,
+    ptr: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.stackrestore",
+        result_type=None,
+        operands=[ptr],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_StackSaveOp(
+    *,
+    res_type: Type,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.stacksave",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_StepVectorOp(
+    *,
+    res_type: VectorType,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.stepvector",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_StripInvariantGroupOp(
+    *,
+    ptr: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = ptr.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.strip.invariant.group",
+        result_type=res_type,
+        operands=[ptr],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_TanOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.tan",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_TanhOp(
+    *,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = in_.type
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.tanh",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ThreadlocalAddressOp(
+    *,
+    res_type: Type,
+    global_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.threadlocal.address",
+        result_type=res_type,
+        operands=[global_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_Trap(
+    *,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.trap",
+        result_type=None,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_UAddSat(
+    *,
+    a: Value,
+    b: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.uadd.sat",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_UAddWithOverflowOp(
+    *,
+    res_type: Type,
+    operand_0: Value,
+    operand_1: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.uadd.with.overflow",
+        result_type=res_type,
+        operands=[operand_0, operand_1],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_UBSanTrap(
+    *,
+    failureKind: int,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('failureKind', IntegerAttr.make(IntegerType.signless(8), failureKind)))
+    return add_operation(
+        name="llvm.intr.ubsantrap",
+        result_type=None,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_UCmpOp(
+    *,
+    res_type: Type,
+    a: Value,
+    b: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.ucmp",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_UMaxOp(
+    *,
+    a: Value,
+    b: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.umax",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_UMinOp(
+    *,
+    a: Value,
+    b: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.umin",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_UMulWithOverflowOp(
+    *,
+    res_type: Type,
+    operand_0: Value,
+    operand_1: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.umul.with.overflow",
+        result_type=res_type,
+        operands=[operand_0, operand_1],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_USHLSat(
+    *,
+    a: Value,
+    b: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.ushl.sat",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_USubSat(
+    *,
+    a: Value,
+    b: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = a.type
+    all_props = []
+    return add_operation(
+        name="llvm.intr.usub.sat",
+        result_type=res_type,
+        operands=[a, b],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_USubWithOverflowOp(
+    *,
+    res_type: Type,
+    operand_0: Value,
+    operand_1: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.usub.with.overflow",
+        result_type=res_type,
+        operands=[operand_0, operand_1],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPAShrOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.ashr",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPAddOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.add",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPAndOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.and",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPFAddOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.fadd",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPFDivOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.fdiv",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPFMulAddOp(
+    *,
+    res_type: Type,
+    op1: Value,
+    op2: Value,
+    op3: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.fmuladd",
+        result_type=res_type,
+        operands=[op1, op2, op3, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPFMulOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.fmul",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPFNegOp(
+    *,
+    res_type: Type,
+    op: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.fneg",
+        result_type=res_type,
+        operands=[op, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPFPExtOp(
+    *,
+    res_type: Type,
+    src: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.fpext",
+        result_type=res_type,
+        operands=[src, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPFPToSIOp(
+    *,
+    res_type: Type,
+    src: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.fptosi",
+        result_type=res_type,
+        operands=[src, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPFPToUIOp(
+    *,
+    res_type: Type,
+    src: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.fptoui",
+        result_type=res_type,
+        operands=[src, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPFPTruncOp(
+    *,
+    res_type: Type,
+    src: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.fptrunc",
+        result_type=res_type,
+        operands=[src, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPFRemOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.frem",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPFSubOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.fsub",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPFmaOp(
+    *,
+    res_type: Type,
+    op1: Value,
+    op2: Value,
+    op3: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.fma",
+        result_type=res_type,
+        operands=[op1, op2, op3, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPIntToPtrOp(
+    *,
+    res_type: Type,
+    src: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.inttoptr",
+        result_type=res_type,
+        operands=[src, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPLShrOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.lshr",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPLoadOp(
+    *,
+    res_type: Type,
+    ptr: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.load",
+        result_type=res_type,
+        operands=[ptr, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPMergeMinOp(
+    *,
+    res_type: Type,
+    cond: Value,
+    true_val: Value,
+    false_val: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.merge",
+        result_type=res_type,
+        operands=[cond, true_val, false_val, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPMulOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.mul",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPOrOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.or",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPPtrToIntOp(
+    *,
+    res_type: Type,
+    src: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.ptrtoint",
+        result_type=res_type,
+        operands=[src, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPReduceAddOp(
+    *,
+    res_type: Type,
+    satrt_value: Value,
+    val: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.reduce.add",
+        result_type=res_type,
+        operands=[satrt_value, val, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPReduceAndOp(
+    *,
+    res_type: Type,
+    satrt_value: Value,
+    val: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.reduce.and",
+        result_type=res_type,
+        operands=[satrt_value, val, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPReduceFAddOp(
+    *,
+    res_type: Type,
+    satrt_value: Value,
+    val: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.reduce.fadd",
+        result_type=res_type,
+        operands=[satrt_value, val, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPReduceFMaxOp(
+    *,
+    res_type: Type,
+    satrt_value: Value,
+    val: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.reduce.fmax",
+        result_type=res_type,
+        operands=[satrt_value, val, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPReduceFMinOp(
+    *,
+    res_type: Type,
+    satrt_value: Value,
+    val: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.reduce.fmin",
+        result_type=res_type,
+        operands=[satrt_value, val, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPReduceFMulOp(
+    *,
+    res_type: Type,
+    satrt_value: Value,
+    val: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.reduce.fmul",
+        result_type=res_type,
+        operands=[satrt_value, val, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPReduceMulOp(
+    *,
+    res_type: Type,
+    satrt_value: Value,
+    val: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.reduce.mul",
+        result_type=res_type,
+        operands=[satrt_value, val, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPReduceOrOp(
+    *,
+    res_type: Type,
+    satrt_value: Value,
+    val: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.reduce.or",
+        result_type=res_type,
+        operands=[satrt_value, val, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPReduceSMaxOp(
+    *,
+    res_type: Type,
+    satrt_value: Value,
+    val: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.reduce.smax",
+        result_type=res_type,
+        operands=[satrt_value, val, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPReduceSMinOp(
+    *,
+    res_type: Type,
+    satrt_value: Value,
+    val: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.reduce.smin",
+        result_type=res_type,
+        operands=[satrt_value, val, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPReduceUMaxOp(
+    *,
+    res_type: Type,
+    satrt_value: Value,
+    val: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.reduce.umax",
+        result_type=res_type,
+        operands=[satrt_value, val, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPReduceUMinOp(
+    *,
+    res_type: Type,
+    satrt_value: Value,
+    val: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.reduce.umin",
+        result_type=res_type,
+        operands=[satrt_value, val, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPReduceXorOp(
+    *,
+    res_type: Type,
+    satrt_value: Value,
+    val: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.reduce.xor",
+        result_type=res_type,
+        operands=[satrt_value, val, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPSDivOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.sdiv",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPSExtOp(
+    *,
+    res_type: Type,
+    src: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.sext",
+        result_type=res_type,
+        operands=[src, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPSIToFPOp(
+    *,
+    res_type: Type,
+    src: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.sitofp",
+        result_type=res_type,
+        operands=[src, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPSMaxOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.smax",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPSMinOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.smin",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPSRemOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.srem",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPSelectMinOp(
+    *,
+    res_type: Type,
+    cond: Value,
+    true_val: Value,
+    false_val: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.select",
+        result_type=res_type,
+        operands=[cond, true_val, false_val, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPShlOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.shl",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPStoreOp(
+    *,
+    val: Value,
+    ptr: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.store",
+        result_type=None,
+        operands=[val, ptr, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPStridedLoadOp(
+    *,
+    res_type: Type,
+    ptr: Value,
+    stride: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.experimental.vp.strided.load",
+        result_type=res_type,
+        operands=[ptr, stride, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPStridedStoreOp(
+    *,
+    val: Value,
+    ptr: Value,
+    stride: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.experimental.vp.strided.store",
+        result_type=None,
+        operands=[val, ptr, stride, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPSubOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.sub",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPTruncOp(
+    *,
+    res_type: Type,
+    src: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.trunc",
+        result_type=res_type,
+        operands=[src, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPUDivOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.udiv",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPUIToFPOp(
+    *,
+    res_type: Type,
+    src: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.uitofp",
+        result_type=res_type,
+        operands=[src, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPUMaxOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.umax",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPUMinOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.umin",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPURemOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.urem",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPXorOp(
+    *,
+    res_type: Type,
+    lhs: Value,
+    rhs: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.xor",
+        result_type=res_type,
+        operands=[lhs, rhs, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VPZExtOp(
+    *,
+    res_type: Type,
+    src: Value,
+    mask: Value,
+    evl: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vp.zext",
+        result_type=res_type,
+        operands=[src, mask, evl],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VaCopyOp(
+    *,
+    dest_list: Value,
+    src_list: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vacopy",
+        result_type=None,
+        operands=[dest_list, src_list],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VaEndOp(
+    *,
+    arg_list: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vaend",
+        result_type=None,
+        operands=[arg_list],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VaStartOp(
+    *,
+    arg_list: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vastart",
+        result_type=None,
+        operands=[arg_list],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_VarAnnotation(
+    *,
+    val: Value,
+    annotation: Value,
+    fileName: Value,
+    line: Value,
+    attr: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.var.annotation",
+        result_type=None,
+        operands=[val, annotation, fileName, line, attr],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_masked_compressstore(
+    *,
+    value: Value,
+    ptr: Value,
+    mask: Value,
+    arg_attrs: Optional[ArrayAttr] = None,
+    res_attrs: Optional[ArrayAttr] = None,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    if arg_attrs is not None:
+        all_props.append(('arg_attrs', arg_attrs))
+    if res_attrs is not None:
+        all_props.append(('res_attrs', res_attrs))
+    return add_operation(
+        name="llvm.intr.masked.compressstore",
+        result_type=None,
+        operands=[value, ptr, mask],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_masked_expandload(
+    *,
+    res_type: Type,
+    ptr: Value,
+    mask: Value,
+    passthru: Value,
+    arg_attrs: Optional[ArrayAttr] = None,
+    res_attrs: Optional[ArrayAttr] = None,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    if arg_attrs is not None:
+        all_props.append(('arg_attrs', arg_attrs))
+    if res_attrs is not None:
+        all_props.append(('res_attrs', res_attrs))
+    return add_operation(
+        name="llvm.intr.masked.expandload",
+        result_type=res_type,
+        operands=[ptr, mask, passthru],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_masked_gather(
+    *,
+    res_type: VectorType,
+    ptrs: Value,
+    mask: Value,
+    pass_thru: Sequence[Value],
+    alignment: int,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('alignment', IntegerAttr.make(IntegerType.signless(32), alignment)))
+    return add_operation(
+        name="llvm.intr.masked.gather",
+        result_type=res_type,
+        operands=[ptrs, mask, *pass_thru],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_masked_scatter(
+    *,
+    value: Value,
+    ptrs: Value,
+    mask: Value,
+    alignment: int,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    all_props.append(('alignment', IntegerAttr.make(IntegerType.signless(32), alignment)))
+    return add_operation(
+        name="llvm.intr.masked.scatter",
+        result_type=None,
+        operands=[value, ptrs, mask],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_deinterleave2(
+    *,
+    res_type: Type,
+    vec: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vector.deinterleave2",
+        result_type=res_type,
+        operands=[vec],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_extract(
+    *,
+    res_type: VectorType,
+    srcvec: Value,
+    pos: int,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('pos', IntegerAttr.make(IntegerType.signless(64), pos)))
+    return add_operation(
+        name="llvm.intr.vector.extract",
+        result_type=res_type,
+        operands=[srcvec],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_insert(
+    *,
+    dstvec: Value,
+    srcvec: Value,
+    pos: int,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = dstvec.type
+    all_props = []
+    all_props.append(('pos', IntegerAttr.make(IntegerType.signless(64), pos)))
+    return add_operation(
+        name="llvm.intr.vector.insert",
+        result_type=res_type,
+        operands=[dstvec, srcvec],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_interleave2(
+    *,
+    res_type: Type,
+    vec1: Value,
+    vec2: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vector.interleave2",
+        result_type=res_type,
+        operands=[vec1, vec2],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_add(
+    *,
+    res_type: Type,
+    in_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vector.reduce.add",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_and(
+    *,
+    res_type: Type,
+    in_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vector.reduce.and",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_fadd(
+    *,
+    res_type: Type,
+    start_value: Value,
+    input: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.vector.reduce.fadd",
+        result_type=res_type,
+        operands=[start_value, input],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_fmax(
+    *,
+    res_type: Type,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.vector.reduce.fmax",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_fmaximum(
+    *,
+    res_type: Type,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.vector.reduce.fmaximum",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_fmin(
+    *,
+    res_type: Type,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.vector.reduce.fmin",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_fminimum(
+    *,
+    res_type: Type,
+    in_: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.vector.reduce.fminimum",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_fmul(
+    *,
+    res_type: Type,
+    start_value: Value,
+    input: Value,
+    fastmathFlags: FastmathFlags = FastmathFlags(0),
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
+    return add_operation(
+        name="llvm.intr.vector.reduce.fmul",
+        result_type=res_type,
+        operands=[start_value, input],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_mul(
+    *,
+    res_type: Type,
+    in_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vector.reduce.mul",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_or(
+    *,
+    res_type: Type,
+    in_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vector.reduce.or",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_smax(
+    *,
+    res_type: Type,
+    in_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vector.reduce.smax",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_smin(
+    *,
+    res_type: Type,
+    in_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vector.reduce.smin",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_umax(
+    *,
+    res_type: Type,
+    in_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vector.reduce.umax",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_umin(
+    *,
+    res_type: Type,
+    in_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vector.reduce.umin",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vector_reduce_xor(
+    *,
+    res_type: Type,
+    in_: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vector.reduce.xor",
+        result_type=res_type,
+        operands=[in_],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_vscale(
+    *,
+    res_type: Type,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    return add_operation(
+        name="llvm.intr.vscale",
         result_type=res_type,
         operands=[],
         properties=all_props,

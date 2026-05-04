@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) <2025> NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # SPDX-License-Identifier: Apache-2.0
+import enum
 import inspect
 import dataclasses
 from dataclasses import dataclass
@@ -673,6 +674,23 @@ class EnumTy(Type):
 
     def __str__(self) -> str:
         return f"Enum[{self.enum_ty.__name__}]"
+
+
+class ContextManagerLifecycle(enum.IntEnum):
+    FRESH = 0
+    ENTERED = 1
+    EXITED = 2
+
+
+@dataclass(eq=False)
+class ContextManagerState:
+    exit_callback: Callable[[], None] = lambda: None
+    lifecycle: ContextManagerLifecycle = ContextManagerLifecycle.FRESH
+
+
+class ContextManagerTy(Type):
+    def get_context_manager_state(self) -> ContextManagerState:
+        raise NotImplementedError()
 
 
 # Placeholder object for use as an inspect.Parameter's default value inside

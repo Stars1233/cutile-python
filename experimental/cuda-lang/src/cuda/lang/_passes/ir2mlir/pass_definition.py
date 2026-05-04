@@ -17,6 +17,7 @@ import cuda.lang._ir.type as ir_type
 from cuda.lang.compilation import KernelSignature
 import cuda.lang._datatype as datatype
 from cuda.lang._exception import TileTypeError
+from cuda.tile._ir.type import TileTy, PointerTy
 from .type_conversion import (
     ir_type_to_mlir_type,
     mlir_constant_of_type,
@@ -699,49 +700,50 @@ class IR2MLIR:
         return []
 
     @lower_operation.register
-    def lower_memory_allocation(
-        self, operation: ops.MemoryAllocation
+    def lower_alloc_local_memory(
+        self, operation: ops.AllocLocalMemory
     ) -> Sequence[mlir.Value]:
-        match operation.memory_space:
-            case ops.MemorySpace.SHARED:
-                return self.lower_static_shared_memory_allocation(operation)
-            case ops.MemorySpace.GENERIC:
-                return self.lower_local_memory_allocation(operation)
-            case _:
-                raise NotImplementedError(f"Memory space: {operation.memory_space}")
+        result_ty = operation.result_var.get_type()
+        assert isinstance(result_ty, TileTy)
+        assert result_ty.shape == ()
+        assert isinstance(result_ty.dtype, PointerTy)
 
-    def lower_local_memory_allocation(
-        self, operation: ops.MemoryAllocation
-    ) -> Sequence[mlir.Value]:
-        concrete_result_type = mlir.llvm.LLVMPointerType(
-            addressSpace=int(operation.memory_space.value)
-        )
-        elem_type = ir_type_to_mlir_type(operation.element_type)
-        numel = 1
-        for extent in operation.shape:
-            numel *= extent
-        array_size = mlir_constant_of_type(T.i64(), numel)
-        alloc = mlir.llvm.add_AllocaOp(
-            res_type=concrete_result_type,
-            arraySize=array_size,
-            elem_type=elem_type,
-            alignment=operation.alignment,
-        )
-        return [alloc]
+        result_ty_mlir = ir_type_to_mlir_type(result_ty)
+        elem_type_mlir = ir_type_to_mlir_type(result_ty.dtype.pointee_type)
 
-    def lower_static_shared_memory_allocation(
-        self, operation: ops.MemoryAllocation
+        with self.func_region.blocks[0].prepend_here():
+            array_size = mlir_constant_of_type(T.i64(), operation.count)
+            ptr = mlir.llvm.add_AllocaOp(
+                res_type=result_ty_mlir,
+                arraySize=array_size,
+                elem_type=elem_type_mlir,
+                alignment=operation.alignment,
+            )
+        # It would be nice to emit llvm.intr.lifetime_start() here but MLIR's region-simplify
+        # pass doesn't respect it and produces invalid IR as a result.
+        # mlir.llvm.add_LifetimeStartOp(ptr=ptr)
+        return [ptr]
+
+    @lower_operation.register
+    def lower_dealloc_local_memory(self, operation: ops.DeallocLocalMemory):
+        # It would be nice to emit llvm.intr.lifetime_end() here but MLIR's region-simplify
+        # pass doesn't respect it and produces invalid IR as a result.
+        # mlir.llvm.add_LifetimeEndOp(ptr=self.get_var(operation.ptr))
+        return ()
+
+    @lower_operation.register
+    def lower_alloc_static_shared_memory(
+        self, operation: ops.AllocStaticSharedMemory
     ) -> Sequence[mlir.Value]:
-        concrete_result_type = mlir.llvm.LLVMPointerType(
-            addressSpace=int(operation.memory_space.value)
-        )
-        elem_type = ir_type_to_mlir_type(operation.element_type)
-        numel = 1
-        for extent in operation.shape:
-            numel *= extent
+        result_ty = operation.result_var.get_type()
+        assert isinstance(result_ty, TileTy)
+        assert result_ty.shape == ()
+        assert isinstance(result_ty.dtype, PointerTy)
+
+        elem_type = ir_type_to_mlir_type(result_ty.dtype.pointee_type)
         global_type = mlir.llvm.LLVMArrayType(
             elementType=elem_type,
-            numElements=numel,
+            numElements=operation.count,
         )
         sym = f"static_shared_memory_{operation.result_var.name}"
         with self.gpu_module_op.regions[0].blocks[0].prepend_here():
@@ -749,13 +751,13 @@ class IR2MLIR:
                 global_type=global_type,
                 sym_name=sym,
                 linkage=mlir.llvm.Linkage.Internal,
-                addr_space=int(operation.memory_space.value),
+                addr_space=ir_type.MemorySpace.SHARED._value_,
                 visibility_=mlir.llvm.Visibility.Default,
                 initializer=mlir.Region(),
                 alignment=operation.alignment,
             )
         base = mlir.llvm.add_AddressOfOp(
-            res_type=concrete_result_type,
+            res_type=ir_type_to_mlir_type(result_ty),
             global_name=sym,
         )
         return [base]

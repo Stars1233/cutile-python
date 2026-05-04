@@ -1,3 +1,4 @@
+
 # SPDX-FileCopyrightText: Copyright (c) <2025> NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # SPDX-License-Identifier: Apache-2.0
@@ -36,7 +37,7 @@ See `the official libdevice documentation here <LIBDEVICE_>`_.
 
 from cuda.lang._datatype import float32, float64, int32
 from cuda.lang._execution import function
-from .core_api import local_array, address_space_cast, MemorySpace
+from .core_api import local_array
 
 from ._libdevice import (
     abs,
@@ -668,110 +669,89 @@ from ._libdevice import (
 @function
 def sincosf(x: float32) -> tuple[float32, float32]:
     """Compute both ``sin(x)`` and ``cos(x)`` and return them as a tuple."""
-    sinx = local_array(shape=(1,), dtype=float32)
-    p1 = address_space_cast(sinx.get_base_pointer(), MemorySpace.GENERIC)
-    cosx = local_array(shape=(1,), dtype=float32)
-    p2 = address_space_cast(cosx.get_base_pointer(), MemorySpace.GENERIC)
-    __nv_sincosf(x, p1, p2)
-    return sinx[0], cosx[0]
+    with local_array(shape=2, dtype=float32) as arr:
+        __nv_sincosf(x, arr.get_element_pointer(0), arr.get_element_pointer(1))
+        return arr[0], arr[1]
 
 
 @function
 def sincos(x: float64) -> tuple[float64, float64]:
     """Compute both ``sin(x)`` and ``cos(x)`` and return them as a tuple."""
-    sinx = local_array(shape=(1,), dtype=float64)
-    cosx = local_array(shape=(1,), dtype=float64)
-    p1 = address_space_cast(sinx.get_base_pointer(), MemorySpace.GENERIC)
-    p2 = address_space_cast(cosx.get_base_pointer(), MemorySpace.GENERIC)
-    __nv_sincos(x, p1, p2)
-    return sinx[0], cosx[0]
+    with local_array(shape=2, dtype=float64) as arr:
+        __nv_sincos(x, arr.get_element_pointer(0), arr.get_element_pointer(1))
+        return arr[0], arr[1]
 
 
 @function
 def sincospif(x: float32) -> tuple[float32, float32]:
     """Compute both ``sin(pi * x)`` and ``cos(pi * x)`` and return them as a tuple."""
-    sinx = local_array(shape=(1,), dtype=float32)
-    cosx = local_array(shape=(1,), dtype=float32)
-    p1 = address_space_cast(sinx.get_base_pointer(), MemorySpace.GENERIC)
-    p2 = address_space_cast(cosx.get_base_pointer(), MemorySpace.GENERIC)
-    __nv_sincospif(x, p1, p2)
-    return sinx[0], cosx[0]
+    with local_array(shape=2, dtype=float32) as arr:
+        __nv_sincospif(x, arr.get_element_pointer(0), arr.get_element_pointer(1))
+        return arr[0], arr[1]
 
 
 @function
 def sincospi(x: float64) -> tuple[float64, float64]:
     """Compute both ``sin(pi * x)`` and ``cos(pi * x)`` and return them as a tuple."""
-    sinx = local_array(shape=(1,), dtype=float64)
-    cosx = local_array(shape=(1,), dtype=float64)
-    p1 = address_space_cast(sinx.get_base_pointer(), MemorySpace.GENERIC)
-    p2 = address_space_cast(cosx.get_base_pointer(), MemorySpace.GENERIC)
-    __nv_sincospi(x, p1, p2)
-    return sinx[0], cosx[0]
+    with local_array(shape=2, dtype=float64) as arr:
+        __nv_sincospi(x, arr.get_element_pointer(0), arr.get_element_pointer(1))
+        return arr[0], arr[1]
 
 
 @function
 def fast_sincosf(x: float32) -> tuple[float32, float32]:
     """Compute both ``sin(x)`` and ``cos(x)`` with the fast libdevice variant."""
-    sinx = local_array(shape=(1,), dtype=float32)
-    cosx = local_array(shape=(1,), dtype=float32)
-    p1 = address_space_cast(sinx.get_base_pointer(), MemorySpace.GENERIC)
-    p2 = address_space_cast(cosx.get_base_pointer(), MemorySpace.GENERIC)
-    __nv_fast_sincosf(x, p1, p2)
-    return sinx[0], cosx[0]
+    with local_array(shape=2, dtype=float32) as arr:
+        __nv_fast_sincosf(x, arr.get_element_pointer(0), arr.get_element_pointer(1))
+        return arr[0], arr[1]
 
 
 @function
 def frexpf(x: float32) -> tuple[float32, int32]:
     """Decompose ``x`` into a normalized fraction and an integral exponent."""
-    exp = local_array(shape=(1,), dtype=int32)
-    p = address_space_cast(exp.get_base_pointer(), MemorySpace.GENERIC)
-    frac = __nv_frexpf(x, p)
+    with local_array(shape=1, dtype=int32) as exp:
+        frac = __nv_frexpf(x, exp.get_element_pointer(0))
     return frac, exp[0]
 
 
 @function
 def frexp(x: float64) -> tuple[float64, int32]:
     """Decompose ``x`` into a normalized fraction and an integral exponent."""
-    exp = local_array(shape=(1,), dtype=int32)
-    p = address_space_cast(exp.get_base_pointer(), MemorySpace.GENERIC)
-    frac = __nv_frexp(x, p)
-    return frac, exp[0]
+    with local_array(shape=1, dtype=int32) as exp:
+        frac = __nv_frexp(x, exp.get_element_pointer(0))
+        return frac, exp[0]
 
 
 @function
 def modf(a: float64) -> tuple[float64, float64]:
     """Split ``a`` into its fractional and integral parts and return both."""
-    b = local_array(shape=(1,), dtype=float64)
-    p = address_space_cast(b.get_base_pointer(), MemorySpace.GENERIC)
-    c = __nv_modf(a, p)
-    return c, b[0]
+    with local_array(shape=1, dtype=float64) as b:
+        c = __nv_modf(a, b.get_element_pointer(0))
+        return c, b[0]
 
 
 @function
 def modff(a: float32) -> tuple[float32, float32]:
     """Split ``a`` into its fractional and integral parts and return both."""
-    b = local_array(shape=(1,), dtype=float32)
-    p = address_space_cast(b.get_base_pointer(), MemorySpace.GENERIC)
-    c = __nv_modff(a, p)
-    return c, b[0]
+    with local_array(shape=1, dtype=float32) as b:
+        c = __nv_modff(a, b.get_element_pointer(0))
+        return c, b[0]
 
 
 @function
 def remquo(x: float64, y: float64) -> tuple[float64, int32]:
     """Compute a floating-point remainder in the same way as the remainder() function."""
-    c = local_array(shape=(1,), dtype=int32)
-    p = address_space_cast(c.get_base_pointer(), MemorySpace.GENERIC)
-    z = __nv_remquo(x, y, p)
-    return z, c[0]
+    with local_array(shape=(1,), dtype=int32) as c:
+        z = __nv_remquo(x, y, c.get_element_pointer(0))
+        return z, c[0]
 
 
 @function
 def remquof(x: float32, y: float32) -> tuple[float32, int32]:
     """Compute a floating-point remainder in the same way as the remainder() function."""
-    c = local_array(shape=(1,), dtype=int32)
-    p = address_space_cast(c.get_base_pointer(), MemorySpace.GENERIC)
-    z = __nv_remquof(x, y, p)
-    return z, c[0]
+    with local_array(shape=1, dtype=int32) as c:
+        z = __nv_remquof(x, y, c.get_element_pointer(0))
+        return z, c[0]
 
 
 __all__ = (
