@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import TypeVar, Generic
+from typing import Literal, TypeVar, Generic
 
 from cuda.lang._execution import stub, function
 from cuda.tile._stub import (
@@ -12,15 +12,16 @@ from cuda.tile._stub import (
     static_assert,
     static_iter,
 )
+from cuda.tile._memory_model import MemoryOrder
 from cuda.lang._datatype import DType, MemorySpace
 from . import nvvm
 
 T = TypeVar("T")
 
 
-class LocalArrayContextManager:
+class LocalArrayContextManager(Generic[T]):
     @stub
-    def __enter__(self) -> "Array": ...
+    def __enter__(self) -> "Array[T]": ...
 
     @stub
     def __exit__(self, exc_type, exc_val, exc_tb): ...
@@ -74,7 +75,8 @@ class Pointer(Generic[T]):
         count: int | None = None,
         alignment: int | None = None,
         volatile: bool = False,
-    ) -> T:
+        ordering: MemoryOrder | None = None,
+    ) -> T | Vector[T]:
         '''
         Low-level API to read from memory.
 
@@ -91,15 +93,21 @@ class Pointer(Generic[T]):
             volatile: If True, the compiler will not modify the number of times
                 this load is performed nor the order of execution with respect
                 to other volatile operations.
+            ordering: When ordering is specified, the load is atomic.
+                Alignment must be explicitly specified on atomic loads.
+                Atomic loads require a pointee type with a bit width that
+                is a power of two greater than or equal to one byte.
         '''
 
     @stub
     def store(
         self,
-        value: T,
+        value: T | Vector[T],
         *,
         alignment: int | None = None,
         volatile: bool = False,
+        ordering: Literal[MemoryOrder.RELAXED, MemoryOrder.RELEASE, MemoryOrder.WEAK]
+        | None = None,
     ) -> None:
         '''
         Low-level API to store to memory.
@@ -115,6 +123,12 @@ class Pointer(Generic[T]):
             volatile: If True, the compiler will not modify the number of times
                 this store is performed nor the order of execution with respect
                 to other volatile operations.
+            ordering: When ordering is specified, the store is atomic.
+                Alignment must be explicitly specified on atomic stores.
+                Atomic loads require a pointee type with a bit width that
+                is a power of two greater than or equal to one byte.
+                Only relaxed, release, and weak are valid memory orders on
+                stores.
         '''
 
 
@@ -160,11 +174,11 @@ def grid_dim() -> tuple[int, int, int]:
 
 @stub
 def shared_array(
-    shape: tuple[int, ...],
+    shape: int | tuple[int, ...],
     dtype: DType,
     dynamic: bool = False,
     alignment: int | None = None,
-) -> Array:
+) -> Array[T]:
     """Create an on-device array in shared memory.
 
     Shared arrays must be declared at the beginning of the kernel.
@@ -806,6 +820,7 @@ __all__ = (
     "printf",
     "Array",
     "Pointer",
+    "Vector",
     "shared_array",
     "local_array",
     "syncwarp",

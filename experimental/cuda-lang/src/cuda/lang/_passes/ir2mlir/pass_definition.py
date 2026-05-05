@@ -11,6 +11,7 @@ from typing import Sequence
 
 from cuda.lang._ir import ir, ops
 from cuda.lang import _mlir as mlir
+from cuda.tile._memory_model import MemoryOrder
 from cuda.lang._mlir._builtins import _Cursor
 import cuda.lang._mlir.extras.types as T
 import cuda.lang._ir.type as ir_type
@@ -29,6 +30,22 @@ def _require_scalar_type(typ: ir_type.Type):
     if not isinstance(typ, ir_type.TileTy) or typ.shape != ():
         raise TileTypeError(f"Expected scalar type, got {typ=}")
     return typ
+
+
+def _get_llvm_memory_ordering(mo: None | MemoryOrder):
+    match mo:
+        case None | MemoryOrder.WEAK:
+            return mlir.llvm.AtomicOrdering.not_atomic
+        case MemoryOrder.ACQUIRE:
+            return mlir.llvm.AtomicOrdering.acquire
+        case MemoryOrder.ACQ_REL:
+            return mlir.llvm.AtomicOrdering.acq_rel
+        case MemoryOrder.RELAXED:
+            return mlir.llvm.AtomicOrdering.monotonic
+        case MemoryOrder.RELEASE:
+            return mlir.llvm.AtomicOrdering.release
+
+    raise NotImplementedError(f'Unhandled {mo=}')
 
 
 def _get_llvm_atomic_binop(
@@ -674,6 +691,7 @@ class IR2MLIR:
     @lower_operation.register
     def lower_load_pointer(self, operation: ops.LoadPointer) -> Sequence[mlir.Value]:
         pointer_type = _require_scalar_type(operation.pointer.get_type()).dtype
+        ordering = _get_llvm_memory_ordering(operation.ordering)
         assert isinstance(pointer_type, ir_type.PointerTy), (
             f"Expected a typed pointer, got {pointer_type}"
         )
@@ -684,18 +702,21 @@ class IR2MLIR:
             addr=pointer,
             alignment=operation.alignment,
             volatile_=operation.volatile,
+            ordering=ordering,
         )
         return [result]
 
     @lower_operation.register
     def lower_store_pointer(self, operation: ops.StorePointer) -> Sequence[mlir.Value]:
         pointer = self.get_var(operation.pointer)
+        ordering = _get_llvm_memory_ordering(operation.ordering)
         value = self.get_var(operation.value)
         mlir.llvm.add_StoreOp(
             value=value,
             addr=pointer,
             alignment=operation.alignment,
             volatile_=operation.volatile,
+            ordering=ordering,
         )
         return []
 

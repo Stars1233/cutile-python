@@ -6,8 +6,9 @@ import pytest
 import cuda.lang as cl
 from cuda.tile import static_iter
 import torch
+from typing import Any
 from cuda.lang._compile import compile_simt
-from cuda.lang._exception import TileError
+from cuda.lang._exception import TileError, TileTypeError
 from cuda.lang.compilation import KernelSignature
 
 from .util import make_symbolic_tensor, make_symbolic_scalar, compile_for_arguments
@@ -77,6 +78,97 @@ def test_pointer_vector_ldst(volatile, element_count, torch_dtype, dtype):
     got = A.cpu().tolist()
     expect = list(range(element_count))
     assert got == expect, f"{expect=} {got=}"
+
+
+@cl.function
+def loadme(ptr: cl.Pointer[Any], mo: cl.MemoryOrder):
+    return ptr.load(ordering=mo, alignment=16)
+
+
+@cl.function
+def storeme(ptr: cl.Pointer[Any], mo: cl.MemoryOrder):
+    ptr.store(ptr.dtype(0), ordering=mo, alignment=16)
+
+
+@pytest.mark.parametrize(
+    "ordering,operation",
+    [
+        (cl.MemoryOrder.ACQUIRE, loadme),
+        (cl.MemoryOrder.RELAXED, loadme),
+        (cl.MemoryOrder.WEAK, loadme),
+
+        # Store does not support acquire or acq_rel
+        (cl.MemoryOrder.RELAXED, storeme),
+        (cl.MemoryOrder.RELEASE, storeme),
+        (cl.MemoryOrder.WEAK, storeme),
+    ],
+)
+def test_atomic_ptr_ldst(ordering, operation):
+    @cl.kernel
+    def kernel():
+        dtype = cl.int32
+        A = cl.shared_array(1, dtype=dtype, alignment=16)
+        ptr = A.get_base_pointer()
+        operation(ptr, ordering)
+
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, ())
+
+
+def test_atomic_store_missing_alignment():
+    @cl.kernel
+    def kernel():
+        ptr = cl.shared_array(1, cl.int32).get_base_pointer()
+        ptr.store(0, ordering=cl.MemoryOrder.RELAXED)
+
+    with pytest.raises(TileTypeError, match="Expected explicit alignment on atomic"):
+        cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, ())
+
+
+def test_atomic_load_missing_alignment():
+    @cl.kernel
+    def kernel():
+        ptr = cl.shared_array(1, cl.int32).get_base_pointer()
+        ptr.load(ordering=cl.MemoryOrder.RELAXED)
+
+    with pytest.raises(TileTypeError, match="Expected explicit alignment on atomic"):
+        cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, ())
+
+
+@pytest.mark.parametrize(
+    "ordering",
+    [
+        cl.MemoryOrder.RELEASE,
+        cl.MemoryOrder.ACQ_REL,
+    ],
+)
+def test_atomic_ptr_load_invalid_ordering(ordering):
+    @cl.kernel
+    def kernel(out):
+        A = cl.shared_array(1, dtype=cl.int32, alignment=16)
+        ptr = A.get_base_pointer()
+        out[0] = ptr.load(ordering=ordering, alignment=16)
+
+    out = torch.zeros(1, dtype=torch.int32, device="cuda")
+    with pytest.raises(TileTypeError, match="Invalid memory order for Pointer.load"):
+        cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (out,))
+
+
+@pytest.mark.parametrize(
+    "ordering",
+    [
+        cl.MemoryOrder.ACQUIRE,
+        cl.MemoryOrder.ACQ_REL,
+    ],
+)
+def test_atomic_ptr_store_invalid_ordering(ordering):
+    @cl.kernel
+    def kernel(out):
+        ptr = out.get_base_pointer()
+        ptr.store(cl.int32(0), ordering=ordering, alignment=4)
+
+    out = torch.zeros(1, dtype=torch.int32, device="cuda")
+    with pytest.raises(TileTypeError, match="Invalid memory order for Pointer.store"):
+        cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (out,))
 
 
 def test_vector_apis():

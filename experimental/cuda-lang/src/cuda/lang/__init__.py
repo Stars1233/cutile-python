@@ -2,6 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from cuda.tile._memory_model import (
+    MemoryScope,
+    MemoryOrder,
+)
+
 from ._execution import (
     function,
     kernel,
@@ -39,6 +44,9 @@ from ._stub import (
     shfl_xor_sync,
     syncthreads,
     syncwarp,
+    Array,
+    Pointer,
+    Vector,
     nvvm,
     libdevice,
 )
@@ -123,6 +131,9 @@ __all__ = (
     "syncwarp",
     "nvvm",
     "libdevice",
+    "Array",
+    "Pointer",
+    "Vector",
     "any_opaque_ptr",
     "opaque_ptr",
     "opaque_generic_ptr",
@@ -133,6 +144,8 @@ __all__ = (
     "opaque_shared_cluster_ptr",
     "opaque_tensor_ptr",
     "MemorySpace",
+    "MemoryScope",
+    "MemoryOrder",
     "compile_simt",
     "vector_ty",
 )

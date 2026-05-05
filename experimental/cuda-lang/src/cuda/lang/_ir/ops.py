@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Optional
 
+from cuda.tile._memory_model import MemoryOrder
 from cuda.tile._ir.op_impl import (
     require_optional_constant_int,
     require_tuple_type,
@@ -17,6 +18,7 @@ from cuda.tile._ir.op_impl import (
     require_constant_int_tuple,
     require_constant_int,
     require_constant_enum,
+    require_optional_constant_enum,
     require_index_or_index_tuple_type,
     require_array_type,
     WILDCARD,
@@ -99,6 +101,14 @@ class StorePointer(Operation, opcode="store_pointer", memory_effect=MemoryEffect
     value: Var = operand()
     alignment: Optional[int] = attribute()
     volatile: bool = attribute(default=False)
+    ordering: Optional[MemoryOrder] = attribute(default=None)
+
+    valid_orderings = (
+        None,
+        MemoryOrder.WEAK,
+        MemoryOrder.RELAXED,
+        MemoryOrder.RELEASE,
+    )
 
 
 @dataclass(eq=False)
@@ -106,6 +116,14 @@ class LoadPointer(Operation, opcode="load_pointer", memory_effect=MemoryEffect.L
     pointer: Var = operand()
     alignment: Optional[int] = attribute()
     volatile: bool = attribute(default=False)
+    ordering: Optional[MemoryOrder] = attribute(default=None)
+
+    valid_orderings = (
+        None,
+        MemoryOrder.WEAK,
+        MemoryOrder.RELAXED,
+        MemoryOrder.ACQUIRE,
+    )
 
 
 @dataclass(eq=False)
@@ -134,6 +152,24 @@ class ReinterpretPointer(Operation, opcode="reinterpret_pointer"):
 @dataclass(eq=False)
 class ReinterpretPointerAsArray(Operation, opcode="reinterpret_ptr_as_array"):
     pointer: Var = operand()
+
+
+def require_pointer_memory_order(
+    operation: type[LoadPointer] | type[StorePointer],
+    ordering_var: Var,
+):
+    ordering = require_optional_constant_enum(ordering_var, MemoryOrder)
+    if ordering in operation.valid_orderings:
+        return ordering
+
+    formatted_expected = ", ".join(
+        "None" if order is None else str(order) for order in operation.valid_orderings
+    )
+    operation_name = "load" if operation is LoadPointer else "store"
+    raise TileTypeError(
+        f"Invalid memory order for Pointer.{operation_name}. "
+        f"Got {ordering}, expected one of {formatted_expected}"
+    )
 
 
 def require_array_indices(array: Var, indices: Var) -> tuple[Var, ...]:
@@ -167,10 +203,6 @@ def require_matching_array_value_type(array: Var, value: Var) -> tuple[ArrayTy, 
             f", but got {array_ty.dtype=} != {value_ty.dtype=}"
         )
     return array_ty, value_ty
-
-
-def _require_constant_memory_space(var: Var) -> MemorySpace:
-    return require_constant_enum(var, MemorySpace)
 
 
 def require_any_pointer_var(var: Var) -> TileTy:
@@ -286,6 +318,7 @@ def array_setitem(object: Var, key: Var, value: Var):
         value=value,
         alignment=None,
         volatile=False,
+        ordering=None,
     )
 
 
@@ -404,7 +437,13 @@ def require_vector_var(var: Var) -> VectorTy:
     return ty
 
 
-def _pointer_load(pointer: Var, count: Var, alignment: Var, volatile: Var) -> Var:
+def _pointer_load(
+    pointer: Var,
+    count: Var,
+    alignment: Var,
+    volatile: Var,
+    ordering: Var,
+) -> Var:
     pointer_tile_ty = require_pointer_var(pointer)
     pointee = pointer_tile_ty.dtype.pointee_type
     assert isinstance(pointee, TileTy)
@@ -412,6 +451,9 @@ def _pointer_load(pointer: Var, count: Var, alignment: Var, volatile: Var) -> Va
     count = require_optional_constant_int(count)
     volatile = require_constant_bool(volatile)
     alignment = require_optional_alignment(alignment)
+    ordering = require_pointer_memory_order(LoadPointer, ordering)
+    if ordering not in (None, MemoryOrder.WEAK) and alignment is None:
+        raise TileTypeError("Expected explicit alignment on atomic load")
     if count is None or count == 1:
         result_ty = TileTy(pointee.dtype, ())
     else:
@@ -422,20 +464,31 @@ def _pointer_load(pointer: Var, count: Var, alignment: Var, volatile: Var) -> Va
         pointer=pointer,
         volatile=volatile,
         alignment=alignment,
+        ordering=ordering,
     )
     return result
 
 
-def _pointer_store(pointer: Var, value: Var, alignment: Var, volatile: Var) -> None:
+def _pointer_store(
+    pointer: Var,
+    value: Var,
+    alignment: Var,
+    volatile: Var,
+    ordering: Var,
+) -> None:
     volatile = require_constant_bool(volatile)
     alignment = require_optional_alignment(alignment)
+    ordering = require_pointer_memory_order(StorePointer, ordering)
+    if ordering not in (None, MemoryOrder.WEAK) and alignment is None:
+        raise TileTypeError("Expected explicit alignment on atomic store")
     add_operation(
         StorePointer,
         (),
         pointer=pointer,
         value=value,
         volatile=volatile,
-        alignment=alignment
+        alignment=alignment,
+        ordering=ordering,
     )
 
 
@@ -486,7 +539,7 @@ def sub_impl(x: Var, y: Var) -> Var:
 @impl(stub.address_space_cast)
 def address_space_cast_impl(value: Var, memory_space: Var) -> Var:
     pointer_tile_ty = require_any_pointer_var(value)
-    memory_space = _require_constant_memory_space(memory_space)
+    memory_space = require_constant_enum(memory_space, MemorySpace)
     match pointer_tile_ty.dtype:
         case PointerTy():
             result_ty = make_tile_ty(
@@ -578,8 +631,9 @@ def pointer_load_impl(
     count: Var,
     alignment: Var,
     volatile: Var,
+    ordering: Var,
 ) -> Operation:
-    return _pointer_load(self, count, alignment, volatile)
+    return _pointer_load(self, count, alignment, volatile, ordering)
 
 
 @impl(stub.Pointer.store)
@@ -588,8 +642,9 @@ def pointer_store_impl(
     value: Var,
     alignment: Var,
     volatile: Var,
+    ordering: Var,
 ) -> None:
-    _pointer_store(self, value, alignment, volatile)
+    _pointer_store(self, value, alignment, volatile, ordering)
 
 
 @dataclass(eq=False)
