@@ -32,7 +32,7 @@ cl.launch(
   grid=(64,),
   block=(64,),
   kernel=saxpy,
-  kernel_args=(N, alpha, X, Y),
+  (N, alpha, X, Y),
 )
 assert torch.allclose(expected, Y.cpu())
 ```

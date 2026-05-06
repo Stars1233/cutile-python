@@ -78,6 +78,26 @@ def mlir_constant_of_type(mlir_type: mlir.Type, value) -> mlir.Value:
 
 
 @mlir_constant_of_type.register
+def scalar_to_vector_constant(mlir_type: mlir.VectorType, value) -> mlir.Value:
+    if any(mlir_type.scalableDims):
+        raise NotImplementedError('Scalable vectors')
+    if isinstance(mlir_type.elementType, mlir.FloatType):
+        value = float(value)
+    elif isinstance(mlir_type.elementType, mlir.IntegerType | mlir.IndexType):
+        value = int(value)
+    else:
+        raise NotImplementedError(
+            f"MLIR vector constant of element type {mlir_type.elementType}"
+        )
+    value_attr = mlir.DenseTypedElementsAttr(type=mlir_type, rawData=value)
+    res = mlir.llvm.add_ConstantOp(
+        res_type=mlir_type,
+        value=value_attr
+    )
+    return res
+
+
+@mlir_constant_of_type.register
 def float_to_mlir_constant(mlir_type: mlir.FloatType, value) -> mlir.Value:
     return mlir.arith.add_ConstantOp(
         value=mlir.FloatAttr(type=mlir_type, value=mlir.APFloat(float(value))),
