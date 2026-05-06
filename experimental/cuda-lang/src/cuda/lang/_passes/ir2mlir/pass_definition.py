@@ -32,6 +32,16 @@ def _require_scalar_type(typ: ir_type.Type):
     return typ
 
 
+def _require_arith_type(typ: ir_type.Type):
+    if not isinstance(typ, ir_type.TileTy):
+        raise TileTypeError(f"Expected arithmetic type, got {typ=}")
+    if typ.shape != () and not ir_type.is_vector_ty(typ):
+        raise TileTypeError(f"Expected arithmetic type, got {typ=}")
+    if not isinstance(typ.dtype, datatype.ArithmeticDType):
+        raise TileTypeError(f"Expected arithmetic type, got {typ=}")
+    return typ
+
+
 def _get_llvm_memory_ordering(mo: None | MemoryOrder):
     match mo:
         case None | MemoryOrder.WEAK:
@@ -166,9 +176,11 @@ def _get_mlir_op_for_op_and_dtype(
         return None
 
 
-def _get_mlir_unary_op_for_op_and_dtype(
-    fn: str, dtype: datatype.ArithmeticDType
+def _get_mlir_unary_op_for_op_and_type(
+    fn: str,
+    typ: ir_type.TileTy,
 ) -> Callable[[mlir.Value], mlir.Value] | None:
+    dtype = typ.dtype
     if fn == "pos":
         return lambda operand: operand
 
@@ -179,7 +191,7 @@ def _get_mlir_unary_op_for_op_and_dtype(
         return mlir.arith.add_NegFOp
 
     if datatype.is_integral(dtype):
-        mlir_type = ir_type_to_mlir_type(dtype)
+        mlir_type = ir_type_to_mlir_type(typ)
         zero = mlir_constant_of_type(mlir_type, 0)
         return lambda operand: mlir.arith.add_SubIOp(lhs=zero, rhs=operand)
 
@@ -451,25 +463,34 @@ class IR2MLIR:
     def lower_comparison(
         self, operation: ops.RawComparisonOperation
     ) -> Sequence[mlir.Value]:
-        lhs_type = _require_scalar_type(operation.lhs.get_type()).dtype
-        rhs_type = _require_scalar_type(operation.rhs.get_type()).dtype
+        lhs_type = _require_arith_type(operation.lhs.get_type())
+        rhs_type = _require_arith_type(operation.rhs.get_type())
+        res_type = _require_arith_type(operation.result_var.get_type())
         if lhs_type != rhs_type:
             raise TileTypeError(
-                "Comparison operations can not promote types: "
+                "Comparison operations require matching types: "
                 f"{lhs_type} and {rhs_type}"
             )
+        if lhs_type.dtype != rhs_type.dtype:
+            raise TileTypeError(
+                "Comparison operations can not promote types: "
+                f"{lhs_type.dtype} and {rhs_type.dtype}"
+            )
 
-        mlir_op = _get_mlir_comparison_op(operation.fn, lhs_type)
+        mlir_op = _get_mlir_comparison_op(operation.fn, lhs_type.dtype)
         if mlir_op is None:
             raise NotImplementedError(
-                f"Comparison operation {operation.fn} not supported for {lhs_type}"
+                f"Comparison operation {operation.fn} not supported for {lhs_type.dtype}"
             )
 
         lhs = self.get_var(operation.lhs)
         rhs = self.get_var(operation.rhs)
 
         result = mlir_op(lhs=lhs, rhs=rhs)
-        result = mlir.arith.add_ExtSIOp(out_type=T.i8(), in_=result)
+        result = mlir.arith.add_ExtSIOp(
+            out_type=ir_type_to_mlir_type(res_type),
+            in_=result,
+        )
         return [result]
 
     @lower_operation.register
@@ -484,8 +505,12 @@ class IR2MLIR:
 
     @lower_operation.register
     def lower_raw_unary_arith(self, operation: ops.Unary) -> Sequence[mlir.Value]:
-        res_dtype = _require_scalar_type(operation.result_var.get_type()).dtype
-        mlir_op = _get_mlir_unary_op_for_op_and_dtype(operation.fn, res_dtype)
+        res_type = _require_arith_type(operation.result_var.get_type())
+        res_dtype = res_type.dtype
+        mlir_op = _get_mlir_unary_op_for_op_and_type(
+            operation.fn,
+            res_type,
+        )
         if mlir_op is None:
             raise NotImplementedError(
                 f"Arithmetic operation {operation.fn} not supported for {res_dtype=}"
@@ -499,14 +524,19 @@ class IR2MLIR:
     def lower_raw_binary_arith(
         self, operation: ops.RawBinaryArithmeticOperation
     ) -> Sequence[mlir.Value]:
-        lhs_type = _require_scalar_type(operation.lhs.get_type())
-        rhs_type = _require_scalar_type(operation.rhs.get_type())
-        res_type = _require_scalar_type(operation.result_var.get_type())
+        lhs_type = _require_arith_type(operation.lhs.get_type())
+        rhs_type = _require_arith_type(operation.rhs.get_type())
+        res_type = _require_arith_type(operation.result_var.get_type())
+        types_match = (
+            lhs_type == rhs_type
+            and lhs_type == res_type
+            and lhs_type.dtype == rhs_type.dtype
+        )
 
-        if lhs_type.dtype != rhs_type.dtype:
+        if not types_match:
             raise TileTypeError(
-                "Arithmetic operations can not promote types: "
-                f"{lhs_type.dtype} and {rhs_type.dtype}"
+                "Arithmetic operations require matching types: "
+                f"{lhs_type}, {rhs_type}, and {res_type}"
             )
 
         res_dtype = res_type.dtype
@@ -531,10 +561,15 @@ class IR2MLIR:
     @lower_operation.register
     def lower_astype(self, operation: ops.TileAsType) -> Sequence[mlir.Value]:
         src = self.get_var(operation.x)
-        src_type = _require_scalar_type(operation.x.get_type()).dtype
-        dst_type = _require_scalar_type(operation.result_var.get_type()).dtype
-        if not isinstance(src_type, datatype.ArithmeticDType) or not isinstance(
-            dst_type, datatype.ArithmeticDType
+        src_type = _require_arith_type(operation.x.get_type())
+        dst_type = _require_arith_type(operation.result_var.get_type())
+        if src_type.shape != dst_type.shape:
+            raise TileTypeError(
+                "Cannot cast between arithmetic types with different shapes: "
+                f"{src_type} and {dst_type}"
+            )
+        if not isinstance(src_type.dtype, datatype.ArithmeticDType) or not isinstance(
+            dst_type.dtype, datatype.ArithmeticDType
         ):
             raise NotImplementedError(
                 f"Expected arithmetic types, got {src_type=} {dst_type=}"
@@ -828,7 +863,7 @@ class IR2MLIR:
     def _lower_intrinsic_operand(self, operand: ir.Var) -> mlir.Value:
         operand_value = self.get_var(operand)
         operand_type = operand.get_type()
-        if isinstance(operand_type, ir_type.VectorTy):
+        if ir_type.is_vector_ty(operand_type):
             return operand_value
         if datatype.is_boolean(operand_type.dtype):
             return mlir.arith.add_TruncIOp(out_type=T.i1(), in_=operand_value)
@@ -907,8 +942,18 @@ class IR2MLIR:
     @lower_operation.register
     def lower_raw_where(self, operation: ops.RawWhereOperation) -> Sequence[mlir.Value]:
         cond_i8 = self.get_var(operation.cond)
+        cond_type = _require_arith_type(operation.cond.get_type())
+        if cond_type.shape == ():
+            result_type = T.i1()
+        else:
+            result_type = mlir.VectorType(
+                shape=cond_type.shape,
+                elementType=T.i1(),
+                scalableDims=(False,) * len(cond_type.shape),
+            )
+
         cond = mlir.arith.add_TruncIOp(
-            out_type=T.i1(),
+            out_type=result_type,
             in_=cond_i8,
         )
         x = self.get_var(operation.x)
@@ -947,9 +992,15 @@ class IR2MLIR:
     def lower_bitshift(
         self, operation: ops.RawBitwiseShiftOperation
     ) -> Sequence[mlir.Value]:
-        lhs_type = _require_scalar_type(operation.lhs.get_type())
-        rhs_type = _require_scalar_type(operation.rhs.get_type())
-        res_type = _require_scalar_type(operation.result_var.get_type())
+        lhs_type = _require_arith_type(operation.lhs.get_type())
+        rhs_type = _require_arith_type(operation.rhs.get_type())
+        res_type = _require_arith_type(operation.result_var.get_type())
+
+        if lhs_type.shape != rhs_type.shape or lhs_type.shape != res_type.shape:
+            raise TileTypeError(
+                "Bitwise shift operations require matching arithmetic shapes: "
+                f"{lhs_type}, {rhs_type}, and {res_type}"
+            )
 
         for typ, name in (
             (lhs_type, "lhs"),
@@ -958,7 +1009,7 @@ class IR2MLIR:
         ):
             if not datatype.is_integral(typ.dtype):
                 raise TileTypeError(
-                    "Bitwise shift operations require integral scalar "
+                    "Bitwise shift operations require integral arithmetic "
                     f"types, got {name}={typ.dtype}"
                 )
 

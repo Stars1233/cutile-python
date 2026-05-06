@@ -6,6 +6,7 @@ from typing import Any
 
 from cuda.lang import _datatype as datatype
 from cuda.lang._execution import stub
+from cuda.lang._ir.type import TileTy, is_vector_ty
 from cuda.tile._symbolic import SymbolicTile
 
 
@@ -21,11 +22,15 @@ def satisfies_scalar_integral_constraint(value):
 
 
 def satisfies_scalar_or_vector_constraint(value):
-    return isinstance(value, SymbolicTile) and value.ndim in (0, 1)
+    return isinstance(value, SymbolicTile) and (
+        value.ndim == 0 or is_vector_ty(TileTy(value.dtype, value.shape))
+    )
 
 
 def satisfies_vector_constraint(value):
-    return isinstance(value, SymbolicTile) and value.ndim == 1
+    return isinstance(value, SymbolicTile) and is_vector_ty(
+        TileTy(value.dtype, value.shape)
+    )
 
 
 @stub
@@ -37,3 +42,11 @@ def _raw_nvvm_intrinsic(
     '''
     Call an NVVM intrinsic directly.
     '''
+
+
+__all__ = (
+    "_raw_nvvm_intrinsic",
+    "satisfies_vector_constraint",
+    "satisfies_scalar_or_vector_constraint",
+    "satisfies_scalar_integral_constraint",
+)

@@ -30,176 +30,6 @@ import struct
 # ---- Interfaces ----
 
 
-class AlignmentAttrOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class BranchOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class CastOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class ConditionallySpeculatable:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class DestructurableAccessorOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class DestructurableAllocationOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class DestructurableTypeInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class InferIntRangeInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class InferShapedTypeOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class InferStridedMetadataOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class InferTypeOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class MemoryEffectOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class MemorySpaceCastConsumerOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class MemorySpaceCastOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class OffsetSizeAndStrideOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class OpAsmAttrInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class OpAsmOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class OpAsmTypeInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class PromotableAllocationOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class PromotableMemOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class PromotableOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class PromotableRegionOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class RegionBranchOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class RegionBranchTerminatorOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class ReifyRankedShapedTypeOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class SafeMemorySlotAccessOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class SelectLikeOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class ShapedDimOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class SymbolOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class SymbolUserAttrInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class SymbolUserOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class ViewLikeOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class WeightedBranchOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class WeightedRegionBranchOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
 class ArgAndResultAttrsOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
@@ -211,6 +41,11 @@ class CallOpInterface:
 
 
 class CallableOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class ConditionallySpeculatable:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -245,6 +80,126 @@ class DataLayoutTypeInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
+class DenseElementType:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class DestructurableAccessorOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class DestructurableAllocationOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class DestructurableTypeInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class FloatType:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class InferIntRangeInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class InferShapedTypeOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class InferTypeOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class MemRefElementTypeInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class MemoryEffectOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class PromotableAllocationOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class PromotableMemOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class PromotableOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class PromotableRegionOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class PtrLikeTypeInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class ReifyRankedShapedTypeOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class SafeMemorySlotAccessOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class ShapedType:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+    DYNAMIC = -1 << 63
+
+    def get_element_type(self) -> Type:
+        raise NotImplementedError("get_element_type() must be implemented"
+                                  " by subclasses of ShapedType")
+
+    def clone_with(self, shape: Optional[Sequence[int]], element_type: Type) -> Type:
+        raise NotImplementedError("clone_with() must be implemented"
+                                  " by subclasses of ShapedType")
+
+
+class TargetDeviceSpecInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class TargetSystemSpecInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class VectorElementTypeInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class BranchOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
 class DeviceMappingAttrInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
@@ -260,17 +215,67 @@ class FunctionOpInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
+class OpAsmAttrInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class OpAsmOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class OpAsmTypeInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class RegionBranchOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class RegionBranchTerminatorOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
 class RegionKindInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class TargetDeviceSpecInterface:
+class SelectLikeOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class TargetSystemSpecInterface:
+class SymbolOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class SymbolUserAttrInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class SymbolUserOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class WeightedBranchOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class WeightedRegionBranchOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class QuantStorageTypeInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -298,6 +303,21 @@ class TypedAttr:
         raise NotImplementedError("get_type() must be implemented by subclasses of TypedAttr")
 
 
+class OffsetSizeAndStrideOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class ViewLikeOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class CastOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
 class VectorTransferOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
@@ -308,47 +328,27 @@ class VectorUnrollOpInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class DenseElementType:
+class AlignmentAttrOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class FloatType:
+class InferStridedMetadataOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class MemRefElementTypeInterface:
+class MemorySpaceCastConsumerOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class PtrLikeTypeInterface:
+class MemorySpaceCastOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class ShapedType:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-    DYNAMIC = -1 << 63
-
-    def get_element_type(self) -> Type:
-        raise NotImplementedError("get_element_type() must be implemented"
-                                  " by subclasses of ShapedType")
-
-    def clone_with(self, shape: Optional[Sequence[int]], element_type: Type) -> Type:
-        raise NotImplementedError("clone_with() must be implemented"
-                                  " by subclasses of ShapedType")
-
-
-class VectorElementTypeInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class QuantStorageTypeInterface:
+class ShapedDimOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -468,38 +468,6 @@ Location = LocationAttr
 
 
 @dataclass(kw_only=True)
-class CallSiteLoc(LocationAttr):
-    callee: "Location"
-    caller: "Location"
-
-
-@dataclass(kw_only=True)
-class FileLineColRange(LocationAttr):
-    filename: "StringAttr"
-    start_line: "int"
-    start_column: "int"
-    end_line: "int"
-    end_column: "int"
-
-
-@dataclass(kw_only=True)
-class FusedLoc(LocationAttr):
-    locations: "Sequence[Location]"
-    metadata: "Attribute"
-
-
-@dataclass(kw_only=True)
-class NameLoc(LocationAttr):
-    name: "StringAttr"
-    childLoc: "Location"
-
-
-@dataclass(kw_only=True)
-class UnknownLoc(LocationAttr):
-    pass
-
-
-@dataclass(kw_only=True)
 class AffineMapAttr(Attribute, MemRefLayoutAttrInterface, OpAsmAttrInterface):
     value: "AffineMap"
 
@@ -555,7 +523,28 @@ class FloatAttr(Attribute, TypedAttr):
         return self.type
 
     def _print_mlir_unqualified(self, p):
-        p(self.value)
+        import math
+        import struct
+
+        value = float(self.value)
+        if math.isfinite(value):
+            p(self.value)
+            return
+
+        if isinstance(self.type, Float16Type):
+            bits = struct.unpack(">H", struct.pack(">e", value))[0]
+            p(f"0x{bits:04X}")
+        elif isinstance(self.type, BFloat16Type):
+            bits = struct.unpack(">I", struct.pack(">f", value))[0] >> 16
+            p(f"0x{bits:04X}")
+        elif isinstance(self.type, Float32Type):
+            bits = struct.unpack(">I", struct.pack(">f", value))[0]
+            p(f"0x{bits:08X}")
+        elif isinstance(self.type, Float64Type):
+            bits = struct.unpack(">Q", struct.pack(">d", value))[0]
+            p(f"0x{bits:016X}")
+        else:
+            raise TypeError(f"Cannot print non-finite FloatAttr {value} for type {self.type}")
 
 
 @dataclass(kw_only=True)
@@ -662,6 +651,38 @@ class StridedLayoutAttr(Attribute, MemRefLayoutAttrInterface):
             p(", offset: ")
             p("?" if self.offset == ShapedType.DYNAMIC else self.offset)
         p(">")
+
+
+@dataclass(kw_only=True)
+class CallSiteLoc(LocationAttr):
+    callee: "Location"
+    caller: "Location"
+
+
+@dataclass(kw_only=True)
+class FileLineColRange(LocationAttr):
+    filename: "StringAttr"
+    start_line: "int"
+    start_column: "int"
+    end_line: "int"
+    end_column: "int"
+
+
+@dataclass(kw_only=True)
+class FusedLoc(LocationAttr):
+    locations: "Sequence[Location]"
+    metadata: "Attribute"
+
+
+@dataclass(kw_only=True)
+class NameLoc(LocationAttr):
+    name: "StringAttr"
+    childLoc: "Location"
+
+
+@dataclass(kw_only=True)
+class UnknownLoc(LocationAttr):
+    pass
 
 
 # ---- Types ----
@@ -954,6 +975,13 @@ class VectorType(Type, ShapedType):
 
     def get_element_type(self) -> Type:
         return self.elementType
+
+    def clone_with(self, shape: Optional[Sequence[int]], element_type: Type) -> Type:
+        return VectorType(
+            shape=self.shape if shape is None else shape,
+            elementType=element_type,
+            scalableDims=self.scalableDims,
+        )
 
 
 # ---- Operators ----

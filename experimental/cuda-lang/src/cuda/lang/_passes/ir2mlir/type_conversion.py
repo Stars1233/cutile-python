@@ -27,10 +27,17 @@ def opaque_pointer_type_to_mlir_type(src_type: ir_type.OpaquePointerTy) -> mlir.
 
 
 @ir_type_to_mlir_type.register
-def tile_type_to_mlir_type(ir_type: ir_type.TileTy) -> mlir.Type:
-    if ir_type.shape != ():
-        raise NotImplementedError(f"Unable to convert {ir_type=} to MLIR type")
-    return ir_type_to_mlir_type(ir_type.dtype)
+def tile_type_to_mlir_type(src_type: ir_type.TileTy) -> mlir.Type:
+    element_type = ir_type_to_mlir_type(src_type.dtype)
+    if src_type.shape == ():
+        return element_type
+    if not ir_type.is_vector_ty(src_type):
+        raise NotImplementedError(f"Unable to convert {src_type=} to MLIR type")
+    return mlir.VectorType(
+        shape=src_type.shape,
+        elementType=element_type,
+        scalableDims=(False,) * len(src_type.shape),
+    )
 
 
 @ir_type_to_mlir_type.register
@@ -60,16 +67,6 @@ def basic_scalar_type_to_mlir_type(src_type: dtype.DType) -> mlir.Type:
             return mlir.Float64Type()
         case _:
             raise NotImplementedError(f"Unable to convert {src_type=} to MLIR type")
-
-
-@ir_type_to_mlir_type.register
-def vector_type_to_mlir_type(src_type: ir_type.VectorTy) -> mlir.Type:
-    element_type = ir_type_to_mlir_type(src_type.dtype)
-    return mlir.VectorType(
-        shape=src_type.shape,
-        elementType=element_type,
-        scalableDims=(False,) * len(src_type.shape),
-    )
 
 
 @singledispatch
@@ -123,13 +120,21 @@ def int_to_mlir_index(mlir_type: mlir.IndexType, value) -> mlir.Value:
 
 
 def _get_type_conversion_encoder(
-    from_dtype: dtype.ArithmeticDType, to_dtype: dtype.ArithmeticDType
+    from_type: ir_type.TileTy,
+    to_type: ir_type.TileTy,
 ):
+    from_dtype = from_type.dtype
+    to_dtype = to_type.dtype
+
+    if from_type.shape != to_type.shape:
+        raise TileInternalError(
+            f"Cannot convert between different shapes: {from_type} and {to_type}"
+        )
 
     if from_dtype == to_dtype:
         return lambda x: x
 
-    to_mlir_type = ir_type_to_mlir_type(to_dtype)
+    to_mlir_type = ir_type_to_mlir_type(to_type)
 
     def kind(t):
         if dtype.is_float(t):
@@ -174,7 +179,9 @@ def _get_type_conversion_encoder(
 
 
 def convert_dtype(
-    src_type: dtype.DType, dst_type: dtype.DType, value: mlir.Value
+    src_type: ir_type.TileTy,
+    dst_type: ir_type.TileTy,
+    value: mlir.Value,
 ) -> mlir.Value:
     encoder = _get_type_conversion_encoder(src_type, dst_type)
     return encoder(in_=value)

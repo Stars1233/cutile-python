@@ -47,12 +47,12 @@ class TargetAttrVerifyInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class AsyncOpInterface:
+class OffloadingLLVMTranslationAttrInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class OffloadingLLVMTranslationAttrInterface:
+class AsyncOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -1113,12 +1113,15 @@ def add_LaunchFuncOp(
     clusterSizeY: Optional[Value] = None,
     clusterSizeZ: Optional[Value] = None,
     dynamicSharedMemorySize: Optional[Value] = None,
+    cooperative: bool = False,
     kernelOperands: Sequence[Value],
     asyncObject: Optional[Value] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Optional[Value]:
     all_props = []
     all_props.append(('kernel', kernel))
+    if cooperative:
+        all_props.append(('cooperative', UnitAttr()))
     all_props.append(('operandSegmentSizes',
                       DenseI32ArrayAttr([len(asyncDependencies), 1, 1, 1, 1, 1, 1,
                                          int(clusterSizeX is not None),
@@ -1154,6 +1157,7 @@ def add_LaunchOp(
     clusterSizeY: Optional[Value] = None,
     clusterSizeZ: Optional[Value] = None,
     dynamicSharedMemorySize: Optional[Value] = None,
+    cooperative: bool = False,
     module: Optional[str] = None,
     function: Optional[str] = None,
     workgroup_attributions: Optional[int] = None,
@@ -1161,6 +1165,8 @@ def add_LaunchOp(
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Optional[Value]:
     all_props = []
+    if cooperative:
+        all_props.append(('cooperative', UnitAttr()))
     if module is not None:
         all_props.append(('module', FlatSymbolRefAttr(module)))
     if function is not None:

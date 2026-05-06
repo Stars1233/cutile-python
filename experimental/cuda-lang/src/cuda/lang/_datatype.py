@@ -5,7 +5,14 @@
 import enum
 from typing import TypeAlias, Union, Any
 
-from cuda.lang._ir.type import MemorySpace, OpaquePointerTy, PointerTy, VectorTy
+from cuda.lang._ir.type import (
+    MemorySpace,
+    OpaquePointerTy,
+    PointerTy,
+    TileTy,
+    is_vector_ty,
+    make_vector_ty,
+)
 from cuda.tile._ir.type import PointerTy as TilePointerTy
 from cuda.tile._ir.typing_support import is_dtype, register_dtypes, to_dtype
 from cuda.tile._symbolic import SymbolicTile
@@ -44,16 +51,51 @@ from cuda.tile._datatype import (
 )
 
 
-def vector_ty(dtype: DType, length: int) -> VectorTy:
-    # Return a VectorTy(dtype, length), creating it on first request and
+def vector_ty(dtype: DType, length: int) -> TileTy:
+    # Return a rank-1 TileTy(dtype, (length,)), creating it on first request and
     # registering the instance in cutile's dtype_registry so it can be
     # used as a compile-time constant inside kernels. Subsequent calls
     # with the same (dtype, length) return the already-registered instance.
-    vt = VectorTy(dtype, length)
+    vt = make_vector_ty(dtype, length)
     if is_dtype(vt):
         return to_dtype(vt)
     register_dtypes({vt: vt}, usable_as_constructor=True)
     return vt
+
+
+def to_torch_dtype(dtype: DType | TileTy):
+    import torch
+
+    if isinstance(dtype, TileTy):
+        dtype = dtype.dtype
+
+    dtype_map = {
+        bool_: torch.bool,
+        uint8: torch.uint8,
+        uint16: torch.uint16,
+        uint32: torch.uint32,
+        uint64: torch.uint64,
+        int8: torch.int8,
+        int16: torch.int16,
+        int32: torch.int32,
+        int64: torch.int64,
+        float16: torch.float16,
+        bfloat16: torch.bfloat16,
+        float32: torch.float32,
+        float64: torch.float64,
+    }
+    if dtype in dtype_map:
+        return dtype_map[dtype]
+
+    optional_dtype_names = {
+        float8_e4m3fn: "float8_e4m3fn",
+        float8_e5m2: "float8_e5m2",
+        float8_e8m0fnu: "float8_e8m0fnu",
+    }
+    if dtype in optional_dtype_names and hasattr(torch, optional_dtype_names[dtype]):
+        return getattr(torch, optional_dtype_names[dtype])
+
+    raise NotImplementedError(f"No torch dtype mapping for {dtype}")
 
 
 class OpaquePointerSpec(enum.Enum):
@@ -78,7 +120,7 @@ opaque_shared_cluster_ptr = OpaquePointerSpec.SHARED_CLUSTER
 opaque_tensor_ptr = OpaquePointerSpec.TENSOR
 
 
-TypeSpec: TypeAlias = Union[OpaquePointerSpec | DType | VectorTy]
+TypeSpec: TypeAlias = Union[OpaquePointerSpec | DType | TileTy]
 
 
 def is_literal_or_exact_dtype(value: Any, dtype: DType):
@@ -89,7 +131,7 @@ def is_literal_or_exact_dtype(value: Any, dtype: DType):
             return True
         case float() if is_float(dtype):
             return True
-        case SymbolicTile() if isinstance(dtype, VectorTy):
+        case SymbolicTile() if is_vector_ty(dtype):
             return value.dtype == dtype.dtype and value.shape == dtype.shape
         case SymbolicTile() if value.dtype == dtype:
             return True
@@ -157,8 +199,8 @@ __all__ = [
     "DType",
     "NumericDType",
     "ArithmeticDType",
-    "VectorTy",
     "vector_ty",
+    "to_torch_dtype",
     "default_int_type",
     "any_opaque_ptr",
     "opaque_ptr",

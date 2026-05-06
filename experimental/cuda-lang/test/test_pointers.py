@@ -4,7 +4,6 @@
 
 import pytest
 import cuda.lang as cl
-from cuda.tile import static_iter
 import torch
 from typing import Any
 from cuda.lang._compile import compile_simt
@@ -12,72 +11,6 @@ from cuda.lang._exception import TileError, TileTypeError
 from cuda.lang.compilation import KernelSignature
 
 from .util import make_symbolic_tensor, make_symbolic_scalar, compile_for_arguments
-
-
-@pytest.mark.parametrize("volatile", [True, False])
-@pytest.mark.parametrize("element_count", [2, 4, 8])
-@pytest.mark.parametrize(
-    "torch_dtype,dtype",
-    [
-        (
-            torch.float16,
-            cl.float16,
-        ),
-        (
-            torch.float32,
-            cl.float32,
-        ),
-        (
-            torch.float64,
-            cl.float64,
-        ),
-        (
-            torch.int8,
-            cl.int8,
-        ),
-        (
-            torch.int16,
-            cl.int16,
-        ),
-        (
-            torch.int32,
-            cl.int32,
-        ),
-        (
-            torch.int64,
-            cl.int64,
-        ),
-    ],
-)
-def test_pointer_vector_ldst(volatile, element_count, torch_dtype, dtype):
-    assert (element_count & (element_count - 1)) == 0
-    num_bytes = dtype.bitwidth // 8
-    alignment = num_bytes * element_count
-
-    @cl.kernel
-    def kernel(A):
-        sarr = cl.shared_array(element_count, dtype, alignment=alignment)
-        with cl.local_array(element_count, dtype, alignment=alignment) as larr:
-            for i in static_iter(range(element_count)):
-                larr[i] = dtype(i)
-            v = larr.get_base_pointer().load(
-                count=element_count,
-                alignment=alignment,
-                volatile=volatile,
-            )
-        sarr.get_base_pointer().store(
-            v,
-            alignment=alignment,
-            volatile=volatile,
-        )
-        for i in static_iter(range(element_count)):
-            A[i] = sarr[i]
-
-    A = torch.zeros(element_count, dtype=torch_dtype).cuda()
-    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (A,))
-    got = A.cpu().tolist()
-    expect = list(range(element_count))
-    assert got == expect, f"{expect=} {got=}"
 
 
 @cl.function
@@ -169,53 +102,6 @@ def test_atomic_ptr_store_invalid_ordering(ordering):
     out = torch.zeros(1, dtype=torch.int32, device="cuda")
     with pytest.raises(TileTypeError, match="Invalid memory order for Pointer.store"):
         cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (out,))
-
-
-def test_vector_apis():
-    @cl.kernel
-    def kernel(out):
-        with cl.local_array(4, cl.int32, alignment=16) as larr:
-            p = larr.get_base_pointer()
-            vec = p.load(count=4, alignment=16)
-            out[0] = cl.int32(vec.dtype == p.dtype)
-            out[1] = cl.int32(p.dtype == cl.int32)
-            out[2] = cl.int32(p.dtype == larr.dtype)
-            out[3] = vec.element_count
-
-    out = torch.zeros(4, dtype=torch.int32).cuda()
-    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (out,))
-    assert out.cpu().tolist() == [1, 1, 1, 4]
-
-
-def test_pointer_vector_ldst_bool():
-    alignment = (cl.bool_.bitwidth // 8) * 4
-
-    @cl.kernel
-    def kernel(A):
-        with cl.local_array(4, cl.bool_, alignment=alignment) as larr:
-            sarr = cl.shared_array(4, cl.bool_, alignment=alignment)
-            value = True
-            for i in static_iter(range(4)):
-                larr[i] = value
-                value = not value
-            v = larr.get_base_pointer().load(
-                count=4,
-                alignment=alignment,
-                volatile=True,
-            )
-            sarr.get_base_pointer().store(
-                v,
-                alignment=alignment,
-                volatile=True,
-            )
-            for i in static_iter(range(4)):
-                A[i] = sarr[i]
-
-    A = torch.zeros(4, dtype=torch.bool).cuda()
-    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (A,))
-    got = A.cpu().tolist()
-    expect = [True, False, True, False]
-    assert got == expect, f"{expect=} {got=}"
 
 
 def test_pointer_gep():

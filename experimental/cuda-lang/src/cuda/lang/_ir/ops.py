@@ -25,7 +25,7 @@ from cuda.tile._ir.op_impl import (
     require_tile_type, require_constant_bool,
 )
 from cuda.lang._ir.type import (
-    OpaquePointerTy, VectorTy, LocalArrayContextManagerTy, ContextManagerState
+    OpaquePointerTy, LocalArrayContextManagerTy, ContextManagerState
 )
 from cuda.tile._ir.ops import (
     binary_arithmetic,
@@ -72,6 +72,8 @@ from .type import (
     MemorySpace,
     Type,
     make_tile_ty,
+    make_vector_ty,
+    is_vector_ty,
     ArrayTy,
     PointerTy,
     TileTy,
@@ -430,10 +432,10 @@ def require_pointer_var(var: Var) -> TileTy:
     return ty
 
 
-def require_vector_var(var: Var) -> VectorTy:
+def require_vector_var(var: Var) -> TileTy:
     ty = var.get_type()
-    if not isinstance(ty, VectorTy):
-        raise TileTypeError("Expected a vector, got {ty}")
+    if not is_vector_ty(ty):
+        raise TileTypeError(f"Expected a vector, got {ty}")
     return ty
 
 
@@ -457,7 +459,7 @@ def _pointer_load(
     if count is None or count == 1:
         result_ty = TileTy(pointee.dtype, ())
     else:
-        result_ty = VectorTy(pointee.dtype, count)
+        result_ty = make_vector_ty(pointee.dtype, count)
     [result] = add_operation(
         LoadPointer,
         (result_ty,),
@@ -595,16 +597,10 @@ def reinterpret_pointer_as_array_impl(pointer: Var, dtype: Var, shape: Var, stri
     return result
 
 
-@impl(getattr, overload=(VectorTy, "dtype"))
-def vector_dtype_impl(object: Var, name: Var):
-    ty = require_vector_var(object)
-    return loosely_typed_const(ty.dtype)
-
-
-@impl(getattr, overload=(VectorTy, "element_count"))
+@impl(getattr, overload=(TileTy, "element_count"))
 def vector_element_count_impl(object: Var, name: Var):
     ty = require_vector_var(object)
-    return loosely_typed_const(ty.num_elements)
+    return loosely_typed_const(ty.shape[0])
 
 
 @impl(getattr, overload=(TileTy, "dtype"))
@@ -1188,7 +1184,7 @@ def require_constant_result_dtype(dtype: Var) -> Type:
             raise TileTypeError("Result type cannot have no memory space")
         memory_space = datatype.MemorySpace(const_dtype.value)
         return make_tile_ty(OpaquePointerTy(memory_space=memory_space), ())
-    elif isinstance(const_dtype, datatype.VectorTy):
+    elif is_vector_ty(const_dtype):
         return const_dtype
     elif isinstance(const_dtype, datatype.DType):
         return make_tile_ty(const_dtype, ())

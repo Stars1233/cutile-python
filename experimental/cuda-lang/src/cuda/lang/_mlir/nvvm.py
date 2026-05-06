@@ -1241,9 +1241,9 @@ def add_AddFOp(
 
 def add_AggrSmemSize(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.aggr.smem.size",
@@ -1313,10 +1313,10 @@ def add_BarrierOp(
 
 def add_BlockDimXOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1331,10 +1331,10 @@ def add_BlockDimXOp(
 
 def add_BlockDimYOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1349,10 +1349,10 @@ def add_BlockDimYOp(
 
 def add_BlockDimZOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1367,10 +1367,10 @@ def add_BlockDimZOp(
 
 def add_BlockIdXOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1385,10 +1385,10 @@ def add_BlockIdXOp(
 
 def add_BlockIdYOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1403,10 +1403,10 @@ def add_BlockIdYOp(
 
 def add_BlockIdZOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1421,10 +1421,10 @@ def add_BlockIdZOp(
 
 def add_BlockInClusterIdXOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1439,10 +1439,10 @@ def add_BlockInClusterIdXOp(
 
 def add_BlockInClusterIdYOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1457,10 +1457,10 @@ def add_BlockInClusterIdYOp(
 
 def add_BlockInClusterIdZOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1507,9 +1507,9 @@ def add_BulkStoreOp(
 
 def add_Clock64Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(64)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.clock64",
@@ -1522,9 +1522,9 @@ def add_Clock64Op(
 
 def add_ClockOp(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.clock",
@@ -1571,10 +1571,10 @@ def add_ClusterArriveRelaxedOp(
 
 def add_ClusterDim(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1589,10 +1589,10 @@ def add_ClusterDim(
 
 def add_ClusterDimBlocksXOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1607,10 +1607,10 @@ def add_ClusterDimBlocksXOp(
 
 def add_ClusterDimBlocksYOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1625,10 +1625,10 @@ def add_ClusterDimBlocksYOp(
 
 def add_ClusterDimBlocksZOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1643,10 +1643,10 @@ def add_ClusterDimBlocksZOp(
 
 def add_ClusterDimXOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1661,10 +1661,10 @@ def add_ClusterDimXOp(
 
 def add_ClusterDimYOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1679,10 +1679,10 @@ def add_ClusterDimYOp(
 
 def add_ClusterDimZOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1697,10 +1697,10 @@ def add_ClusterDimZOp(
 
 def add_ClusterId(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1715,10 +1715,10 @@ def add_ClusterId(
 
 def add_ClusterIdXOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1733,10 +1733,10 @@ def add_ClusterIdXOp(
 
 def add_ClusterIdYOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -1751,10 +1751,10 @@ def add_ClusterIdYOp(
 
 def add_ClusterIdZOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -2644,9 +2644,9 @@ def add_DotAccumulate4WayOp(
 
 def add_DynamicSmemSize(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.dynamic.smem.size",
@@ -2675,9 +2675,9 @@ def add_ElectSyncOp(
 
 def add_EnvReg0Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg0",
@@ -2690,9 +2690,9 @@ def add_EnvReg0Op(
 
 def add_EnvReg1Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg1",
@@ -2705,9 +2705,9 @@ def add_EnvReg1Op(
 
 def add_EnvReg2Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg2",
@@ -2720,9 +2720,9 @@ def add_EnvReg2Op(
 
 def add_EnvReg3Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg3",
@@ -2735,9 +2735,9 @@ def add_EnvReg3Op(
 
 def add_EnvReg4Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg4",
@@ -2750,9 +2750,9 @@ def add_EnvReg4Op(
 
 def add_EnvReg5Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg5",
@@ -2765,9 +2765,9 @@ def add_EnvReg5Op(
 
 def add_EnvReg6Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg6",
@@ -2780,9 +2780,9 @@ def add_EnvReg6Op(
 
 def add_EnvReg7Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg7",
@@ -2795,9 +2795,9 @@ def add_EnvReg7Op(
 
 def add_EnvReg8Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg8",
@@ -2810,9 +2810,9 @@ def add_EnvReg8Op(
 
 def add_EnvReg9Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg9",
@@ -2825,9 +2825,9 @@ def add_EnvReg9Op(
 
 def add_EnvReg10Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg10",
@@ -2840,9 +2840,9 @@ def add_EnvReg10Op(
 
 def add_EnvReg11Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg11",
@@ -2855,9 +2855,9 @@ def add_EnvReg11Op(
 
 def add_EnvReg12Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg12",
@@ -2870,9 +2870,9 @@ def add_EnvReg12Op(
 
 def add_EnvReg13Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg13",
@@ -2885,9 +2885,9 @@ def add_EnvReg13Op(
 
 def add_EnvReg14Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg14",
@@ -2900,9 +2900,9 @@ def add_EnvReg14Op(
 
 def add_EnvReg15Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg15",
@@ -2915,9 +2915,9 @@ def add_EnvReg15Op(
 
 def add_EnvReg16Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg16",
@@ -2930,9 +2930,9 @@ def add_EnvReg16Op(
 
 def add_EnvReg17Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg17",
@@ -2945,9 +2945,9 @@ def add_EnvReg17Op(
 
 def add_EnvReg18Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg18",
@@ -2960,9 +2960,9 @@ def add_EnvReg18Op(
 
 def add_EnvReg19Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg19",
@@ -2975,9 +2975,9 @@ def add_EnvReg19Op(
 
 def add_EnvReg20Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg20",
@@ -2990,9 +2990,9 @@ def add_EnvReg20Op(
 
 def add_EnvReg21Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg21",
@@ -3005,9 +3005,9 @@ def add_EnvReg21Op(
 
 def add_EnvReg22Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg22",
@@ -3020,9 +3020,9 @@ def add_EnvReg22Op(
 
 def add_EnvReg23Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg23",
@@ -3035,9 +3035,9 @@ def add_EnvReg23Op(
 
 def add_EnvReg24Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg24",
@@ -3050,9 +3050,9 @@ def add_EnvReg24Op(
 
 def add_EnvReg25Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg25",
@@ -3065,9 +3065,9 @@ def add_EnvReg25Op(
 
 def add_EnvReg26Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg26",
@@ -3080,9 +3080,9 @@ def add_EnvReg26Op(
 
 def add_EnvReg27Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg27",
@@ -3095,9 +3095,9 @@ def add_EnvReg27Op(
 
 def add_EnvReg28Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg28",
@@ -3110,9 +3110,9 @@ def add_EnvReg28Op(
 
 def add_EnvReg29Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg29",
@@ -3125,9 +3125,9 @@ def add_EnvReg29Op(
 
 def add_EnvReg30Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg30",
@@ -3140,9 +3140,9 @@ def add_EnvReg30Op(
 
 def add_EnvReg31Op(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg31",
@@ -3340,9 +3340,9 @@ def add_FmaOp(
 
 def add_GlobalTimerLoOp(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.globaltimer.lo",
@@ -3355,9 +3355,9 @@ def add_GlobalTimerLoOp(
 
 def add_GlobalTimerOp(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(64)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.globaltimer",
@@ -3370,10 +3370,10 @@ def add_GlobalTimerOp(
 
 def add_GridDimXOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -3388,10 +3388,10 @@ def add_GridDimXOp(
 
 def add_GridDimYOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -3406,10 +3406,10 @@ def add_GridDimYOp(
 
 def add_GridDimZOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -3424,10 +3424,10 @@ def add_GridDimZOp(
 
 def add_GridIdOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -3481,10 +3481,10 @@ def add_InlinePtxOp(
 
 def add_LaneIdOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -3499,9 +3499,9 @@ def add_LaneIdOp(
 
 def add_LaneMaskEqOp(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.lanemask.eq",
@@ -3514,9 +3514,9 @@ def add_LaneMaskEqOp(
 
 def add_LaneMaskGeOp(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.lanemask.ge",
@@ -3529,9 +3529,9 @@ def add_LaneMaskGeOp(
 
 def add_LaneMaskGtOp(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.lanemask.gt",
@@ -3544,9 +3544,9 @@ def add_LaneMaskGtOp(
 
 def add_LaneMaskLeOp(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.lanemask.le",
@@ -3559,9 +3559,9 @@ def add_LaneMaskLeOp(
 
 def add_LaneMaskLtOp(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.lanemask.lt",
@@ -4289,10 +4289,10 @@ def add_SinOp(
 
 def add_SmDimOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -4307,10 +4307,10 @@ def add_SmDimOp(
 
 def add_SmIdOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -4832,10 +4832,10 @@ def add_TensormapReplaceOp(
 
 def add_ThreadIdXOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -4850,10 +4850,10 @@ def add_ThreadIdXOp(
 
 def add_ThreadIdYOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -4868,10 +4868,10 @@ def add_ThreadIdYOp(
 
 def add_ThreadIdZOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -4886,9 +4886,9 @@ def add_ThreadIdZOp(
 
 def add_TotalSmemSize(
     *,
-    res_type: Type,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.total.smem.size",
@@ -5006,10 +5006,10 @@ def add_WMMAStoreOp(
 
 def add_WarpDimOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -5024,10 +5024,10 @@ def add_WarpDimOp(
 
 def add_WarpIdOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))
@@ -5042,10 +5042,10 @@ def add_WarpIdOp(
 
 def add_WarpSizeOp(
     *,
-    res_type: Type,
     range: Optional[llvm.ConstantRangeAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
+    res_type = IntegerType.signless(32)
     all_props = []
     if range is not None:
         all_props.append(('range', range))

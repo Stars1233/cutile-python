@@ -19,10 +19,13 @@ from cuda.tile._ir.type import (
     TokenTy,
     TypeTy,
     EnumTy,
-    make_tile_ty, ContextManagerTy, ContextManagerState,
+    make_tile_ty,
+    ContextManagerTy,
+    ContextManagerState,
 )
 from cuda.tile._datatype import DType
 from cuda.tile._ir.ir import Var, AggregateValue
+from cuda.lang._exception import TileTypeError
 
 
 class MemorySpace(Enum):
@@ -35,16 +38,29 @@ class MemorySpace(Enum):
     SHARED_CLUSTER = 7
 
 
-class VectorTy(TileTy):
-    def __init__(self, dtype, length: int):
-        super().__init__(dtype, (length,))
+def _is_power_of_2(value: int) -> bool:
+    assert isinstance(value, int)
+    return value > 0 and value & (value - 1) == 0
 
-    def __str__(self):
-        return f"VectorTy[{self.dtype},{self.num_elements}]"
 
-    @property
-    def num_elements(self):
-        return self.shape[0]
+def is_vector_ty(ty: Type) -> bool:
+    return (
+        isinstance(ty, TileTy)
+        and len(ty.shape) == 1
+        and _is_power_of_2(ty.shape[0])
+    )
+
+
+def make_vector_ty(dtype: DType, length: int) -> TileTy:
+    if not isinstance(length, int):
+        raise TileTypeError(
+            f"Expected vector length to be an int, got {type(length).__name__}"
+        )
+    if not _is_power_of_2(length):
+        raise TileTypeError(
+            f"Expected vector length to be a positive power of two, got {length}"
+        )
+    return make_tile_ty(dtype, (length,))
 
 
 @dataclass(frozen=True, eq=True)
@@ -88,12 +104,13 @@ __all__ = (
     "DTypeConstructor",
     "NoneType",
     "OpaquePointerTy",
-    "VectorTy",
     "ModuleTy",
     "PointerTy",
     "TokenTy",
     "TypeTy",
     "EnumTy",
     "make_tile_ty",
+    "make_vector_ty",
+    "is_vector_ty",
     "MemorySpace",
 )
