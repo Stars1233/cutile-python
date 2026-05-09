@@ -15,15 +15,15 @@ def test_ir2mlir():
     # CHECK: gpu.module
     # CHECK-SAME: sym_name = "kernels"
 
-    # CHECK: gpu.func
-    # CHECK-SAME: function_type = () -> ()
-    # CHECK: gpu.return
+    # CHECK: llvm.func
+    # CHECK-SAME: sym_name = "kernel_Kt1"
+    # CHECK-SAME: function_type = !llvm.func<void ()>
+    # CHECK: llvm.return
 
     # NOTE: the mlir wrappers print ops generically,
     # so the attributes are printed at the end of the op.
 
-    # CHECK: sym_name = "kernel_Kt1"
-    # CHECK-SAME: gpu.kernel
+    # CHECK: nvvm.kernel
 
     # CHECK: gpu.container_module
     def kernel():

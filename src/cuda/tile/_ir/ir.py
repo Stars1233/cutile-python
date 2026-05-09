@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import (
-    List, Optional, Dict, Tuple, Any, TYPE_CHECKING, Sequence, Iterator
+    List, Optional, Dict, Tuple, Any, TYPE_CHECKING, Sequence, Iterator, Callable
 )
 
 from cuda.tile._ir.type import Type, InvalidType
@@ -810,7 +810,7 @@ class Block:
     def __init__(self, ctx: IRContext, loc: Loc):
         self.ctx = ctx
         self._operations: List[Operation] = []
-        self.params = ()
+        self.params: tuple[Var, ...] = ()
         self.loc = loc
 
     def empty_like_self(self: "Block") -> "Block":
@@ -880,6 +880,19 @@ class Block:
             for b in op.nested_blocks:
                 yield from b.traverse()
             yield op
+
+    def remove_if(self, predicate: Callable[[Operation], bool]):
+        to_remove = {i for i, op in enumerate(self) if predicate(op)}
+        remove_count = len(to_remove)
+        if remove_count > 0:
+            new_ops = [self[i] for i in range(len(self)) if i not in to_remove]
+            self[:] = new_ops
+
+        for op in self:
+            for nb in op.nested_blocks:
+                remove_count += nb.remove_if(predicate)
+
+        return remove_count
 
     def __str__(self) -> str:
         return self.to_string()

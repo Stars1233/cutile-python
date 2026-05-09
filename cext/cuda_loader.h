@@ -54,7 +54,8 @@
     X(cuGraphAddMemFreeNode, 11040) \
     X(cuGraphInstantiateWithFlags, 11040) \
     X(cuGraphExecDestroy, 10000) \
-    X(cuGraphLaunch, 10000)
+    X(cuGraphLaunch, 10000) \
+    X(cuTensorMapEncodeTiled, 12000)
 
 
 #define DECLARE_CUDA_FUNC_EXTERN(name, _cuda_version) \

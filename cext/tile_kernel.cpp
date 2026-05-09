@@ -4,6 +4,7 @@
 
 #include "tile_kernel.h"
 
+#include "arena.h"
 #include "check.h"
 #include "cuda_loader.h"
 #include "cuda_helper.h"
@@ -15,6 +16,7 @@
 #include <cuda.h>
 #include <dlpack.h>
 
+#include <array>
 #include <memory>
 #include <algorithm>
 #include <utility>
@@ -290,6 +292,7 @@ struct HashVector {
 #define FOREACH_SIZE_OPCODE(X) \
     X(Const, 1, 0, 1) \
     X(KernelArgI32, 1, 0, 1) \
+    X(KernelArgI64, 1, 0, 1) \
     X(Add, 0, 2, -1) \
     X(Mul, 0, 2, -1) \
     X(RoundUpToPow2, 1, 1, 0)
@@ -315,16 +318,33 @@ static Result<SizeOpcode> size_opcode_parse(PyObject* opcode_str,
     return raise(PyExc_ValueError, "Invalid opcode string %R", opcode_str);
 }
 
-namespace { struct SizeProgram {
+namespace { struct HostProgram {
     enum { kMaxStackDepth = 32 };
 
     Vec<SizeOpcode> opcodes;
     Vec<int64_t> op_attrs;
 }; }
 
+namespace { struct HoistedTensorMap {
+    enum { kMaxRank = 5 };
+
+    CUtensorMapDataType dtype;
+    uint32_t item_size;
+    uint32_t rank;
+    uint32_t base_ptr_param_idx;
+    HostProgram shape_stride_program;
+    uint32_t box_dim[kMaxRank];
+    uint32_t traversal_steps[kMaxRank];
+    CUtensorMapInterleave interleave;
+    CUtensorMapSwizzle swizzle;
+    CUtensorMapL2promotion l2_promotion;
+    CUtensorMapFloatOOBfill oob_fill;
+}; }
+
 struct TileKernel {
     CudaKernel cukernel;
-    SizeProgram dyn_smem_size_prog;
+    HostProgram dyn_smem_size_prog;
+    Vec<HoistedTensorMap> hoisted_tensor_maps;
 };
 
 using KernelMap = HashMap<Vec<int64_t>, TileKernel>;
@@ -337,26 +357,37 @@ union Word {
     void* device_ptr;
     int32_t i32;
     int64_t i64;
+    size_t size;
     float f32;
+    Word* arena_ptr;
 };
 
 static_assert(sizeof(Word) == 8);
 
 struct ListArg {
-    size_t cuarg_idx;  // offset into LaunchHelper.cuargs
-    size_t offset;  // offset into LaunchHelper.cuargs.nested_arrays
+    Word* base_ptr_cuarg;
+    size_t length;
+    Word* item_pointers;  // [length], each word containing an `arena_ptr` that points to the item
+    size_t item_size_words;
 };
 
 struct LaunchHelper {
     Vec<PyTypeObject*> pyarg_types;
-    Vec<Word> cuargs;
-    Vec<Word> nested_arrays;
+    Arena<Word> arena;
+    Vec<Word*> cuarg_pointers;  // pointers into `arena`
     Vec<ListArg> list_args;
-    Vec<void*> cuarg_pointers;
+    size_t total_list_data_size_words;
     Vec<int64_t> constants;
     CUcontext cuda_context;
     LaunchHelper* next_free;
 };
+
+static Word* push_single_word_cuarg(LaunchHelper& helper, Word word) {
+    Word* ptr = helper.arena.alloc(1);
+    *ptr = word;
+    helper.cuarg_pointers.push_back(ptr);
+    return ptr;
+}
 
 static LaunchHelper* g_helper_freelist;  // protected by the GIL
 
@@ -524,6 +555,11 @@ struct ArrayType {
     unsigned index_bitwidth;
 };
 
+struct ArrayRepr {
+    ArrayType arrty;
+    Word* repr;
+};
+
 // This should compile to a no-op
 static inline uint32_t dtype_as_uint(DLDataType dtype) {
     return static_cast<uint32_t>(dtype.code)
@@ -588,7 +624,7 @@ static PyPtr dtype_to_python(DLDataType dtype) {
 // Pack data type, array rank, and index bitwidth in a single int64_t so it
 // could be used as a single constant for looking up the kernel in a family.
 // Layout: [63: index_bitwidth (0=32, 1=64)] [62..32: ndim] [31..0: dtype]
-static int64_t pack_array_type(ArrayType a) {
+static int64_t pack_array_type(const ArrayType& a) {
     uint64_t dtype_u = static_cast<uint64_t>(dtype_as_uint(a.dtype));
     uint64_t ndim_u = static_cast<uint64_t>(a.ndim);
     uint64_t ibw_bit = (a.index_bitwidth == 64) ? 1ULL : 0ULL;
@@ -603,39 +639,37 @@ static ArrayType unpack_array_type(int64_t c) {
     return {dtype_from_uint(dtype), ndim, ibw};
 }
 
-static Status extract_compact_row_major_strides(size_t ndim, size_t shape_offset,
-                                                unsigned index_bitwidth, Vec<Word>& dst) {
+static Status fill_row_major_strides(unsigned index_bitwidth, Word* repr, size_t ndim) {
     if (ndim == 0) return OK;
 
-    dst.resize(dst.size() + ndim);
-    size_t stride_idx = dst.size();
-    size_t shape_idx = shape_offset + ndim;
+    Word* shape = repr + 1 + ndim;
+    Word* stride = shape + ndim;
     uint64_t prev_stride = 1;
-    dst[--stride_idx].i64 = 1;
+    (--stride)->i64 = 1;
 
     for (size_t i = 0; i < ndim - 1; ++i) {
-        uint64_t new_stride = prev_stride * static_cast<uint64_t>(dst[--shape_idx].i64);
+        uint64_t new_stride = prev_stride * static_cast<uint64_t>((--shape)->i64);
         if (index_bitwidth != 64 && new_stride > INT32_MAX)
             return raise(PyExc_OverflowError, "stride is too big");
-        dst[--stride_idx].i64 = new_stride;
+        (--stride)->i64 = new_stride;
         prev_stride = new_stride;
     }
     return OK;
 }
 
 static ArraySpecializationBits compute_array_specialization_bits(
-    void* data_ptr, size_t ndim, unsigned dtype_bitwidth, const Word* shape_stride,
-    unsigned index_bitwidth) {
+        const Word* array_repr, size_t ndim, unsigned dtype_bitwidth, unsigned index_bitwidth) {
 
     ArraySpecializationBits ret = {};
-
-    const Word* strides = shape_stride + ndim;
+    void* data_ptr = array_repr[0].device_ptr;
+    const Word* shape_words = array_repr + 1;
+    const Word* stride_words = shape_words + ndim;
 
     // Only specialize stride divisibility, stride 1 and shape divisibility for ndim <= TMA_MAX_NDIM
     if (ndim <= TMA_MAX_NDIM) {
         for (size_t i = 0; i < ndim; ++i) {
-            int64_t stride = strides[i].i64;
-            int64_t shape = shape_stride[i].i64;
+            int64_t stride = stride_words[i].i64;
+            int64_t shape = shape_words[i].i64;
             int64_t stride_bitwidth = stride * dtype_bitwidth;
             int64_t shape_bitwidth = shape * dtype_bitwidth;
             bool is_stride_byte_aligned = stride_bitwidth % BYTE_BITWIDTH == 0;
@@ -664,7 +698,7 @@ static ArraySpecializationBits compute_array_specialization_bits(
     // of the underlying array.
     Vec<std::pair<int64_t, int64_t>> strides_and_shape(ndim);
     for (size_t i = 0; i < ndim; ++i) {
-        strides_and_shape[i] = {strides[i].i64, shape_stride[i].i64};
+        strides_and_shape[i] = {stride_words[i].i64, shape_words[i].i64};
     }
     std::sort(strides_and_shape.begin(), strides_and_shape.end());
 
@@ -699,34 +733,30 @@ struct ConstantCursor {
     }
 };
 
-static void extract_array_specialization_constants(const DriverApi* driver,
-                                                   ArrayType arrtype,
-                                                   const Word* array_repr,
-                                                   size_t num_arrays,
-                                                   LaunchHelper& helper) {
-    CHECK(num_arrays >= 1);
-    helper.constants.push_back(pack_array_type(arrtype));
 
-    if (!helper.cuda_context) {
-        void* first_data_ptr = array_repr[0].device_ptr;
-        driver->cuPointerGetAttribute(&helper.cuda_context, CU_POINTER_ATTRIBUTE_CONTEXT,
-                reinterpret_cast<CUdeviceptr>(first_data_ptr));
+struct ArrayTypeConstantBuilder {
+    void* device_ptr = nullptr;
+    uint64_t bits = -1;
+
+    void update(const ArrayRepr& ar) {
+        device_ptr = ar.repr[0].device_ptr;
+        bits &= compute_array_specialization_bits(
+                    ar.repr, ar.arrty.ndim, ar.arrty.dtype.bits * ar.arrty.dtype.lanes,
+                    ar.arrty.index_bitwidth).u64;
     }
 
-    uint64_t special_bits = ~static_cast<uint64_t>(0);
-    size_t repr_len = 1 + 2 * arrtype.ndim;
-    for (size_t i = 0; i < num_arrays; ++i) {
-        void* data_ptr = array_repr[0].device_ptr;
-        special_bits &= compute_array_specialization_bits(
-                data_ptr, arrtype.ndim, arrtype.dtype.bits * arrtype.dtype.lanes,
-                array_repr + 1, arrtype.index_bitwidth).u64;
-        array_repr += repr_len;
+    void finalize(const DriverApi* driver, const ArrayType& arrty, LaunchHelper& helper) {
+        helper.constants.push_back(pack_array_type(arrty));
+        if (!helper.cuda_context) {
+            driver->cuPointerGetAttribute(&helper.cuda_context, CU_POINTER_ATTRIBUTE_CONTEXT,
+                    reinterpret_cast<CUdeviceptr>(device_ptr));
+        }
+        helper.constants.push_back(bits);
     }
+};
 
-    helper.constants.push_back(special_bits);
-}
 
-// Parse the constants generated by extract_array_specialization_constants()
+// Parse the constants generated by ArrayTypeConstantBuilder.finalize()
 // into an ArrayConstraint object.
 static PyPtr parse_array_constraint(ConstantCursor& cursor) {
     ArrayType arrty = unpack_array_type(cursor.next());
@@ -822,8 +852,8 @@ static PyPtr parse_array_constraint(ConstantCursor& cursor) {
                      ndim, INT32_MAX);
 
 
-static Status arrayrepr_cuda_array_iface(PyObject* pyobj, unsigned index_bitwidth,
-                                          Vec<Word>& dst, ArrayType& arrtype) {
+static Result<ArrayRepr> arrayrepr_cuda_array_iface(PyObject* pyobj, unsigned index_bitwidth,
+                                                    Arena<Word>& arena) {
     PyPtr dict = steal(PyObject_GetAttr(pyobj, g___cuda_array_interface___pyunicode));
     if (!PyDict_Check(dict.get())) {
         PyErr_SetString(PyExc_TypeError,
@@ -854,27 +884,28 @@ static Status arrayrepr_cuda_array_iface(PyObject* pyobj, unsigned index_bitwidt
 
     intptr_t data_ptr_int = pylong_as<intptr_t>(data_ptr_pylong);
     if (PyErr_Occurred()) return ErrorRaised;
-    dst.push_back({.device_ptr = reinterpret_cast<void*>(data_ptr_int)});
 
     Py_ssize_t ndim = PyTuple_GET_SIZE(shape);
     ASSERT_NDIM(ndim);
+
+    Word* repr = arena.alloc(1 + 2 * ndim);
+    repr[0].device_ptr = reinterpret_cast<void*>(data_ptr_int);
 
     // Parse the shape
     if (!PyTuple_Check(shape))
         return raise(PyExc_TypeError, "__cuda_array_interface['shape'] is not a tuple");
 
-    size_t shape_offset = dst.size();
     for (Py_ssize_t i = 0; i < ndim; ++i) {
         int64_t size = pylong_as<int64_t>(PyTuple_GET_ITEM(shape, i));
         if (PyErr_Occurred()) return ErrorRaised;
-        dst.push_back({.i64 = size});
+        repr[1 + i].i64 = size;
     }
 
     // Parse the strides
     PyObject* strides = PyDict_GetItem(dict.get(), g_strides_pyunicode);
     if (PyErr_Occurred()) return ErrorRaised;
     if (!strides || strides == Py_None) {
-        if (!extract_compact_row_major_strides(ndim, shape_offset, index_bitwidth, dst))
+        if (!fill_row_major_strides(index_bitwidth, repr, ndim))
             return ErrorRaised;
     } else if (PyTuple_Check(strides)) {
         // Only byte-aligned types should be supported by __cuda_array_interface__
@@ -882,22 +913,25 @@ static Status arrayrepr_cuda_array_iface(PyObject* pyobj, unsigned index_bitwidt
         for (Py_ssize_t i = 0; i < ndim; ++i) {
             int64_t stride = pylong_as<int64_t>(PyTuple_GET_ITEM(strides, i));
             if (PyErr_Occurred()) return ErrorRaised;
-            dst.push_back(
-                    {.i64 = static_cast<int64_t>(stride / dtype_bytewidth)});
+            repr[1 + ndim + i].i64 = static_cast<int64_t>(stride / dtype_bytewidth);
         }
     } else {
         return raise(PyExc_TypeError, "__cuda_array_interface['strides'] can only be"
                                       " absent, None, or a tuple");
     }
 
-    arrtype.dtype = *dtype;
-    arrtype.ndim = ndim;
-    arrtype.index_bitwidth = index_bitwidth;
-    return OK;
+    return ArrayRepr {
+        .arrty = {
+            .dtype = *dtype,
+            .ndim = static_cast<size_t>(ndim),
+            .index_bitwidth = index_bitwidth
+        },
+        .repr = repr
+    };
 }
 
-static Status arrayrepr_dlpack_common(PyObject* dlpack_capsule, unsigned index_bitwidth,
-                                      Vec<Word>& dst, ArrayType& arrtype) {
+static Result<ArrayRepr> arrayrepr_dlpack_common(PyObject* dlpack_capsule, unsigned index_bitwidth,
+                                                 Arena<Word>& arena) {
     void* ptr = PyCapsule_GetPointer(dlpack_capsule, "dltensor");
     if (!ptr) return ErrorRaised;
     DLManagedTensor* tensor = static_cast<DLManagedTensor*>(ptr);
@@ -908,34 +942,40 @@ static Status arrayrepr_dlpack_common(PyObject* dlpack_capsule, unsigned index_b
     // TODO: check device ID
 
     void* data_ptr = static_cast<char*>(tensor->dl_tensor.data) + tensor->dl_tensor.byte_offset;
-    dst.push_back({.device_ptr = data_ptr});
 
-    int32_t ndim = tensor->dl_tensor.ndim;
+    uint32_t ndim = tensor->dl_tensor.ndim;
     ASSERT_NDIM(ndim);
 
-    size_t shape_offset = dst.size();
-    for (int32_t i = 0; i < ndim; ++i) {
+    Word* repr = arena.alloc(1 + 2 * ndim);
+    repr[0].device_ptr = data_ptr;
+
+    for (uint32_t i = 0; i < ndim; ++i) {
         if (index_bitwidth != 64 && (tensor->dl_tensor.shape[i] < INT32_MIN
             || tensor->dl_tensor.shape[i] > INT32_MAX))
             return raise(PyExc_OverflowError, "shape is too big");
-        dst.push_back({.i64 = tensor->dl_tensor.shape[i]});
+        repr[1 + i].i64 = tensor->dl_tensor.shape[i];
     }
 
     if (!tensor->dl_tensor.strides) {
-        if (!extract_compact_row_major_strides(ndim, shape_offset, index_bitwidth, dst))
+        if (!fill_row_major_strides(index_bitwidth, repr, ndim))
             return ErrorRaised;
     } else {
-        for (int32_t i = 0; i < ndim; ++i) {
+        for (uint32_t i = 0; i < ndim; ++i) {
             if(index_bitwidth != 64 && (tensor->dl_tensor.strides[i] < INT32_MIN
                 || tensor->dl_tensor.strides[i] > INT32_MAX))
                 return raise(PyExc_OverflowError, "stride is too big");
-            dst.push_back({.i64 = tensor->dl_tensor.strides[i]});
+            repr[1 + ndim + i].i64 = tensor->dl_tensor.strides[i];
         }
     }
 
-    arrtype.dtype = tensor->dl_tensor.dtype;
-    arrtype.ndim = ndim;
-    arrtype.index_bitwidth = index_bitwidth;
+    ArrayRepr ret = {
+        .arrty = {
+            .dtype = tensor->dl_tensor.dtype,
+            .ndim = ndim,
+            .index_bitwidth = index_bitwidth
+        },
+        .repr = repr
+    };
 
     PyCapsule_SetName(dlpack_capsule, "used_dltensor");
 
@@ -948,23 +988,22 @@ static Status arrayrepr_dlpack_common(PyObject* dlpack_capsule, unsigned index_b
     // instead of calling the deleter immediately, we would push a cudaEvent to the stream
     // after we launch the kernel, and only call the deleter once the event is ready.
     tensor->deleter(tensor);
-    return OK;
+    return ret;
 }
 
 
 #define TORCH_DTYPE_TO_DL_DTYPE(name, bitwidth, lanes, typecode) \
-if (torch_dtype == g_torch_dtype_##name) { \
-    out = DLDataType{typecode, bitwidth, lanes}; \
-    return OK; \
-}
+if (torch_dtype == g_torch_dtype_##name) \
+    return DLDataType{typecode, bitwidth, lanes};
 
-static Status dtype_from_torch_dtype(PyObject* torch_dtype, DLDataType& out) {
+
+static Result<DLDataType> dtype_from_torch_dtype(PyObject* torch_dtype) {
     FOREACH_TORCH_DTYPE(TORCH_DTYPE_TO_DL_DTYPE)
     return raise(PyExc_TypeError, "dtype is not supported");
 }
 
-static Status arrayrepr_torch_tensor_pymethod(PyObject* tensor, unsigned index_bitwidth,
-        Vec<Word>& dst, ArrayType& arrtype) {
+static Result<ArrayRepr> arrayrepr_torch_tensor_pymethod(PyObject* tensor, unsigned index_bitwidth,
+                                                         Arena<Word>& arena) {
     PyPtr data_ptr = steal(PyObject_CallMethod(tensor, "data_ptr", nullptr));
     if (!data_ptr) return ErrorRaised;
 
@@ -981,19 +1020,21 @@ static Status arrayrepr_torch_tensor_pymethod(PyObject* tensor, unsigned index_b
         return raise(PyExc_TypeError, "data_ptr cannot be converted to int");
     long long addr = PyLong_AsLongLong(data_ptr.get());
     if (PyErr_Occurred()) return ErrorRaised;
-    dst.push_back({.device_ptr=(void*)addr});
 
     // Extract shape
     if (!PyTuple_Check(shape_ptr.get()))
         return raise(PyExc_TypeError, "expect shape to be an tuple");
     Py_ssize_t len = PyTuple_GET_SIZE(shape_ptr.get());
     if (len == -1) return ErrorRaised;
-    if (len < INT32_MIN || len > INT32_MAX)
+    if (len > INT32_MAX)
         return raise(PyExc_OverflowError, "rank is too big");
-    int32_t ndim = (int32_t)(len);
+    uint32_t ndim = len;
     ASSERT_NDIM(ndim);
 
-    for (int32_t i = 0; i < ndim; ++i) {
+    Word* repr = arena.alloc(1 + 2 * ndim);
+    repr[0].device_ptr = reinterpret_cast<void*>(addr);
+
+    for (uint32_t i = 0; i < ndim; ++i) {
         PyObject* item_ptr = PyTuple_GetItem(shape_ptr.get(), i);
         if (!item_ptr) return ErrorRaised;
         if (!PyLong_Check(item_ptr))
@@ -1003,7 +1044,7 @@ static Status arrayrepr_torch_tensor_pymethod(PyObject* tensor, unsigned index_b
 
         if (index_bitwidth != 64 && (si < INT32_MIN || si > INT32_MAX))
             return raise(PyExc_OverflowError, "shape is too big");
-        dst.push_back({.i64 = static_cast<int64_t>(si)});
+        repr[1 + i].i64 = static_cast<int64_t>(si);
     }
 
     // Extract stride
@@ -1014,7 +1055,7 @@ static Status arrayrepr_torch_tensor_pymethod(PyObject* tensor, unsigned index_b
     if (stride_len != ndim)
         return raise(PyExc_ValueError, "shape and stride have different length");
 
-    for (int32_t i = 0; i < ndim; ++i) {
+    for (uint32_t i = 0; i < ndim; ++i) {
         PyObject* item_ptr = PyTuple_GetItem(stride_ptr.get(), i);
         if (!item_ptr) return ErrorRaised;
         if (!PyLong_Check(item_ptr))
@@ -1023,30 +1064,40 @@ static Status arrayrepr_torch_tensor_pymethod(PyObject* tensor, unsigned index_b
         if (PyErr_Occurred()) return ErrorRaised;
         if (index_bitwidth != 64 && (si < INT32_MIN || si > INT32_MAX))
             return raise(PyExc_OverflowError, "stride is too big");
-        dst.push_back({.i64 = static_cast<int64_t>(si)});
+        repr[1 + ndim + i].i64 = static_cast<int64_t>(si);
     }
 
-    arrtype.ndim = ndim;
-    arrtype.index_bitwidth = index_bitwidth;
-    return dtype_from_torch_dtype(dtype_ptr.get(), arrtype.dtype);
+
+    Result<DLDataType> dtype_res = dtype_from_torch_dtype(dtype_ptr.get());
+    if (!dtype_res.is_ok())
+        return ErrorRaised;
+
+    return ArrayRepr{
+        .arrty = {
+            .dtype = *dtype_res,
+            .ndim = ndim,
+            .index_bitwidth = index_bitwidth,
+        },
+        .repr = repr,
+    };
 }
 
-static Status arrayrepr_torch_tensor_dlpack(PyObject* pyobj, unsigned index_bitwidth,
-                                             Vec<Word>& dst, ArrayType& arrtype) {
+static Result<ArrayRepr> arrayrepr_torch_tensor_dlpack(PyObject* pyobj, unsigned index_bitwidth,
+                                                       Arena<Word>& arena) {
     PyPtr dlpack_capsule = steal(PyObject_CallFunctionObjArgs(
                 g_torch_to_dlpack_func, pyobj, nullptr));
 
     if (!dlpack_capsule) {
         SavedException exc = save_raised_exception();
         LOG_PYTHON_ERROR("debug", exc, "Fail to convert to dlpack, use fallback path");
-        return arrayrepr_torch_tensor_pymethod(pyobj, index_bitwidth, dst, arrtype);
+        return arrayrepr_torch_tensor_pymethod(pyobj, index_bitwidth, arena);
     }
 
-    return arrayrepr_dlpack_common(dlpack_capsule.get(), index_bitwidth, dst, arrtype);
+    return arrayrepr_dlpack_common(dlpack_capsule.get(), index_bitwidth, arena);
 }
 
-static Status arrayrepr_dlpack(PyObject* pyobj, unsigned index_bitwidth,
-                               Vec<Word>& dst, ArrayType& arrtype) {
+static Result<ArrayRepr> arrayrepr_dlpack(PyObject* pyobj, unsigned index_bitwidth,
+                                          Arena<Word>& arena) {
     PyPtr dlpack_method = steal(PyObject_GetAttr(pyobj, g___dlpack___pyunicode));
     if (!dlpack_method) return ErrorRaised;
 
@@ -1065,24 +1116,26 @@ static Status arrayrepr_dlpack(PyObject* pyobj, unsigned index_bitwidth,
                 dlpack_method.get(), empty_args.get(), kwargs.get()));
     if (!dlpack_capsule) return ErrorRaised;
 
-    return arrayrepr_dlpack_common(dlpack_capsule.get(), index_bitwidth, dst, arrtype);
+    return arrayrepr_dlpack_common(dlpack_capsule.get(), index_bitwidth, arena);
 }
 
 
-typedef Status(*ArrayReprFunc)(PyObject*, unsigned, Vec<Word>&, ArrayType&);
+typedef Result<ArrayRepr> (*ArrayReprFunc)(PyObject*, unsigned, Arena<Word>&);
 
 
 template <ArrayReprFunc F>
 static Status extract_array(const DriverApi* driver, PyObject* pyobj, unsigned index_bitwidth,
                              LaunchHelper& helper) {
-    size_t offset = helper.cuargs.size();
+    Result<ArrayRepr> ar = F(pyobj, index_bitwidth, helper.arena);
+    if (!ar.is_ok()) return ErrorRaised;
 
-    ArrayType arrtype;
-    if (!F(pyobj, index_bitwidth, helper.cuargs, arrtype))
-        return ErrorRaised;
+    size_t num_words = 1 + 2 * ar->arrty.ndim;
+    for (size_t i = 0; i < num_words; ++i)
+        helper.cuarg_pointers.push_back(ar->repr + i);
 
-    CHECK(helper.cuargs.size() == offset + 1 + 2 * arrtype.ndim);
-    extract_array_specialization_constants(driver, arrtype, &helper.cuargs[offset], 1, helper);
+    ArrayTypeConstantBuilder builder;
+    builder.update(*ar);
+    builder.finalize(driver, ar->arrty, helper);
     return OK;
 }
 
@@ -1098,7 +1151,7 @@ static inline Status extract_py_bool(PyObject* pyobj, bool is_constant, LaunchHe
     if (is_constant)
         helper.constants.push_back(val);
     else
-        helper.cuargs.push_back({.i32 = val});
+        push_single_word_cuarg(helper, {.i32 = val});
     return OK;
 }
 
@@ -1149,11 +1202,11 @@ static inline Status extract_py_long(PyObject* pyobj, bool is_constant, bool use
         if (use_i64) {
             int64_t value = pylong_as<int64_t>(pyobj);
             if (PyErr_Occurred()) return ErrorRaised;
-            helper.cuargs.push_back({.i64 = value});
+            push_single_word_cuarg(helper, {.i64 = value});
         } else {
             int32_t value = pylong_as<int32_t>(pyobj);
             if (PyErr_Occurred()) return ErrorRaised;
-            helper.cuargs.push_back({.i32 = value});
+            push_single_word_cuarg(helper, {.i32 = value});
         }
     }
     return OK;
@@ -1187,7 +1240,7 @@ static void extract_py_float(PyObject* pyobj, bool is_constant, LaunchHelper& he
         mem_copy(&i64_val, &value, sizeof(i64_val));
         helper.constants.push_back(i64_val);
     } else {
-        helper.cuargs.push_back({.f32 = static_cast<float>(value)});
+        push_single_word_cuarg(helper, {.f32 = static_cast<float>(value)});
     }
 }
 
@@ -1202,15 +1255,15 @@ static PyPtr parse_pyfloat_constraint(ConstantCursor& cursor, bool is_constant) 
     }
 }
 
-static Status get_array_repr(PythonArgKind kind, PyObject* pyobj, unsigned index_bitwidth,
-                             Vec<Word>& dst, ArrayType& arrtype) {
+static Result<ArrayRepr> get_array_repr(PythonArgKind kind, PyObject* pyobj,
+                                        unsigned index_bitwidth, Arena<Word>& arena) {
     switch (kind) {
         case PythonArgKind::TorchTensorDlpack:
-            return arrayrepr_torch_tensor_dlpack(pyobj, index_bitwidth, dst, arrtype);
+            return arrayrepr_torch_tensor_dlpack(pyobj, index_bitwidth, arena);
         case PythonArgKind::DlpackArray:
-            return arrayrepr_dlpack(pyobj, index_bitwidth, dst, arrtype);
+            return arrayrepr_dlpack(pyobj, index_bitwidth, arena);
         case PythonArgKind::CudaArray:
-            return arrayrepr_cuda_array_iface(pyobj, index_bitwidth, dst, arrtype);
+            return arrayrepr_cuda_array_iface(pyobj, index_bitwidth, arena);
         default:
             return raise(PyExc_AssertionError, "Unexpected argument kind for array: %d",
                          static_cast<int>(kind));
@@ -1227,11 +1280,6 @@ static Status extract_py_list(const DriverApi* driver, PyObject* pyobj, unsigned
     if (!len)
         return raise(PyExc_TypeError, "Empty lists are not supported as kernel arguments");
 
-    helper.list_args.push_back({.cuarg_idx = helper.cuargs.size(),
-                                .offset = helper.nested_arrays.size()});
-    helper.cuargs.push_back({.device_ptr = nullptr});  // to be filled later based on list_args
-    helper.cuargs.push_back({.i32 = static_cast<int32_t>(len)});
-
     // Handle the first item separately in order to determine the item type
 
     PyObject* first_item = PyList_GET_ITEM(pyobj, 0);
@@ -1246,11 +1294,28 @@ static Status extract_py_list(const DriverApi* driver, PyObject* pyobj, unsigned
     PythonArgKind first_arg_kind = *first_item_res;
     PyTypeObject* first_item_type = first_item->ob_type;
 
-    size_t offset = helper.nested_arrays.size();
-    ArrayType first_arrtype;
-    if (!get_array_repr(first_arg_kind, first_item, index_bitwidth,
-                        helper.nested_arrays, first_arrtype))
-        return ErrorRaised;
+    Result<ArrayRepr> first_repr_res = get_array_repr(first_arg_kind, first_item, index_bitwidth,
+                                                      helper.arena);
+    if (!first_repr_res.is_ok()) return ErrorRaised;
+
+    Word* item_pointers = helper.arena.alloc(len);
+    size_t item_size_words = 1 + 2 * first_repr_res->arrty.ndim;
+
+    // Push a relative offset in place of the base pointer for now, since we don't know the actual
+    // address yet. We will patch it later via `ListArg.base_ptr_cuarg`).
+    Word* base_ptr_cuarg = push_single_word_cuarg(helper,
+                                                  {.size = helper.total_list_data_size_words});
+    helper.total_list_data_size_words += len * item_size_words;
+    push_single_word_cuarg(helper, {.i32 = static_cast<int32_t>(len)});
+
+    helper.list_args.push_back({.base_ptr_cuarg = base_ptr_cuarg,
+                                .length = len,
+                                .item_pointers = item_pointers,
+                                .item_size_words = item_size_words});
+    item_pointers[0].arena_ptr = first_repr_res->repr;
+
+    ArrayTypeConstantBuilder builder;
+    builder.update(*first_repr_res);
 
     // Handle the rest of the list
     for (size_t i = 1; i < len; ++i) {
@@ -1264,23 +1329,22 @@ static Status extract_py_list(const DriverApi* driver, PyObject* pyobj, unsigned
              kind = *res;
         }
 
-        ArrayType arrtype;
-        if (!get_array_repr(kind, item, index_bitwidth, helper.nested_arrays, arrtype))
-            return ErrorRaised;
+        Result<ArrayRepr> repr_res = get_array_repr(kind, item, index_bitwidth, helper.arena);
+        if (!repr_res.is_ok()) return ErrorRaised;
+        item_pointers[i].arena_ptr = repr_res->repr;
 
         // TODO: nicer error messages
-        if (dtype_as_uint(first_arrtype.dtype) != dtype_as_uint(arrtype.dtype))
+        if (dtype_as_uint(first_repr_res->arrty.dtype) != dtype_as_uint(repr_res->arrty.dtype))
             return raise(PyExc_TypeError, "Arrays in list vary in data type");
-        if (first_arrtype.ndim != arrtype.ndim)
+        if (first_repr_res->arrty.ndim != repr_res->arrty.ndim)
             return raise(PyExc_TypeError, "Arrays in list vary in rank");
+
+        builder.update(*repr_res);
     }
 
     // TODO: If we accept lists of things other than arrays, then to disambiguate,
     //       we need to push another constant here that specifies the type of the list element .
-    CHECK(helper.nested_arrays.size() == offset + len * (1 + 2 * first_arrtype.ndim));
-    extract_array_specialization_constants(driver, first_arrtype,
-                                           &helper.nested_arrays[offset], len,
-                                           helper);
+    builder.finalize(driver, first_repr_res->arrty, helper);
     return OK;
 }
 
@@ -1317,9 +1381,10 @@ static Status extract_cuda_args(const DriverApi* driver,
                                 const Vec<bool>& int64_param_flags,
                                 LaunchHelper& helper) {
     CHECK(num_pyargs == arg_kinds.size());
-    helper.cuargs.clear();
-    helper.nested_arrays.clear();
+    helper.arena.clear();
+    helper.cuarg_pointers.clear();
     helper.list_args.clear();
+    helper.total_list_data_size_words = 0;
     helper.constants.clear();
     for (size_t i = 0; i < num_pyargs; ++i) {
         PyObject* pyobj = pyargs[i];
@@ -1448,14 +1513,16 @@ struct TileContextDispatcher {
 };
 
 
-static int64_t size_program_eval(const SizeProgram& prog, const Vec<Word>& cuargs) {
-    int64_t stack[SizeProgram::kMaxStackDepth];
+static void host_program_eval(const HostProgram& prog,
+                              const Vec<Word*>& cuarg_pointers,
+                              int64_t stack[HostProgram::kMaxStackDepth]) {
     int64_t* top = stack;
     const int64_t* op_attrs = prog.op_attrs.data();
     for (SizeOpcode opcode : prog.opcodes) {
         switch (opcode) {
         case SizeOpcode::Const: *top++ = *op_attrs++; break;
-        case SizeOpcode::KernelArgI32: *top++ = cuargs[*op_attrs++].i32; break;
+        case SizeOpcode::KernelArgI32: *top++ = cuarg_pointers[*op_attrs++]->i32; break;
+        case SizeOpcode::KernelArgI64: *top++ = cuarg_pointers[*op_attrs++]->i64; break;
         case SizeOpcode::Add: top[-2] += top[-1]; --top; break;  // TODO: overflow check?
         case SizeOpcode::Mul: top[-2] *= top[-1]; --top; break;  // TODO: overflow check?
         case SizeOpcode::RoundUpToPow2: {
@@ -1467,22 +1534,25 @@ static int64_t size_program_eval(const SizeProgram& prog, const Vec<Word>& cuarg
         }
         }
     }
-    return stack[0];
 }
 
-static Result<SizeProgram> size_program_parse(PyObject* opcodes_pylist, PyObject* attrs_pylist) {
-    if (opcodes_pylist == Py_None)
-        return SizeProgram{{SizeOpcode::Const}, {0}};
+static Result<HostProgram> host_program_parse(PyObject* prog_pyobj, int expected_results) {
+    if (prog_pyobj == Py_None)
+        return HostProgram{{SizeOpcode::Const}, {0}};
+    PyPtr opcodes_pylist = getattr(prog_pyobj, "opcodes");
+    if (!opcodes_pylist) return ErrorRaised;
+    PyPtr attrs_pylist = getattr(prog_pyobj, "op_attrs");
+    if (!attrs_pylist) return ErrorRaised;
 
-    Py_ssize_t num_opcodes = PyList_Size(opcodes_pylist);
-    Py_ssize_t num_attrs = PyList_Size(attrs_pylist);
+    Py_ssize_t num_opcodes = PyList_Size(opcodes_pylist.get());
+    Py_ssize_t num_attrs = PyList_Size(attrs_pylist.get());
     if (PyErr_Occurred()) return ErrorRaised;
 
-    SizeProgram prog;
+    HostProgram prog;
     Py_ssize_t remaining_attrs = num_attrs;
     int depth = 0;
     for (Py_ssize_t i = 0; i < num_opcodes; ++i) {
-        PyObject* py_opcode = PyList_GetItem(opcodes_pylist, i);
+        PyObject* py_opcode = PyList_GetItem(opcodes_pylist.get(), i);
         if (!py_opcode) return ErrorRaised;
 
         int opcode_attrs, min_stack, stack_eff;
@@ -1492,27 +1562,29 @@ static Result<SizeProgram> size_program_parse(PyObject* opcodes_pylist, PyObject
 
         if (remaining_attrs < opcode_attrs)
             return raise(PyExc_ValueError,
-                         "Invalid size program (at op #%zd): not enough attributes"
+                         "Invalid host program (at op #%zd): not enough attributes"
                          " for opcode %u (need %d, have %zd)",
                          i, static_cast<unsigned>(*opcode_res), opcode_attrs, remaining_attrs);
         remaining_attrs -= opcode_attrs;
 
         if (depth < min_stack)
-            return raise(PyExc_ValueError, "Invalid size program: not enough values on stack");
+            return raise(PyExc_ValueError, "Invalid host program: not enough values on stack");
         depth += stack_eff;
-        if (depth > SizeProgram::kMaxStackDepth)
-            return raise(PyExc_ValueError, "Invalid size program: stack overflow");
+        if (depth > HostProgram::kMaxStackDepth)
+            return raise(PyExc_ValueError, "Invalid host program: stack overflow");
 
         prog.opcodes.push_back(*opcode_res);
     }
 
     if (remaining_attrs != 0)
-        return raise(PyExc_ValueError, "Invalid size program: too many attributes");
-    if (depth != 1)
-        return raise(PyExc_ValueError, "Invalid size program: expected exactly 1 value on stack");
+        return raise(PyExc_ValueError, "Invalid host program: too many attributes");
+    if (depth != expected_results)
+        return raise(PyExc_ValueError,
+                     "Invalid host program: expected exactly %zu result(s) on stack at the end,"
+                     " got %d", expected_results, depth);
 
     for (Py_ssize_t i = 0; i < num_attrs; ++i) {
-        PyObject* py_attr = PyList_GetItem(attrs_pylist, i);
+        PyObject* py_attr = PyList_GetItem(attrs_pylist.get(), i);
         if (!py_attr) return ErrorRaised;
 
         prog.op_attrs.push_back(pylong_as<int64_t>(py_attr));
@@ -1521,6 +1593,200 @@ static Result<SizeProgram> size_program_parse(PyObject* opcodes_pylist, PyObject
 
     return prog;
 }
+
+#define FOREACH_INTEGER_CONSTANT(X) \
+    X(CU_TENSOR_MAP_DATA_TYPE_UINT8) \
+    X(CU_TENSOR_MAP_DATA_TYPE_UINT16) \
+    X(CU_TENSOR_MAP_DATA_TYPE_UINT32) \
+    X(CU_TENSOR_MAP_DATA_TYPE_INT32) \
+    X(CU_TENSOR_MAP_DATA_TYPE_UINT64) \
+    X(CU_TENSOR_MAP_DATA_TYPE_INT64) \
+    X(CU_TENSOR_MAP_DATA_TYPE_FLOAT16) \
+    X(CU_TENSOR_MAP_DATA_TYPE_FLOAT32) \
+    X(CU_TENSOR_MAP_DATA_TYPE_FLOAT64) \
+    X(CU_TENSOR_MAP_DATA_TYPE_BFLOAT16) \
+    X(CU_TENSOR_MAP_DATA_TYPE_FLOAT32_FTZ) \
+    X(CU_TENSOR_MAP_DATA_TYPE_TFLOAT32) \
+    X(CU_TENSOR_MAP_DATA_TYPE_TFLOAT32_FTZ) \
+    X(CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN8B) \
+    X(CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN16B) \
+    X(CU_TENSOR_MAP_DATA_TYPE_16U6_ALIGN16B) \
+    X(CU_TENSOR_MAP_SWIZZLE_NONE) \
+    X(CU_TENSOR_MAP_SWIZZLE_32B) \
+    X(CU_TENSOR_MAP_SWIZZLE_64B) \
+    X(CU_TENSOR_MAP_SWIZZLE_128B) \
+    X(CU_TENSOR_MAP_SWIZZLE_128B_ATOM_32B) \
+    X(CU_TENSOR_MAP_SWIZZLE_128B_ATOM_32B_FLIP_8B) \
+    X(CU_TENSOR_MAP_SWIZZLE_128B_ATOM_64B)
+
+#define INTEGER_CONSTANT_ENTRY(name) {name, #name},
+
+static Status define_integer_constants(PyObject* m) {
+    static const struct {int value; const char* name;} entries[] = {
+        FOREACH_INTEGER_CONSTANT(INTEGER_CONSTANT_ENTRY)
+    };
+    for (size_t i = 0; i < std::size(entries); ++i) {
+        PyPtr val = steal(PyLong_FromLong(entries[i].value));
+        if (!val) return ErrorRaised;
+        if (PyModule_AddObjectRef(m, entries[i].name, val.get()) < 0)
+            return ErrorRaised;
+    }
+    return OK;
+}
+
+static Result<uint32_t> tensor_map_item_size(CUtensorMapDataType dtype) {
+    switch (dtype) {
+    case CU_TENSOR_MAP_DATA_TYPE_UINT8:
+        return 1;
+    case CU_TENSOR_MAP_DATA_TYPE_UINT16:
+    case CU_TENSOR_MAP_DATA_TYPE_FLOAT16:
+    case CU_TENSOR_MAP_DATA_TYPE_BFLOAT16:
+        return 2;
+    case CU_TENSOR_MAP_DATA_TYPE_UINT32:
+    case CU_TENSOR_MAP_DATA_TYPE_INT32:
+    case CU_TENSOR_MAP_DATA_TYPE_FLOAT32:
+    case CU_TENSOR_MAP_DATA_TYPE_FLOAT32_FTZ:
+    case CU_TENSOR_MAP_DATA_TYPE_TFLOAT32:
+    case CU_TENSOR_MAP_DATA_TYPE_TFLOAT32_FTZ:
+        return 4;
+    case CU_TENSOR_MAP_DATA_TYPE_UINT64:
+    case CU_TENSOR_MAP_DATA_TYPE_INT64:
+    case CU_TENSOR_MAP_DATA_TYPE_FLOAT64:
+        return 8;
+    default:
+        return raise(PyExc_ValueError, "Can't create tensor map: unsupported data type %d",
+                     static_cast<int>(dtype));
+    }
+}
+
+
+static Result<HoistedTensorMap> hoisted_tensor_map_parse(PyObject* map_pyobj) {
+    HoistedTensorMap ret;
+
+    // Data type & item size
+    PyPtr py_data_type = getattr(map_pyobj, "data_type");
+    if (!py_data_type) return ErrorRaised;
+    ret.dtype = static_cast<CUtensorMapDataType>(pylong_as<long>(py_data_type));
+    if (PyErr_Occurred()) return ErrorRaised;
+    Result<uint32_t> item_size_res = tensor_map_item_size(ret.dtype);
+    if (!item_size_res.is_ok()) return ErrorRaised;
+    ret.item_size = *item_size_res;
+
+    // Base ptr
+    PyPtr py_base_ptr_param_idx = getattr(map_pyobj, "base_ptr_param");
+    ret.base_ptr_param_idx = pylong_as<uint32_t>(py_base_ptr_param_idx);
+    if (PyErr_Occurred()) return ErrorRaised;
+
+    // Rank
+    PyPtr py_rank = getattr(map_pyobj, "rank");
+    if (!py_rank) return ErrorRaised;
+    long rank = pylong_as<long>(py_rank);
+    if (PyErr_Occurred()) return ErrorRaised;
+    if (rank < 1)
+        return raise(PyExc_ValueError, "Rank of HoistedTensorMap is too small");
+    if (rank > HoistedTensorMap::kMaxRank)
+        return raise(PyExc_ValueError, "Rank of HoistedTensorMap is too large");
+    ret.rank = static_cast<uint32_t>(rank);
+
+    // Shape/stride program
+    PyPtr py_shape_stride_program = getattr(map_pyobj, "shape_stride_program");
+    if (!py_shape_stride_program) return ErrorRaised;
+    Result<HostProgram> prog_res = host_program_parse(py_shape_stride_program.get(), rank * 2);
+    if (!prog_res.is_ok()) return ErrorRaised;
+    ret.shape_stride_program = *prog_res;
+
+    // Box dim & traversal steps
+    PyPtr py_tile_shape = getattr(map_pyobj, "tile_shape");
+    if (!py_tile_shape) return ErrorRaised;
+    if (!PyTuple_Check(py_tile_shape.get()))
+        return raise(PyExc_TypeError, "HoistedTensorMap.tile_shape is not a tuple");
+    if (PyTuple_GET_SIZE(py_tile_shape.get()) != rank)
+        return raise(PyExc_TypeError, "Size of HoistedTensorMap.tile_shape doesn't match rank");
+    for (long i = 0; i < rank; ++i) {
+        PyObject* py_dim = PyTuple_GET_ITEM(py_tile_shape.get(), i);
+        ret.traversal_steps[rank - 1 - i] = 1;
+        ret.box_dim[rank - 1 - i] = pylong_as<uint32_t>(py_dim);
+        if (PyErr_Occurred()) return ErrorRaised;
+    }
+
+    // Swizzle
+    PyPtr py_swizzle = getattr(map_pyobj, "swizzle");
+    if (!py_swizzle) return ErrorRaised;
+    PyPtr py_swizzle_val = getattr(py_swizzle, "_value_");
+    if (!py_swizzle_val) return ErrorRaised;
+    ret.swizzle = static_cast<CUtensorMapSwizzle>(pylong_as<long>(py_swizzle_val));
+    if (PyErr_Occurred()) return ErrorRaised;
+
+    ret.interleave = CU_TENSOR_MAP_INTERLEAVE_NONE;
+    ret.l2_promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
+    ret.oob_fill = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
+    return ret;
+}
+
+static Status hoisted_tensor_map_encode(const DriverApi& driver,
+                                        const Vec<HoistedTensorMap>& maps,
+                                        LaunchHelper& helper) {
+    if (maps.empty()) return OK;
+
+    for (const HoistedTensorMap& m : maps) {
+        static_assert(sizeof(CUtensorMap) % sizeof(Word) == 0);
+        void* storage = helper.arena.alloc_aligned<alignof(CUtensorMap)>(
+                sizeof(CUtensorMap) / sizeof(Word));
+        CUtensorMap* dst = new (storage) CUtensorMap();
+
+        int64_t stack[HostProgram::kMaxStackDepth];
+        host_program_eval(m.shape_stride_program, helper.cuarg_pointers, stack);
+
+        uint32_t rank = m.rank;
+        uint64_t global_dim[HoistedTensorMap::kMaxRank];
+        mem_copy(global_dim, stack, rank * sizeof(global_dim[0]));
+
+        int64_t stride0 = stack[rank];
+        if (stride0 != 1) {
+            return raise(PyExc_ValueError,
+                    "Can't create a tensor map: stride of last array dimension must be 1, got %lld",
+                    static_cast<long long>(stride0));
+        }
+
+        uint64_t global_strides[HoistedTensorMap::kMaxRank - 1];
+        for (uint32_t i = 1; i < rank; ++i) {
+            int64_t s = stack[rank + i];
+            if (s < 0)
+                return raise(PyExc_ValueError,
+                        "Can't create a tensor map: strides must be positive, got %lld",
+                        static_cast<long long>(s));
+            uint64_t u = s;
+            uint64_t bytes = u * m.item_size;
+            if (bytes / m.item_size != u)
+                return raise(PyExc_OverflowError,
+                        "Can't create a tensor map: stride %lld is too big",
+                        static_cast<long long>(s));
+            global_strides[i - 1] = static_cast<uint32_t>(bytes);
+        }
+
+        CUresult res = driver.cuTensorMapEncodeTiled(
+            dst,
+            m.dtype,
+            rank,
+            helper.cuarg_pointers[m.base_ptr_param_idx]->device_ptr,
+            global_dim,
+            global_strides,
+            m.box_dim,
+            m.traversal_steps,
+            m.interleave,
+            m.swizzle,
+            m.l2_promotion,
+            m.oob_fill
+        );
+        if (res != CUDA_SUCCESS)
+            return raise(PyExc_RuntimeError, "Failed to encode tiled tensor map: %s",
+                         get_cuda_error(&driver, res));
+
+        helper.cuarg_pointers.push_back(reinterpret_cast<Word*>(dst));
+    }
+    return OK;
+}
+
 
 namespace { struct TileDispatcher {
     Vec<bool> constant_arg_flags;
@@ -1558,15 +1824,14 @@ static Result<TileKernel> compile(const DriverApi* driver,
 
     PyObject* py_cubin_bytes = PyTuple_GET_ITEM(compile_result.get(), 0);
     PyObject* py_cufunc_name = PyTuple_GET_ITEM(compile_result.get(), 1);
-    PyObject* py_dyn_smem_size_opcodes = PyTuple_GET_ITEM(compile_result.get(), 2);
-    PyObject* py_dyn_smem_size_opattrs = PyTuple_GET_ITEM(compile_result.get(), 3);
+    PyObject* py_dyn_smem_size_prog = PyTuple_GET_ITEM(compile_result.get(), 2);
+    PyObject* py_hoisted_tensor_maps = PyTuple_GET_ITEM(compile_result.get(), 3);
 
     if (!PyBytes_Check(py_cubin_bytes)
             || !PyUnicode_Check(py_cufunc_name)
-            || (py_dyn_smem_size_opcodes != Py_None && !PyList_Check(py_dyn_smem_size_opcodes))
-            || (py_dyn_smem_size_opattrs != Py_None && !PyList_Check(py_dyn_smem_size_opattrs))) {
+            || (py_hoisted_tensor_maps != Py_None && !PyList_Check(py_hoisted_tensor_maps))) {
         return raise(PyExc_TypeError,
-                     "Expected compile() to return (bytes, str, list|None, list|None),"
+                     "Expected compile() to return (bytes, str, HostProgram|None, list|None),"
                      " got %s, %s",
                      Py_TYPE(py_cubin_bytes)->tp_name,
                      Py_TYPE(py_cufunc_name)->tp_name);
@@ -1583,11 +1848,23 @@ static Result<TileKernel> compile(const DriverApi* driver,
     Result<CudaKernel> cukernel = load_cuda_kernel(driver, cubin_data, cubin_size, cufunc_name);
     if (!cukernel.is_ok()) return ErrorRaised;
 
-    Result<SizeProgram> dyn_smem_size_prog = size_program_parse(
-            py_dyn_smem_size_opcodes, py_dyn_smem_size_opattrs);
+    Result<HostProgram> dyn_smem_size_prog = host_program_parse(py_dyn_smem_size_prog, 1);
     if (!dyn_smem_size_prog.is_ok()) return ErrorRaised;
 
-    return TileKernel{std::move(*cukernel), std::move(*dyn_smem_size_prog)};
+    Py_ssize_t num_hoisted_tensor_maps = PyList_Size(py_hoisted_tensor_maps);
+    Vec<HoistedTensorMap> hoisted_tensor_maps;
+    hoisted_tensor_maps.reserve(num_hoisted_tensor_maps);
+    for (Py_ssize_t i = 0; i < num_hoisted_tensor_maps; ++i) {
+        PyObject* map_pyobj = PyList_GetItem(py_hoisted_tensor_maps, i);
+        if (!map_pyobj) return ErrorRaised;
+        Result<HoistedTensorMap> map_res = hoisted_tensor_map_parse(map_pyobj);
+        if (!map_res.is_ok()) return ErrorRaised;
+        hoisted_tensor_maps.push_back(*map_res);
+    }
+
+    return TileKernel{std::move(*cukernel),
+                      std::move(*dyn_smem_size_prog),
+                      std::move(hoisted_tensor_maps)};
 }
 
 static inline bool has_torch_tensor_input(const Vec<PyTypeObject*>& pyarg_types) {
@@ -1898,33 +2175,38 @@ static Result<PreparedLaunch> prepare_launch(
             if (!tx) return raise(PyExc_RuntimeError, "Failed to open a stream buffer transaction");
         }
 
-        size_t size = helper->nested_arrays.size() * sizeof(helper->nested_arrays[0]);
+        size_t size = helper->total_list_data_size_words * sizeof(Word);
         DualPointer ptr = tx.allocate(size);
         if (!ptr)
             return raise(PyExc_RuntimeError, "Failed to allocate memory in stream buffer");
 
-        // This is a bit of a hack. We use the same in-memory representation of `nested_arrays`
-        // and the GPU buffer.
-        mem_copy(ptr.host, helper->nested_arrays.data(), size);
+        for (const ListArg& list_arg : helper->list_args) {
+            size_t data_offset_words = list_arg.base_ptr_cuarg->size;
+            list_arg.base_ptr_cuarg->device_ptr = reinterpret_cast<void*>(
+                    ptr.device + data_offset_words * sizeof(Word));
+            Word* dst = reinterpret_cast<Word*>(ptr.host) + data_offset_words;
+            size_t item_size_words = list_arg.item_size_words;
+            size_t item_size_bytes = item_size_words * sizeof(Word);
+            Word* items_ptr = list_arg.item_pointers;
+            for (size_t i = 0; i < list_arg.length; ++i) {
+                mem_copy(dst, items_ptr[i].arena_ptr, item_size_bytes);
+                dst += item_size_words;
+            }
+        }
 
         CUresult res = driver->cuMemcpyHtoDAsync(ptr.device, ptr.host, size, launch_stream);
         if (res != CUDA_SUCCESS) {
             return raise(PyExc_RuntimeError, "Failed to copy memory from host to device: %s",
                          get_cuda_error(driver, res));
         }
-
-        for (ListArg la : helper->list_args) {
-            helper->cuargs[la.cuarg_idx].device_ptr = reinterpret_cast<void*>(
-                    ptr.device + la.offset * sizeof(Word));
-        }
     }
 
-    helper->cuarg_pointers.clear();
-    for (Word& arg : helper->cuargs)
-        helper->cuarg_pointers.push_back(&arg);
+    if (!hoisted_tensor_map_encode(*driver, kernel_item->value.hoisted_tensor_maps, *helper))
+        return ErrorRaised;
 
-    int64_t dyn_smem_size = size_program_eval(
-            kernel_item->value.dyn_smem_size_prog, helper->cuargs);
+    int64_t stack[HostProgram::kMaxStackDepth];
+    host_program_eval(kernel_item->value.dyn_smem_size_prog, helper->cuarg_pointers, stack);
+    int64_t dyn_smem_size = stack[0];
     if (dyn_smem_size < 0 || dyn_smem_size > UINT_MAX)
         return raise(PyExc_RuntimeError, "Invalid dynamic shared memory size");
 
@@ -1954,7 +2236,7 @@ static Status launch(const DriverApi* driver,
             block.dims[0], block.dims[1], block.dims[2],
             prep->dynamic_smem_bytes,
             launch_stream,
-            prep->helper->cuarg_pointers.data(),
+            reinterpret_cast<void**>(prep->helper->cuarg_pointers.data()),
             nullptr);
 
     if (res != CUDA_SUCCESS) {
@@ -2064,7 +2346,7 @@ static Result<double> benchmark(const DriverApi* driver,
     kparams.blockDimY = 1;
     kparams.blockDimZ = 1;
     kparams.sharedMemBytes = pl.dynamic_smem_bytes;
-    kparams.kernelParams = pl.helper->cuarg_pointers.data();
+    kparams.kernelParams = reinterpret_cast<void**>(pl.helper->cuarg_pointers.data());
     kparams.extra = nullptr;
     kparams.kern = pl.kernel;
     kparams.ctx = pl.helper->cuda_context;
@@ -2575,6 +2857,9 @@ Status tile_kernel_init(PyObject* m) {
     if (!init_default_tile_context()) return ErrorRaised;
 
     if (PyModule_AddObjectRef(m, "default_tile_context", g_default_tile_context) < 0)
+        return ErrorRaised;
+
+    if (!define_integer_constants(m))
         return ErrorRaised;
 
     return OK;

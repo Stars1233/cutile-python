@@ -25,7 +25,8 @@ from cuda.tile._ir.op_impl import (
     require_tile_type, require_constant_bool,
 )
 from cuda.lang._ir.type import (
-    OpaquePointerTy, LocalArrayContextManagerTy, ContextManagerState
+    OpaquePointerTy, LocalArrayContextManagerTy, ContextManagerState, TensorMapTy,
+    dtype_to_tensor_map_type
 )
 from cuda.tile._ir.ops import (
     binary_arithmetic,
@@ -90,7 +91,9 @@ from .ir import (
     format_var,
     TupleValue, LocalArrayContextManagerValue,
 )
-from ...tile._ir import hir_stubs
+from .._stub import TensorMapSwizzle
+from cuda.tile._ir import hir_stubs
+from cuda.tile._ir.typing_support import I32_TY, BOOL_TY
 
 cuda_lang_impl_registry = tile_impl_registry.clone()
 impl = cuda_lang_impl_registry.impl
@@ -900,6 +903,18 @@ def syncthreads_impl() -> Operation:
     return add_operation(SyncThreads, None,)
 
 
+@impl(stub.elect_sync)
+def elect_sync_impl(membermask) -> Var:
+    mask = require_constant_int(membermask)
+    mask = strictly_typed_const(mask & 0xffffffff, I32_TY)
+
+    _, is_elected = add_operation(RawNVVMIntrinsic,
+                                  (I32_TY, BOOL_TY),
+                                  intrinsic="llvm.nvvm.elect.sync",
+                                  operands_=(mask,))
+    return is_elected
+
+
 impl(stub.printf)(printf_impl)
 
 
@@ -1172,6 +1187,57 @@ def shfl_sync_down_impl(mask: Var, value: Var, delta: Var, width: Var) -> Var:
 @impl(stub.shfl_xor_sync)
 def shfl_sync_xor_impl(mask: Var, value: Var, lane_mask: Var, width: Var) -> Var:
     return shfl_sync_impl("bfly", mask, value, lane_mask, width)
+
+
+@impl(getattr, overload=(TensorMapTy, "as_opaque_ptr"))
+def getattr_tensor_map_method(object: Var, name: Var):
+    name = require_constant_str(name)
+    unbound_func = getattr(stub.TensorMap, name)
+    return bind_method(object, unbound_func)
+
+
+@dataclass(eq=False)
+class CreateTensorMap(Operation, opcode="create_tensor_map"):
+    base_ptr: Var = operand()
+    array_shape: tuple[Var, ...] = operand()
+    array_strides: tuple[Var, ...] = operand()
+
+
+@impl(stub.tensor_map_tiled)
+def tensor_map_tiled_impl(array: Var, tile_shape: Var, swizzle: Var) -> Var:
+    array_ty = require_array_type(array)
+    array_val = array.get_aggregate()
+    assert isinstance(array_val, ArrayValue)
+
+    tile_shape = require_constant_int_tuple(tile_shape, allow_single_int=True)
+    swizzle = require_constant_enum(swizzle, TensorMapSwizzle)
+    data_type = dtype_to_tensor_map_type(array_ty.dtype)
+    map_ty = TensorMapTy(data_type=data_type,
+                         tile_shape=tile_shape,
+                         swizzle=swizzle)
+    return add_operation(CreateTensorMap, map_ty,
+                         base_ptr=array_val.base_ptr,
+                         array_shape=array_val.shape,
+                         array_strides=array_val.strides)
+
+
+@dataclass
+class TensorMapAsOpaquePtr(Operation, opcode="tensor_map_as_opaque_ptr"):
+    tensor_map: Var = operand()
+
+
+def require_tensor_map_ty(var: Var) -> TensorMapTy:
+    ty = var.get_type()
+    if not isinstance(ty, TensorMapTy):
+        raise TileTypeError(f"Expected a tensor map, got {ty}")
+    return ty
+
+
+@impl(stub.TensorMap.as_opaque_ptr)
+def tensor_map_as_opaque_ptr_impl(self: Var):
+    require_tensor_map_ty(self)
+    result_ty = TileTy(OpaquePointerTy(), ())
+    return add_operation(TensorMapAsOpaquePtr, result_ty, tensor_map=self)
 
 
 def require_constant_result_dtype(dtype: Var) -> Type:

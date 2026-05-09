@@ -104,3 +104,10 @@ target_include_directories(test_vec PRIVATE ${cext_include_dirs})
 target_compile_options(test_vec PUBLIC ${cext_compile_flags} ${test_coverage_options})
 target_link_options(test_vec PRIVATE ${test_coverage_options})
 target_link_libraries(test_vec PRIVATE ${Python_LIBRARIES})
+
+
+add_executable(test_arena test/test_arena.cpp memory.cpp)
+target_include_directories(test_arena PRIVATE ${cext_include_dirs})
+target_compile_options(test_arena PUBLIC ${cext_compile_flags} ${test_coverage_options})
+target_link_options(test_arena PRIVATE ${test_coverage_options})
+target_link_libraries(test_arena PRIVATE ${Python_LIBRARIES})

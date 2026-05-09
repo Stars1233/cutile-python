@@ -25,6 +25,8 @@ from cuda.lang._passes.ir2mlir import ir2mlir
 from cuda.lang._passes.flatten_cfg import flatten_cfg
 from cuda.lang._passes.simt_semantics import simt_semantic_analysis
 from cuda.lang._passes.canonicalize_parameters import canonicalize_parameters
+from cuda.lang._passes.handle_dyn_shared_mem import handle_dynamic_shared_memory
+from cuda.lang._passes.hoist_tensor_map import hoist_tensor_maps, HoistedTensorMap
 from cuda.lang.compilation import (
     KernelSignature,
     ParameterConstraint,
@@ -35,7 +37,7 @@ from cuda.lang.compilation import (
 )
 from ._execution import kernel
 from cuda.lang._ir.ops import cuda_lang_impl_registry
-from ._passes.handle_dyn_shared_mem import handle_dynamic_shared_memory, SizeProgram
+from ._ir._host_program import HostProgram, get_host_programs_by_var
 
 
 def mlir2cubin(mlir_text: str, gpu_name: str, arch: str) -> bytes:
@@ -79,7 +81,8 @@ def get_compiler_binary_path() -> str:
 @dataclass
 class CompilationResult:
     kernel_signatures: Sequence[KernelSignature]
-    dyn_smem_size_program: SizeProgram | None
+    dyn_smem_size_program: HostProgram | None
+    hoisted_tensor_maps: list[HoistedTensorMap]
     final_ir: ir.Region | None = None
     mlir: str | None = None
     cubin: bytes | None = None
@@ -112,15 +115,18 @@ def get_function_ir(
     return func_body
 
 
-def _transform_ir(func_ir: ir.Block, ctx: ir.IRContext) -> SizeProgram | None:
+def _transform_ir(func_ir: ir.Block, ctx: ir.IRContext) \
+        -> tuple[HostProgram | None, list[HoistedTensorMap]]:
     simt_semantic_analysis(func_ir, ctx)
 
-    dyn_smem_size_program = handle_dynamic_shared_memory(func_ir)
+    host_program_by_var = get_host_programs_by_var(func_ir)
+    dyn_smem_size_program = handle_dynamic_shared_memory(func_ir, host_program_by_var)
+    hoisted_tensor_maps = hoist_tensor_maps(func_ir, host_program_by_var)
 
     eliminate_assign_ops(func_ir)
     dead_code_elimination_pass(func_ir)
 
-    return dyn_smem_size_program
+    return dyn_smem_size_program, hoisted_tensor_maps
 
 
 def compile_simt(
@@ -159,7 +165,7 @@ def compile_simt(
     if log_flags.log_ir:
         print(logging_template.format(header='IR (pre-transforms)', body=func_ir), file=sys.stderr)
 
-    dyn_smem_size_program = _transform_ir(func_ir, ctx)
+    dyn_smem_size_program, hoisted_tensor_maps = _transform_ir(func_ir, ctx)
 
     if log_flags.log_ir:
         print(logging_template.format(header='IR (post-transforms)', body=func_ir), file=sys.stderr)
@@ -184,6 +190,7 @@ def compile_simt(
     return CompilationResult(
         kernel_signatures=[signature],
         dyn_smem_size_program=dyn_smem_size_program,
+        hoisted_tensor_maps=hoisted_tensor_maps,
         final_ir=flattened_ir,
         mlir=str(mlir_module),
         cubin=cubin,

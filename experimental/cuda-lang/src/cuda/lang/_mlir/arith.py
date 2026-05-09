@@ -47,6 +47,34 @@ class ArithRoundingModeInterface:
 # ---- Enums ----
 
 
+class AtomicRMWKind(enum.Enum):
+    addf = 0
+    addi = 1
+    andi = 2
+    assign = 3
+    maximumf = 4
+    maxnumf = 5
+    maxs = 6
+    maxu = 7
+    minimumf = 8
+    minnumf = 9
+    mins = 10
+    minu = 11
+    mulf = 12
+    muli = 13
+    ori = 14
+    xori = 15
+
+    def _print_mlir_unqualified(self, p):
+        p(("addf", "addi", "andi", "assign", "maximumf", "maxnumf", "maxs", "maxu", "minimumf",
+           "minnumf", "mins", "minu", "mulf", "muli", "ori", "xori",)[self._value_])
+
+
+class AtomicRMWKindAttr(IntegerAttr):
+    def __init__(self, value: AtomicRMWKind):
+        super().__init__(type=IntegerType.signless(64), value=APInt(value._value_, 64))
+
+
 class CmpFPredicate(enum.Enum):
     AlwaysFalse = 0
     OEQ = 1
@@ -96,6 +124,27 @@ class CmpIPredicateAttr(IntegerAttr):
         super().__init__(type=IntegerType.signless(64), value=APInt(value._value_, 64))
 
 
+class FastMathFlags(enum.IntFlag):
+    none = 0x0
+    reassoc = 0x1
+    nnan = 0x2
+    ninf = 0x4
+    nsz = 0x8
+    arcp = 0x10
+    contract = 0x20
+    afn = 0x40
+    fast = 0x7f
+
+    def _print_mlir_unqualified(self, p):
+        value = int(self._value_)
+        if value == 0:
+            p('none')
+            return
+        p.print_bit_enum(value, ((0x7f, 'fast'),),
+                         ((0x1, 'reassoc'), (0x2, 'nnan'), (0x4, 'ninf'), (0x8, 'nsz'),
+                          (0x10, 'arcp'), (0x20, 'contract'), (0x40, 'afn'),))
+
+
 class IntegerOverflowFlags(enum.IntFlag):
     none = 0x0
     nsw = 0x1
@@ -124,55 +173,6 @@ class RoundingMode(enum.Enum):
 class RoundingModeAttr(IntegerAttr):
     def __init__(self, value: RoundingMode):
         super().__init__(type=IntegerType.signless(32), value=APInt(value._value_, 32))
-
-
-class AtomicRMWKind(enum.Enum):
-    addf = 0
-    addi = 1
-    andi = 2
-    assign = 3
-    maximumf = 4
-    maxnumf = 5
-    maxs = 6
-    maxu = 7
-    minimumf = 8
-    minnumf = 9
-    mins = 10
-    minu = 11
-    mulf = 12
-    muli = 13
-    ori = 14
-    xori = 15
-
-    def _print_mlir_unqualified(self, p):
-        p(("addf", "addi", "andi", "assign", "maximumf", "maxnumf", "maxs", "maxu", "minimumf",
-           "minnumf", "mins", "minu", "mulf", "muli", "ori", "xori",)[self._value_])
-
-
-class AtomicRMWKindAttr(IntegerAttr):
-    def __init__(self, value: AtomicRMWKind):
-        super().__init__(type=IntegerType.signless(64), value=APInt(value._value_, 64))
-
-
-class FastMathFlags(enum.IntFlag):
-    none = 0x0
-    reassoc = 0x1
-    nnan = 0x2
-    ninf = 0x4
-    nsz = 0x8
-    arcp = 0x10
-    contract = 0x20
-    afn = 0x40
-    fast = 0x7f
-
-    def _print_mlir_unqualified(self, p):
-        value = int(self._value_)
-        if value == 0:
-            p('none')
-            return
-        p.print_bit_enum(value, ((0x7f, 'fast'),),
-                         ((0x1, 'reassoc'), (0x2, 'nnan'), (0x4, 'ninf'), (0x8, 'nsz'),
-                          (0x10, 'arcp'), (0x20, 'contract'), (0x40, 'afn'),))
 
 
 # ---- Attributes ----
@@ -992,6 +992,24 @@ def add_ScalingTruncFOp(
     )
 
 
+def add_SelectOp(
+    *,
+    condition: Value,
+    true_value: Value,
+    false_value: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    result_type = false_value.type
+    all_props = []
+    return add_operation(
+        name="arith.select",
+        result_type=result_type,
+        operands=[condition, true_value, false_value],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
 def add_ShLIOp(
     *,
     lhs: Value,
@@ -1163,24 +1181,6 @@ def add_XOrIOp(
         name="arith.xori",
         result_type=result_type,
         operands=[lhs, rhs],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_SelectOp(
-    *,
-    condition: Value,
-    true_value: Value,
-    false_value: Value,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    result_type = false_value.type
-    all_props = []
-    return add_operation(
-        name="arith.select",
-        result_type=result_type,
-        operands=[condition, true_value, false_value],
         properties=all_props,
         attributes=extra_attributes,
     )

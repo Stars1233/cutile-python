@@ -20,7 +20,17 @@ void* operator new (size_t len) {
     return ret;
 }
 
+void* operator new[] (size_t len) {
+    void* ret = PyMem_RawMalloc(len);
+    CHECK(ret);
+    return ret;
+}
+
 void operator delete (void* ptr, size_t) {
+    PyMem_RawFree(ptr);
+}
+
+void operator delete[] (void* ptr) {
     PyMem_RawFree(ptr);
 }
 

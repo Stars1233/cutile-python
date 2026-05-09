@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from cuda.lang._ir.ir import LocalArrayContextManagerValue
+from cuda.lang._enums import TensorMapSwizzle
 from cuda.tile._ir.type import (
     Type,
     TupleTy,
@@ -23,6 +24,7 @@ from cuda.tile._ir.type import (
     ContextManagerTy,
     ContextManagerState,
 )
+import cuda.tile._datatype as datatype
 from cuda.tile._datatype import DType
 from cuda.tile._ir.ir import Var, AggregateValue
 from cuda.lang._exception import TileTypeError
@@ -92,6 +94,30 @@ class LocalArrayContextManagerTy(ContextManagerTy):
 
     def get_context_manager_state(self) -> ContextManagerState:
         return self.state
+
+
+def dtype_to_tensor_map_type(dtype: datatype.DType) -> str:
+    match dtype:
+        case datatype.uint8: return "CU_TENSOR_MAP_DATA_TYPE_UINT8"
+        case datatype.uint16: return "CU_TENSOR_MAP_DATA_TYPE_UINT16"
+        case datatype.uint32: return "CU_TENSOR_MAP_DATA_TYPE_UINT32"
+        case datatype.int32: return "CU_TENSOR_MAP_DATA_TYPE_INT32"
+        case datatype.uint64: return "CU_TENSOR_MAP_DATA_TYPE_UINT64"
+        case datatype.int64: return "CU_TENSOR_MAP_DATA_TYPE_INT64"
+        case datatype.float16: return "CU_TENSOR_MAP_DATA_TYPE_FLOAT16"
+        case datatype.float32: return "CU_TENSOR_MAP_DATA_TYPE_FLOAT32"
+        case datatype.float64: return "CU_TENSOR_MAP_DATA_TYPE_FLOAT64"
+        case datatype.bfloat16: return "CU_TENSOR_MAP_DATA_TYPE_BFLOAT16"
+        case datatype.tfloat32: return "CU_TENSOR_MAP_DATA_TYPE_TFLOAT32"
+        case _:
+            raise TileTypeError(f"Data type {dtype} is not supported by tensor map")
+
+
+@dataclass(frozen=True)
+class TensorMapTy(Type):
+    data_type: str  # "CU_TENSOR_MAP_DATA_TYPE_*"
+    tile_shape: tuple[int, ...]
+    swizzle: TensorMapSwizzle
 
 
 __all__ = (

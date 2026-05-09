@@ -37,12 +37,7 @@ import enum
 # ---- Interfaces ----
 
 
-class TargetAttrInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class TargetAttrVerifyInterface:
+class AsyncOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -52,7 +47,12 @@ class OffloadingLLVMTranslationAttrInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class AsyncOpInterface:
+class TargetAttrInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class TargetAttrVerifyInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -127,42 +127,6 @@ class DimensionKind(enum.Enum):
         p(("other", "block", "grid", "cluster",)[self._value_])
 
 
-class Prune2To4SpMatFlag(enum.Enum):
-    NONE = 0
-    PRUNE_ONLY = 1
-    PRUNE_AND_CHECK = 2
-
-    def _print_mlir_unqualified(self, p):
-        p(("NONE", "PRUNE_ONLY", "PRUNE_AND_CHECK",)[self._value_])
-
-
-class ShuffleMode(enum.Enum):
-    XOR = 0
-    UP = 2
-    DOWN = 1
-    IDX = 3
-
-    def _print_mlir_unqualified(self, p):
-        p(("xor", "down", "up", "idx",)[self._value_])
-
-
-class SpGEMMWorkEstimationOrComputeKind(enum.Enum):
-    WORK_ESTIMATION = 0
-    COMPUTE = 1
-
-    def _print_mlir_unqualified(self, p):
-        p(("WORK_ESTIMATION", "COMPUTE",)[self._value_])
-
-
-class TransposeMode(enum.Enum):
-    NON_TRANSPOSE = 0
-    TRANSPOSE = 1
-    CONJUGATE_TRANSPOSE = 2
-
-    def _print_mlir_unqualified(self, p):
-        p(("NON_TRANSPOSE", "TRANSPOSE", "CONJUGATE_TRANSPOSE",)[self._value_])
-
-
 class MMAElementwiseOp(enum.Enum):
     ADDF = 0
     MULF = 1
@@ -230,7 +194,77 @@ class ProcessorAttr(IntegerAttr):
         super().__init__(type=IntegerType.signless(64), value=APInt(value._value_, 64))
 
 
+class Prune2To4SpMatFlag(enum.Enum):
+    NONE = 0
+    PRUNE_ONLY = 1
+    PRUNE_AND_CHECK = 2
+
+    def _print_mlir_unqualified(self, p):
+        p(("NONE", "PRUNE_ONLY", "PRUNE_AND_CHECK",)[self._value_])
+
+
+class ShuffleMode(enum.Enum):
+    XOR = 0
+    UP = 2
+    DOWN = 1
+    IDX = 3
+
+    def _print_mlir_unqualified(self, p):
+        p(("xor", "down", "up", "idx",)[self._value_])
+
+
+class SpGEMMWorkEstimationOrComputeKind(enum.Enum):
+    WORK_ESTIMATION = 0
+    COMPUTE = 1
+
+    def _print_mlir_unqualified(self, p):
+        p(("WORK_ESTIMATION", "COMPUTE",)[self._value_])
+
+
+class TransposeMode(enum.Enum):
+    NON_TRANSPOSE = 0
+    TRANSPOSE = 1
+    CONJUGATE_TRANSPOSE = 2
+
+    def _print_mlir_unqualified(self, p):
+        p(("NON_TRANSPOSE", "TRANSPOSE", "CONJUGATE_TRANSPOSE",)[self._value_])
+
+
 # ---- Attributes ----
+
+
+@dataclass(kw_only=True)
+class AddressSpaceAttr(Attribute, dialect='gpu', mnemonic='address_space'):
+    value: "AddressSpace"
+
+    def _print_mlir_unqualified(self, p):
+        p("<")
+        self.value._print_mlir_unqualified(p)
+        p(">")
+
+
+@dataclass(kw_only=True)
+class AllReduceOperationAttr(Attribute, dialect='gpu', mnemonic='all_reduce_op'):
+    value: "AllReduceOperation"
+
+    def _print_mlir_unqualified(self, p):
+        self.value._print_mlir_unqualified(p)
+
+
+@dataclass(kw_only=True)
+class BroadcastTypeAttr(Attribute, dialect='gpu', mnemonic='broadcast'):
+    value: "BroadcastType"
+
+    def _print_mlir_unqualified(self, p):
+        self.value._print_mlir_unqualified(p)
+
+
+@dataclass(kw_only=True)
+class DimensionAttr(Attribute, dialect='gpu', mnemonic='dim'):
+    value: "Dimension"
+
+    def _print_mlir_unqualified(self, p):
+        self.value._print_mlir_unqualified(p)
 
 
 @dataclass(kw_only=True)
@@ -307,40 +341,6 @@ class GPUWarpgroupMappingAttr(Attribute, DeviceMappingAttrInterface, dialect='gp
 
 
 @dataclass(kw_only=True)
-class AddressSpaceAttr(Attribute, dialect='gpu', mnemonic='address_space'):
-    value: "AddressSpace"
-
-    def _print_mlir_unqualified(self, p):
-        p("<")
-        self.value._print_mlir_unqualified(p)
-        p(">")
-
-
-@dataclass(kw_only=True)
-class AllReduceOperationAttr(Attribute, dialect='gpu', mnemonic='all_reduce_op'):
-    value: "AllReduceOperation"
-
-    def _print_mlir_unqualified(self, p):
-        self.value._print_mlir_unqualified(p)
-
-
-@dataclass(kw_only=True)
-class BroadcastTypeAttr(Attribute, dialect='gpu', mnemonic='broadcast'):
-    value: "BroadcastType"
-
-    def _print_mlir_unqualified(self, p):
-        self.value._print_mlir_unqualified(p)
-
-
-@dataclass(kw_only=True)
-class DimensionAttr(Attribute, dialect='gpu', mnemonic='dim'):
-    value: "Dimension"
-
-    def _print_mlir_unqualified(self, p):
-        self.value._print_mlir_unqualified(p)
-
-
-@dataclass(kw_only=True)
 class KernelMetadataAttr(Attribute, dialect='gpu', mnemonic='kernel_metadata'):
     name: "StringAttr"
     function_type: "Type"
@@ -385,6 +385,14 @@ class KernelTableAttr(Attribute, dialect='gpu', mnemonic='kernel_table'):
 
 
 @dataclass(kw_only=True)
+class MMAElementwiseOpAttr(Attribute, dialect='gpu', mnemonic='mma_element_wise'):
+    value: "MMAElementwiseOp"
+
+    def _print_mlir_unqualified(self, p):
+        self.value._print_mlir_unqualified(p)
+
+
+@dataclass(kw_only=True)
 class ObjectAttr(Attribute, dialect='gpu', mnemonic='object'):
     target: "Attribute"
     format: "CompilationTarget" = dataclasses.field(default_factory=lambda: CompilationTarget(4))
@@ -414,6 +422,22 @@ class ObjectAttr(Attribute, dialect='gpu', mnemonic='object'):
             pass
         p(" ")
         p.print_custom_Object(self.format, self.object)
+        p(">")
+
+
+@dataclass(kw_only=True)
+class ParallelLoopDimMappingAttr(Attribute, dialect='gpu', mnemonic='loop_dim_map'):
+    processor: "Processor"
+    map: "AffineMap"
+    bound: "AffineMap"
+
+    def _print_mlir_unqualified(self, p):
+        p("<processor = ")
+        self.processor._print_mlir_unqualified(p)
+        p(", map = ")
+        self.map._print_mlir_unqualified(p)
+        p(", bound = ")
+        self.bound._print_mlir_unqualified(p)
         p(">")
 
 
@@ -462,30 +486,6 @@ class TransposeModeAttr(Attribute, dialect='gpu', mnemonic='mat_transpose_mode')
 
     def _print_mlir_unqualified(self, p):
         self.value._print_mlir_unqualified(p)
-
-
-@dataclass(kw_only=True)
-class MMAElementwiseOpAttr(Attribute, dialect='gpu', mnemonic='mma_element_wise'):
-    value: "MMAElementwiseOp"
-
-    def _print_mlir_unqualified(self, p):
-        self.value._print_mlir_unqualified(p)
-
-
-@dataclass(kw_only=True)
-class ParallelLoopDimMappingAttr(Attribute, dialect='gpu', mnemonic='loop_dim_map'):
-    processor: "Processor"
-    map: "AffineMap"
-    bound: "AffineMap"
-
-    def _print_mlir_unqualified(self, p):
-        p("<processor = ")
-        self.processor._print_mlir_unqualified(p)
-        p(", map = ")
-        self.map._print_mlir_unqualified(p)
-        p(", bound = ")
-        self.bound._print_mlir_unqualified(p)
-        p(">")
 
 
 # ---- Operators ----

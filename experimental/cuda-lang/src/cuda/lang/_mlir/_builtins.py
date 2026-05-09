@@ -138,8 +138,16 @@ class IntegerSet:
     pass
 
 
+@dataclass
 class NamedAttribute:
-    pass
+    name: "Attribute"  # StringAttr
+    value: "Attribute"
+
+    @staticmethod
+    def make(name: str, value: "Attribute"):
+        from . import StringAttr
+        name = StringAttr(value=name)
+        return NamedAttribute(name, value)
 
 
 class SignednessSemantics(enum.IntEnum):
@@ -156,7 +164,7 @@ class Attribute:
         cls._mnemonic = mnemonic
 
     def _print_mlir_unqualified(self, p: "MlirPrinter"):
-        pass
+        raise NotImplementedError()
 
     def print_mlir(self, p: "MlirPrinter", qualified: bool = True, elide_type: bool = False):
         body_io = StringIO()

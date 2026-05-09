@@ -4,7 +4,7 @@
 import inspect
 import operator
 import dataclasses
-from enum import Enum
+from enum import Enum, IntEnum
 from functools import lru_cache
 from types import ModuleType, FunctionType
 from typing import Any, Callable, Mapping, Union
@@ -15,6 +15,12 @@ from .ir import DataclassInfo
 from .type import Type, TupleTy, DTypeConstructor, DTypeSpec, NONE, StringTy, \
     ELLIPSIS, SLICE, ModuleTy, FunctionTy, EnumTy, TypeTy, LooselyTypedScalar, \
     make_tile_ty
+
+
+BOOL_TY = make_tile_ty(datatype.bool_, ())
+I32_TY = make_tile_ty(datatype.int32, ())
+I64_TY = make_tile_ty(datatype.int64, ())
+
 
 # Store mapping from 3rd party dtype objects
 # e.g. np.float32 -> float32, torch.bfloat16 -> bfloat16
@@ -128,6 +134,8 @@ def typeof_pyval(val) -> Type:
         return make_tile_ty(t.dtype, ())
     if isinstance(val, bool):
         return make_tile_ty(datatype.bool_, ())
+    if isinstance(val, Enum):
+        return EnumTy(type(val))
     if isinstance(val, int):
         if -2**31 <= val < 2**31:
             dtype = datatype.int32
@@ -160,8 +168,6 @@ def typeof_pyval(val) -> Type:
 
     if isinstance(val, type):
         return TypeTy(val)
-    if isinstance(val, Enum):
-        return EnumTy(type(val))
 
     # TODO: should we add dlpack?
     raise TypeError(f'Python value {val} of type {type(val)} is not supported.')
@@ -176,7 +182,7 @@ def loose_type_of_pyval(value: Any) -> Type:
         return typeof_pyval(value)
 
 
-_SUPPORTED_CONST_TYPES = (int, float, bool, str, ModuleType, FunctionType, type, Enum)
+_SUPPORTED_CONST_TYPES = (int, float, bool, str, ModuleType, FunctionType, type, Enum, IntEnum)
 
 
 def get_constant_value(val: Any) -> Any:

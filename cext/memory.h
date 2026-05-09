@@ -11,7 +11,11 @@
 
 void* operator new (size_t len);
 
+void* operator new[] (size_t len);
+
 void operator delete (void* ptr, size_t);
+
+void operator delete[] (void* ptr);
 
 void* xcalloc(size_t nmemb, size_t size);
 

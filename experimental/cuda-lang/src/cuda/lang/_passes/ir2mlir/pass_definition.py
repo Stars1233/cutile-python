@@ -431,16 +431,38 @@ class IR2MLIR:
                 ir_type_to_mlir_type(param.get_type())
                 for param in self.region.blocks[0].params
             )
-            function_type = mlir.FunctionType(inputs=input_types, results=())
-            mlir.gpu.add_GPUFuncOp(
+            function_type = mlir.llvm.LLVMFunctionType(
+                returnType=mlir.llvm.LLVMVoidType(),
+                params=input_types,
+                varArg=False
+            )
+            arg_attrs = [self._get_arg_attributes(param.get_type())
+                         for param in self.region.blocks[0].params]
+
+            mlir.llvm.add_LLVMFuncOp(
+                sym_name=self.signature.symbol,
                 function_type=function_type,
+                arg_attrs=mlir.ArrayAttr(value=arg_attrs),
                 body=body_region,
                 extra_attributes=[
-                    ("sym_name", mlir.StringAttr(value=self.signature.symbol)),
-                    ("gpu.kernel", mlir.UnitAttr()),
+                    ("nvvm.kernel", mlir.UnitAttr()),
                 ],
             )
             self._func_op = gpu_module_region.blocks[0].operations[-1]
+
+    def _get_arg_attributes(self, ty: ir_type.Type) -> mlir.DictionaryAttr:
+        named_attrs = []
+        if isinstance(ty, ir_type.TensorMapTy):
+            i64_ty = mlir.IntegerType.signless(64)
+            i64x16_arr_ty = mlir.llvm.LLVMArrayType(elementType=i64_ty, numElements=16)
+            tensormap_struct_ty = mlir.llvm.LLVMStructType(types=(i64x16_arr_ty,))
+            named_attrs.append(mlir.NamedAttribute.make(
+                "llvm.align", mlir.IntegerAttr.make(i64_ty, 64)))
+            named_attrs.append(mlir.NamedAttribute.make(
+                "llvm.byval", mlir.TypeAttr(value=tensormap_struct_ty)))
+            named_attrs.append(mlir.NamedAttribute.make(
+                "nvvm.grid_constant", mlir.UnitAttr()))
+        return mlir.DictionaryAttr(value=named_attrs)
 
     def lower_block(self, ir_block: ir.Block):
         mlir_block = self.block_map[ir_block]
@@ -698,7 +720,7 @@ class IR2MLIR:
     @lower_operation.register
     def lower_return(self, operation: ops.Return) -> Sequence[mlir.Value]:
         assert operation.result_vars == (), "Kernels may not return values"
-        mlir.gpu.add_ReturnOp(operands=[])
+        mlir.llvm.add_ReturnOp()
         return []
 
     @lower_operation.register
@@ -849,6 +871,11 @@ class IR2MLIR:
     def lower_syncthreads(self, operation: ops.SyncThreads) -> Sequence[mlir.Value]:
         mlir.nvvm.add_Barrier0Op()
         return [None]
+
+    @lower_operation.register
+    def lower_tensor_map_as_opaque_ptr(self, operation: ops.TensorMapAsOpaquePtr):
+        tm = self.get_var(operation.tensor_map)
+        return [tm]
 
     @lower_operation.register
     def lower_inline_ptx(self, operation: ops.InlinePTX) -> Sequence[mlir.Value]:

@@ -20,7 +20,7 @@ class _HackKernel(_cext.TileDispatcher):
         super().__init__(flags, flags, flags)
 
     def _compile(self, signature, ctx):
-        return self._cubin, self._func_name, None, None
+        return self._cubin, self._func_name, None, []
 
 
 def construct_1d_memref_from(

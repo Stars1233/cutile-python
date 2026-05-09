@@ -30,7 +30,22 @@ import struct
 # ---- Interfaces ----
 
 
+class AlignmentAttrOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
 class ArgAndResultAttrsOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class BlobAttr:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class BranchOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -41,6 +56,11 @@ class CallOpInterface:
 
 
 class CallableOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class CastOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -100,7 +120,27 @@ class DestructurableTypeInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
+class DeviceMappingAttrInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class DeviceMaskingAttrInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class ElementsAttr:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
 class FloatType:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class FunctionOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -115,6 +155,11 @@ class InferShapedTypeOpInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
+class InferStridedMetadataOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
 class InferTypeOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
@@ -125,7 +170,42 @@ class MemRefElementTypeInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
+class MemRefLayoutAttrInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
 class MemoryEffectOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class MemorySpaceCastConsumerOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class MemorySpaceCastOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class OffsetSizeAndStrideOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class OpAsmAttrInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class OpAsmOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class OpAsmTypeInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -155,77 +235,7 @@ class PtrLikeTypeInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class ReifyRankedShapedTypeOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class SafeMemorySlotAccessOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class ShapedType:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-    DYNAMIC = -1 << 63
-
-    def get_element_type(self) -> Type:
-        raise NotImplementedError("get_element_type() must be implemented"
-                                  " by subclasses of ShapedType")
-
-    def clone_with(self, shape: Optional[Sequence[int]], element_type: Type) -> Type:
-        raise NotImplementedError("clone_with() must be implemented"
-                                  " by subclasses of ShapedType")
-
-
-class TargetDeviceSpecInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class TargetSystemSpecInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class VectorElementTypeInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class BranchOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class DeviceMappingAttrInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class DeviceMaskingAttrInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class FunctionOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class OpAsmAttrInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class OpAsmOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class OpAsmTypeInterface:
+class QuantStorageTypeInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -245,9 +255,39 @@ class RegionKindInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
+class ReifyRankedShapedTypeOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class SafeMemorySlotAccessOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
 class SelectLikeOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class ShapedDimOpInterface:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+
+class ShapedType:
+    def __init__(self):
+        raise NotImplementedError('Interfaces cannot be instantiated')
+
+    DYNAMIC = -1 << 63
+
+    def get_element_type(self) -> Type:
+        raise NotImplementedError("get_element_type() must be implemented"
+                                  " by subclasses of ShapedType")
+
+    def clone_with(self, shape: Optional[Sequence[int]], element_type: Type) -> Type:
+        raise NotImplementedError("clone_with() must be implemented"
+                                  " by subclasses of ShapedType")
 
 
 class SymbolOpInterface:
@@ -265,32 +305,12 @@ class SymbolUserOpInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class WeightedBranchOpInterface:
+class TargetDeviceSpecInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class WeightedRegionBranchOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class QuantStorageTypeInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class BlobAttr:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class ElementsAttr:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class MemRefLayoutAttrInterface:
+class TargetSystemSpecInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -303,17 +323,7 @@ class TypedAttr:
         raise NotImplementedError("get_type() must be implemented by subclasses of TypedAttr")
 
 
-class OffsetSizeAndStrideOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class ViewLikeOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class CastOpInterface:
+class VectorElementTypeInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -328,143 +338,22 @@ class VectorUnrollOpInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class AlignmentAttrOpInterface:
+class ViewLikeOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class InferStridedMetadataOpInterface:
+class WeightedBranchOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class MemorySpaceCastConsumerOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class MemorySpaceCastOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class ShapedDimOpInterface:
+class WeightedRegionBranchOpInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
 # ---- Attributes ----
-
-
-@dataclass(kw_only=True)
-class BoolAttr(Attribute):
-    value: bool
-
-    def __bool__(self):
-        return self.value
-
-    def _print_mlir_unqualified(self, p):
-        p("true" if self.value else "false")
-
-
-@dataclass(kw_only=True)
-class SymbolRefAttr(Attribute):
-    rootReference: "StringAttr"
-    nestedReferences: "Sequence[FlatSymbolRefAttr]"
-
-    def _print_mlir_unqualified(self, p):
-        p(f"@{self.rootReference.value}")
-        for ref in self.nestedReferences:
-            p(f"::@{ref.rootReference.value}")
-
-
-class FlatSymbolRefAttr(SymbolRefAttr):
-    def __init__(self, value: "str | StringAttr"):
-        if isinstance(value, str):
-            value = StringAttr(value=value)
-        super().__init__(rootReference=value, nestedReferences=())
-
-
-@dataclass(kw_only=True)
-class DenseArrayAttr(Attribute, BlobAttr):
-    elementType: "Type"
-    size: "int"
-    rawData: "bytes"
-
-
-class _DenseArrayAttrImpl(DenseArrayAttr):
-    def __init__(self, items, format: str, type: Type):
-        self._format = format
-        size = len(items)
-        data = struct.pack("=" + format * size, *items)
-        super().__init__(elementType=type, size=size, rawData=data)
-
-    def _print_mlir_unqualified(self, p):
-        p("array<")
-        self.elementType.print_mlir(p)
-        sep = ": "
-        for x in struct.unpack("=" + self._format * self.size, self.rawData):
-            p(sep)
-            p(x)
-            sep = ", "
-        p(">")
-
-
-class DenseI8ArrayAttr(_DenseArrayAttrImpl):
-    def __init__(self, items: Sequence[int]):
-        super().__init__(items, 'b', IntegerType.signless(8))
-
-
-class DenseI16ArrayAttr(_DenseArrayAttrImpl):
-    def __init__(self, items: Sequence[int]):
-        super().__init__(items, 'h', IntegerType.signless(16))
-
-
-class DenseI32ArrayAttr(_DenseArrayAttrImpl):
-    def __init__(self, items: Sequence[int]):
-        super().__init__(items, 'i', IntegerType.signless(32))
-
-
-class DenseI64ArrayAttr(_DenseArrayAttrImpl):
-    def __init__(self, items: Sequence[int]):
-        super().__init__(items, 'q', IntegerType.signless(64))
-
-
-class DenseElementsAttr(Attribute):
-    pass
-
-
-@dataclass(kw_only=True)
-class DenseTypedElementsAttr(DenseElementsAttr, TypedAttr, ElementsAttr):
-    type: "ShapedType"
-    rawData: "bytes"
-
-    def get_type(self):
-        return self.type
-
-    def _print_mlir_unqualified(self, p):
-        p("dense<")
-        p(self.rawData)
-        p(">")
-
-
-DenseIntOrFPElementsAttr = DenseTypedElementsAttr
-
-
-class DenseIntElementsAttr(DenseIntOrFPElementsAttr):
-    pass
-
-
-class DistinctAttr(Attribute):
-    def __repr__(self):
-        return f"DistinctAttr(id={id(self)})"
-
-
-class LocationAttr(Attribute):
-    pass
-
-
-Location = LocationAttr
 
 
 @dataclass(kw_only=True)
@@ -492,6 +381,97 @@ class ArrayAttr(Attribute):
 
 
 @dataclass(kw_only=True)
+class BoolAttr(Attribute):
+    value: bool
+
+    def __bool__(self):
+        return self.value
+
+    def _print_mlir_unqualified(self, p):
+        p("true" if self.value else "false")
+
+
+class LocationAttr(Attribute):
+    pass
+
+
+@dataclass(kw_only=True)
+class CallSiteLoc(LocationAttr):
+    callee: "Location"
+    caller: "Location"
+
+
+@dataclass(kw_only=True)
+class DenseArrayAttr(Attribute, BlobAttr):
+    elementType: "Type"
+    size: "int"
+    rawData: "bytes"
+
+
+class DenseElementsAttr(Attribute):
+    pass
+
+
+class _DenseArrayAttrImpl(DenseArrayAttr):
+    def __init__(self, items, format: str, type: Type):
+        self._format = format
+        size = len(items)
+        data = struct.pack("=" + format * size, *items)
+        super().__init__(elementType=type, size=size, rawData=data)
+
+    def _print_mlir_unqualified(self, p):
+        p("array<")
+        self.elementType.print_mlir(p)
+        sep = ": "
+        for x in struct.unpack("=" + self._format * self.size, self.rawData):
+            p(sep)
+            p(x)
+            sep = ", "
+        p(">")
+
+
+class DenseI16ArrayAttr(_DenseArrayAttrImpl):
+    def __init__(self, items: Sequence[int]):
+        super().__init__(items, 'h', IntegerType.signless(16))
+
+
+class DenseI32ArrayAttr(_DenseArrayAttrImpl):
+    def __init__(self, items: Sequence[int]):
+        super().__init__(items, 'i', IntegerType.signless(32))
+
+
+class DenseI64ArrayAttr(_DenseArrayAttrImpl):
+    def __init__(self, items: Sequence[int]):
+        super().__init__(items, 'q', IntegerType.signless(64))
+
+
+class DenseI8ArrayAttr(_DenseArrayAttrImpl):
+    def __init__(self, items: Sequence[int]):
+        super().__init__(items, 'b', IntegerType.signless(8))
+
+
+@dataclass(kw_only=True)
+class DenseTypedElementsAttr(DenseElementsAttr, TypedAttr, ElementsAttr):
+    type: "ShapedType"
+    rawData: "bytes"
+
+    def get_type(self):
+        return self.type
+
+    def _print_mlir_unqualified(self, p):
+        p("dense<")
+        p(self.rawData)
+        p(">")
+
+
+DenseIntOrFPElementsAttr = DenseTypedElementsAttr
+
+
+class DenseIntElementsAttr(DenseIntOrFPElementsAttr):
+    pass
+
+
+@dataclass(kw_only=True)
 class DenseResourceElementsAttr(Attribute, TypedAttr, ElementsAttr, BlobAttr):
     type: "ShapedType"
     rawHandle: "DenseResourceElementsHandle"
@@ -512,6 +492,50 @@ class DenseStringElementsAttr(DenseElementsAttr, TypedAttr, ElementsAttr):
 @dataclass(kw_only=True)
 class DictionaryAttr(Attribute):
     value: "Sequence[NamedAttribute]"
+
+    def _print_mlir_unqualified(self, p):
+        p("{")
+        comma = ""
+        for x in self.value:
+            p(comma)
+            p.print_escaped_string(x.name.value)
+            if not isinstance(x.value, UnitAttr):
+                p(" = ")
+                x.value.print_mlir(p)
+            comma = ", "
+        p("}")
+
+
+class DistinctAttr(Attribute):
+    def __repr__(self):
+        return f"DistinctAttr(id={id(self)})"
+
+
+@dataclass(kw_only=True)
+class FileLineColRange(LocationAttr):
+    filename: "StringAttr"
+    start_line: "int"
+    start_column: "int"
+    end_line: "int"
+    end_column: "int"
+
+
+@dataclass(kw_only=True)
+class SymbolRefAttr(Attribute):
+    rootReference: "StringAttr"
+    nestedReferences: "Sequence[FlatSymbolRefAttr]"
+
+    def _print_mlir_unqualified(self, p):
+        p(f"@{self.rootReference.value}")
+        for ref in self.nestedReferences:
+            p(f"::@{ref.rootReference.value}")
+
+
+class FlatSymbolRefAttr(SymbolRefAttr):
+    def __init__(self, value: "str | StringAttr"):
+        if isinstance(value, str):
+            value = StringAttr(value=value)
+        super().__init__(rootReference=value, nestedReferences=())
 
 
 @dataclass(kw_only=True)
@@ -545,6 +569,12 @@ class FloatAttr(Attribute, TypedAttr):
             p(f"0x{bits:016X}")
         else:
             raise TypeError(f"Cannot print non-finite FloatAttr {value} for type {self.type}")
+
+
+@dataclass(kw_only=True)
+class FusedLoc(LocationAttr):
+    locations: "Sequence[Location]"
+    metadata: "Attribute"
 
 
 @dataclass(kw_only=True)
@@ -589,6 +619,15 @@ class IntegerSetAttr(Attribute, OpAsmAttrInterface):
     value: "IntegerSet"
 
 
+Location = LocationAttr
+
+
+@dataclass(kw_only=True)
+class NameLoc(LocationAttr):
+    name: "StringAttr"
+    childLoc: "Location"
+
+
 @dataclass(kw_only=True)
 class OpaqueAttr(Attribute, TypedAttr):
     dialectNamespace: "StringAttr"
@@ -607,6 +646,25 @@ class SparseElementsAttr(Attribute, TypedAttr, ElementsAttr):
 
     def get_type(self):
         return self.type
+
+
+@dataclass(kw_only=True)
+class StridedLayoutAttr(Attribute, MemRefLayoutAttrInterface):
+    offset: "int"
+    strides: "Sequence[int]"
+
+    def _print_mlir_unqualified(self, p):
+        p("strided<[")
+        comma = ""
+        for s in self.strides:
+            p(comma)
+            p("?" if s == ShapedType.DYNAMIC else s)
+            comma = ", "
+        p("]")
+        if self.offset != 0:
+            p(", offset: ")
+            p("?" if self.offset == ShapedType.DYNAMIC else self.offset)
+        p(">")
 
 
 @dataclass(kw_only=True)
@@ -635,65 +693,11 @@ class UnitAttr(Attribute):
 
 
 @dataclass(kw_only=True)
-class StridedLayoutAttr(Attribute, MemRefLayoutAttrInterface):
-    offset: "int"
-    strides: "Sequence[int]"
-
-    def _print_mlir_unqualified(self, p):
-        p("strided<[")
-        comma = ""
-        for s in self.strides:
-            p(comma)
-            p("?" if s == ShapedType.DYNAMIC else s)
-            comma = ", "
-        p("]")
-        if self.offset != 0:
-            p(", offset: ")
-            p("?" if self.offset == ShapedType.DYNAMIC else self.offset)
-        p(">")
-
-
-@dataclass(kw_only=True)
-class CallSiteLoc(LocationAttr):
-    callee: "Location"
-    caller: "Location"
-
-
-@dataclass(kw_only=True)
-class FileLineColRange(LocationAttr):
-    filename: "StringAttr"
-    start_line: "int"
-    start_column: "int"
-    end_line: "int"
-    end_column: "int"
-
-
-@dataclass(kw_only=True)
-class FusedLoc(LocationAttr):
-    locations: "Sequence[Location]"
-    metadata: "Attribute"
-
-
-@dataclass(kw_only=True)
-class NameLoc(LocationAttr):
-    name: "StringAttr"
-    childLoc: "Location"
-
-
-@dataclass(kw_only=True)
 class UnknownLoc(LocationAttr):
     pass
 
 
 # ---- Types ----
-
-
-class BaseMemRefType(Type, PtrLikeTypeInterface, ShapedType):
-    pass
-
-
-class TensorType(Type, ShapedType):
-    pass
 
 
 @dataclass(kw_only=True)
@@ -703,9 +707,34 @@ class BFloat16Type(Type, DenseElementType, VectorElementTypeInterface, FloatType
         p("bf16")
 
 
+class BaseMemRefType(Type, PtrLikeTypeInterface, ShapedType):
+    pass
+
+
 @dataclass(kw_only=True)
 class ComplexType(Type, DenseElementType):
     elementType: "Type"
+
+
+@dataclass(kw_only=True)
+class Float128Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+
+    def _print_mlir_unqualified(self, p):
+        p("f128")
+
+
+@dataclass(kw_only=True)
+class Float16Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+
+    def _print_mlir_unqualified(self, p):
+        p("f16")
+
+
+@dataclass(kw_only=True)
+class Float32Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+
+    def _print_mlir_unqualified(self, p):
+        p("f32")
 
 
 @dataclass(kw_only=True)
@@ -714,6 +743,13 @@ class Float4E2M1FNType(Type, QuantStorageTypeInterface, DenseElementType,
 
     def _print_mlir_unqualified(self, p):
         p("f4E2M1FN")
+
+
+@dataclass(kw_only=True)
+class Float64Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+
+    def _print_mlir_unqualified(self, p):
+        p("f64")
 
 
 @dataclass(kw_only=True)
@@ -731,17 +767,17 @@ class Float6E3M2FNType(Type, DenseElementType, VectorElementTypeInterface, Float
 
 
 @dataclass(kw_only=True)
+class Float80Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+
+    def _print_mlir_unqualified(self, p):
+        p("f80")
+
+
+@dataclass(kw_only=True)
 class Float8E3M4Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f8E3M4")
-
-
-@dataclass(kw_only=True)
-class Float8E4M3Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
-
-    def _print_mlir_unqualified(self, p):
-        p("f8E4M3")
 
 
 @dataclass(kw_only=True)
@@ -767,11 +803,10 @@ class Float8E4M3FNUZType(Type, DenseElementType, VectorElementTypeInterface, Flo
 
 
 @dataclass(kw_only=True)
-class Float8E5M2Type(Type, QuantStorageTypeInterface, DenseElementType,
-                     VectorElementTypeInterface, FloatType):
+class Float8E4M3Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
-        p("f8E5M2")
+        p("f8E4M3")
 
 
 @dataclass(kw_only=True)
@@ -782,45 +817,18 @@ class Float8E5M2FNUZType(Type, DenseElementType, VectorElementTypeInterface, Flo
 
 
 @dataclass(kw_only=True)
+class Float8E5M2Type(Type, QuantStorageTypeInterface, DenseElementType,
+                     VectorElementTypeInterface, FloatType):
+
+    def _print_mlir_unqualified(self, p):
+        p("f8E5M2")
+
+
+@dataclass(kw_only=True)
 class Float8E8M0FNUType(Type, DenseElementType, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f8E8M0FNU")
-
-
-@dataclass(kw_only=True)
-class Float16Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
-
-    def _print_mlir_unqualified(self, p):
-        p("f16")
-
-
-@dataclass(kw_only=True)
-class Float32Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
-
-    def _print_mlir_unqualified(self, p):
-        p("f32")
-
-
-@dataclass(kw_only=True)
-class Float64Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
-
-    def _print_mlir_unqualified(self, p):
-        p("f64")
-
-
-@dataclass(kw_only=True)
-class Float80Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
-
-    def _print_mlir_unqualified(self, p):
-        p("f80")
-
-
-@dataclass(kw_only=True)
-class Float128Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
-
-    def _print_mlir_unqualified(self, p):
-        p("f128")
 
 
 @dataclass(kw_only=True)
@@ -930,6 +938,10 @@ class NoneType(Type):
 class OpaqueType(Type):
     dialectNamespace: "StringAttr"
     typeData: "str"
+
+
+class TensorType(Type, ShapedType):
+    pass
 
 
 @dataclass(kw_only=True)

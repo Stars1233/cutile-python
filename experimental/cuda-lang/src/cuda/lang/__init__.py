@@ -61,6 +61,9 @@ from ._stub import (
     syncwarp,
     nvvm,
     libdevice,
+    TensorMapSwizzle,
+    TensorMap,
+    tensor_map_tiled
 )
 
 from ._datatype import (
@@ -172,4 +175,7 @@ __all__ = (
     "MemoryOrder",
     "compile_simt",
     "vector_ty",
+    "TensorMapSwizzle",
+    "TensorMap",
+    "tensor_map_tiled"
 )

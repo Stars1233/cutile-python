@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Copyright (c) <2026> NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+import enum
+from cuda.tile import _cext
+
+
+class TensorMapSwizzle(enum.Enum):
+    SWIZZLE_NONE = _cext.CU_TENSOR_MAP_SWIZZLE_NONE
+    SWIZZLE_32B = _cext.CU_TENSOR_MAP_SWIZZLE_32B
+    SWIZZLE_64B = _cext.CU_TENSOR_MAP_SWIZZLE_64B
+    SWIZZLE_128B = _cext.CU_TENSOR_MAP_SWIZZLE_32B
+    SWIZZLE_128B_ATOM_32B = _cext.CU_TENSOR_MAP_SWIZZLE_128B_ATOM_32B
+    SWIZZLE_128B_ATOM_32B_FLIP_8B = _cext.CU_TENSOR_MAP_SWIZZLE_128B_ATOM_32B_FLIP_8B
+    SWIZZLE_128B_ATOM_64B = _cext.CU_TENSOR_MAP_SWIZZLE_128B_ATOM_64B

@@ -115,12 +115,10 @@ class kernel(_cext.TileDispatcher):
             ctx=None,  # the launcher currently provides a cutile context
         )
         [kernel_sig] = result.kernel_signatures
-        if result.dyn_smem_size_program is None:
-            dyn_smem_opcodes = dyn_smem_op_attrs = None
-        else:
-            dyn_smem_opcodes = result.dyn_smem_size_program.opcodes
-            dyn_smem_op_attrs = result.dyn_smem_size_program.op_attrs
-        return result.cubin, kernel_sig.symbol, dyn_smem_opcodes, dyn_smem_op_attrs
+        return (result.cubin,
+                kernel_sig.symbol,
+                result.dyn_smem_size_program,
+                result.hoisted_tensor_maps)
 
     @property
     def _pyfunc(self):

@@ -145,44 +145,59 @@ def full_mask() -> int32:
     return int32(FULL_MASK)
 
 
-@function
-def thread_idx() -> tuple[int, int, int]:
+def thread_idx(axis: int | None = None, /) -> tuple[int, int, int] | int:
     """Gets the current thread indices as ``(x, y, z)``."""
-    return (
+    ret = (
         nvvm.read_ptx_sreg_tid_x(),
         nvvm.read_ptx_sreg_tid_y(),
         nvvm.read_ptx_sreg_tid_z(),
     )
+    if axis is None:
+        return ret
+    else:
+        return ret[axis]
 
 
 @function
-def block_idx() -> tuple[int, int, int]:
+def block_idx(axis: int | None = None, /) -> tuple[int, int, int]:
     """Gets the current block indices as ``(x, y, z)``."""
-    return (
+    ret = (
         nvvm.read_ptx_sreg_ctaid_x(),
         nvvm.read_ptx_sreg_ctaid_y(),
         nvvm.read_ptx_sreg_ctaid_z(),
     )
+    if axis is None:
+        return ret
+    else:
+        return ret[axis]
 
 
 @function
-def block_dim() -> tuple[int, int, int]:
+def block_dim(axis: int | None = None, /) -> tuple[int, int, int]:
     """Gets the current block dimensions as ``(x, y, z)``."""
-    return (
+    ret = (
         nvvm.read_ptx_sreg_ntid_x(),
         nvvm.read_ptx_sreg_ntid_y(),
         nvvm.read_ptx_sreg_ntid_z(),
     )
+    if axis is None:
+        return ret
+    else:
+        return ret[axis]
 
 
 @function
-def grid_dim() -> tuple[int, int, int]:
+def grid_dim(axis: int | None = None, /) -> tuple[int, int, int]:
     """Gets the current grid dimensions as ``(x, y, z)``."""
-    return (
+    ret = (
         nvvm.read_ptx_sreg_nctaid_x(),
         nvvm.read_ptx_sreg_nctaid_y(),
         nvvm.read_ptx_sreg_nctaid_z(),
     )
+    if axis is None:
+        return ret
+    else:
+        return ret[axis]
 
 
 @function
@@ -385,10 +400,9 @@ def setmaxregister_decrease(value: int32):
     nvvm.setmaxnreg_dec_sync_aligned_u32(int32(value))
 
 
-@function
-def elect_sync(mask: int32 = FULL_MASK):
-    _, pred = nvvm.elect_sync(mask)
-    return pred
+@stub
+def elect_sync(membermask: int = FULL_MASK, /) -> bool:
+    pass
 
 
 @stub

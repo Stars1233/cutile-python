@@ -33,10 +33,23 @@ static inline int pylong_as_int(PyObject* obj) {
     return static_cast<int>(val);
 }
 
+static inline unsigned pylong_as_uint(PyObject* obj) {
+    unsigned long val = PyLong_AsUnsignedLong(obj);
+    if (PyErr_Occurred()) return -1;
+    if (val > UINT_MAX) {
+        PyErr_SetString(PyExc_OverflowError,
+            "Python int too large to convert to C unsigned int");
+        return -1;
+    }
+    return static_cast<unsigned>(val);
+}
+
 template <typename T>
 T pylong_as(PyObject* obj) {
     if constexpr (std::is_same_v<T, int>) {
         return pylong_as_int(obj);
+    } else if constexpr (std::is_same_v<T, unsigned>) {
+        return pylong_as_uint(obj);
     } else if constexpr (std::is_same_v<T, long>) {
         return PyLong_AsLong(obj);
     } else if constexpr (std::is_same_v<T, long long>) {
@@ -48,6 +61,11 @@ T pylong_as(PyObject* obj) {
     } else {
         static_assert(!sizeof(T*), "pylong_as<T> not implemented for given T");
     }
+}
+
+template <typename T>
+T pylong_as(const PyPtr& ptr) {
+    return pylong_as<T>(ptr.get());
 }
 
 template <typename T>

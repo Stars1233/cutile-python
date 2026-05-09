@@ -46,133 +46,6 @@ class IndexedMemCopyOpInterface:
 # ---- Operators ----
 
 
-def add_AssumeAlignmentOp(
-    *,
-    memref: Value,
-    alignment: int,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    result_type = memref.type
-    all_props = []
-    all_props.append(('alignment', IntegerAttr.make(IntegerType.signless(32), alignment)))
-    return add_operation(
-        name="memref.assume_alignment",
-        result_type=result_type,
-        operands=[memref],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_AtomicRMWOp(
-    *,
-    kind: arith.AtomicRMWKind,
-    value: Value,
-    memref: Value,
-    indices: Sequence[Value],
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    result_type = value.type
-    all_props = []
-    all_props.append(('kind', arith.AtomicRMWKindAttr(kind)))
-    return add_operation(
-        name="memref.atomic_rmw",
-        result_type=result_type,
-        operands=[value, memref, *indices],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_AtomicYieldOp(
-    *,
-    result: Value,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> None:
-    all_props = []
-    return add_operation(
-        name="memref.atomic_yield",
-        result_type=None,
-        operands=[result],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_CopyOp(
-    *,
-    source: Value,
-    target: Value,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> None:
-    all_props = []
-    return add_operation(
-        name="memref.copy",
-        result_type=None,
-        operands=[source, target],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_DistinctObjectsOp(
-    *,
-    results_types: Sequence[MemRefType],
-    operands: Sequence[Value],
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> tuple[Value, ...]:
-    all_props = []
-    return add_operation(
-        name="memref.distinct_objects",
-        result_type=results_types,
-        operands=list(operands),
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_GenericAtomicRMWOp(
-    *,
-    memref: Value,
-    indices: Sequence[Value],
-    atomic_body: Region,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    result_type = memref.type.get_element_type()
-    all_props = []
-    return add_operation(
-        name="memref.generic_atomic_rmw",
-        result_type=result_type,
-        operands=[memref, *indices],
-        properties=all_props,
-        attributes=extra_attributes,
-        regions=[atomic_body],
-    )
-
-
-def add_LoadOp(
-    *,
-    memref: Value,
-    indices: Sequence[Value],
-    nontemporal: bool = False,
-    alignment: Optional[int] = None,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    result_type = memref.type.get_element_type()
-    all_props = []
-    if nontemporal:
-        all_props.append(('nontemporal', BoolAttr(value=nontemporal)))
-    if alignment is not None:
-        all_props.append(('alignment', IntegerAttr.make(IntegerType.signless(64), alignment)))
-    return add_operation(
-        name="memref.load",
-        result_type=result_type,
-        operands=[memref, *indices],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
 def add_AllocOp(
     *,
     memref_type: MemRefType,
@@ -249,6 +122,59 @@ def add_AllocaScopeReturnOp(
     )
 
 
+def add_AssumeAlignmentOp(
+    *,
+    memref: Value,
+    alignment: int,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    result_type = memref.type
+    all_props = []
+    all_props.append(('alignment', IntegerAttr.make(IntegerType.signless(32), alignment)))
+    return add_operation(
+        name="memref.assume_alignment",
+        result_type=result_type,
+        operands=[memref],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_AtomicRMWOp(
+    *,
+    kind: arith.AtomicRMWKind,
+    value: Value,
+    memref: Value,
+    indices: Sequence[Value],
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    result_type = value.type
+    all_props = []
+    all_props.append(('kind', arith.AtomicRMWKindAttr(kind)))
+    return add_operation(
+        name="memref.atomic_rmw",
+        result_type=result_type,
+        operands=[value, memref, *indices],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_AtomicYieldOp(
+    *,
+    result: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="memref.atomic_yield",
+        result_type=None,
+        operands=[result],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
 def add_CastOp(
     *,
     dest_type: BaseMemRefType,
@@ -283,6 +209,22 @@ def add_CollapseShapeOp(
     )
 
 
+def add_CopyOp(
+    *,
+    source: Value,
+    target: Value,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> None:
+    all_props = []
+    return add_operation(
+        name="memref.copy",
+        result_type=None,
+        operands=[source, target],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
 def add_DeallocOp(
     *,
     memref: Value,
@@ -310,6 +252,22 @@ def add_DimOp(
         name="memref.dim",
         result_type=result_type,
         operands=[source, index],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_DistinctObjectsOp(
+    *,
+    results_types: Sequence[MemRefType],
+    operands: Sequence[Value],
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> tuple[Value, ...]:
+    all_props = []
+    return add_operation(
+        name="memref.distinct_objects",
+        result_type=results_types,
+        operands=list(operands),
         properties=all_props,
         attributes=extra_attributes,
     )
@@ -403,6 +361,25 @@ def add_ExtractStridedMetadataOp(
     )
 
 
+def add_GenericAtomicRMWOp(
+    *,
+    memref: Value,
+    indices: Sequence[Value],
+    atomic_body: Region,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    result_type = memref.type.get_element_type()
+    all_props = []
+    return add_operation(
+        name="memref.generic_atomic_rmw",
+        result_type=result_type,
+        operands=[memref, *indices],
+        properties=all_props,
+        attributes=extra_attributes,
+        regions=[atomic_body],
+    )
+
+
 def add_GetGlobalOp(
     *,
     result_type: MemRefType,
@@ -445,6 +422,29 @@ def add_GlobalOp(
         name="memref.global",
         result_type=None,
         operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_LoadOp(
+    *,
+    memref: Value,
+    indices: Sequence[Value],
+    nontemporal: bool = False,
+    alignment: Optional[int] = None,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    result_type = memref.type.get_element_type()
+    all_props = []
+    if nontemporal:
+        all_props.append(('nontemporal', BoolAttr(value=nontemporal)))
+    if alignment is not None:
+        all_props.append(('alignment', IntegerAttr.make(IntegerType.signless(64), alignment)))
+    return add_operation(
+        name="memref.load",
+        result_type=result_type,
+        operands=[memref, *indices],
         properties=all_props,
         attributes=extra_attributes,
     )
@@ -591,6 +591,33 @@ def add_StoreOp(
     )
 
 
+def add_SubViewOp(
+    *,
+    result_type: MemRefType,
+    source: Value,
+    offsets: Sequence[Value],
+    sizes: Sequence[Value],
+    strides: Sequence[Value],
+    static_offsets: Sequence[int],
+    static_sizes: Sequence[int],
+    static_strides: Sequence[int],
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('static_offsets', DenseI64ArrayAttr(static_offsets)))
+    all_props.append(('static_sizes', DenseI64ArrayAttr(static_sizes)))
+    all_props.append(('static_strides', DenseI64ArrayAttr(static_strides)))
+    all_props.append(('operandSegmentSizes',
+                      DenseI32ArrayAttr([1, len(offsets), len(sizes), len(strides)])))
+    return add_operation(
+        name="memref.subview",
+        result_type=result_type,
+        operands=[source, *offsets, *sizes, *strides],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
 def add_TransposeOp(
     *,
     result_type: MemRefType,
@@ -622,33 +649,6 @@ def add_ViewOp(
         name="memref.view",
         result_type=result_type,
         operands=[source, byte_shift, *sizes],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_SubViewOp(
-    *,
-    result_type: MemRefType,
-    source: Value,
-    offsets: Sequence[Value],
-    sizes: Sequence[Value],
-    strides: Sequence[Value],
-    static_offsets: Sequence[int],
-    static_sizes: Sequence[int],
-    static_strides: Sequence[int],
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    all_props = []
-    all_props.append(('static_offsets', DenseI64ArrayAttr(static_offsets)))
-    all_props.append(('static_sizes', DenseI64ArrayAttr(static_sizes)))
-    all_props.append(('static_strides', DenseI64ArrayAttr(static_strides)))
-    all_props.append(('operandSegmentSizes',
-                      DenseI32ArrayAttr([1, len(offsets), len(sizes), len(strides)])))
-    return add_operation(
-        name="memref.subview",
-        result_type=result_type,
-        operands=[source, *offsets, *sizes, *strides],
         properties=all_props,
         attributes=extra_attributes,
     )

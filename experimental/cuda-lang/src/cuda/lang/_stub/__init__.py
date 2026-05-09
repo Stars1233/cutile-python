@@ -57,6 +57,12 @@ from .core_api import (
     reinterpret_pointer_as_array,
 )
 
+from .tensor_map import (
+    TensorMapSwizzle,
+    TensorMap,
+    tensor_map_tiled,
+)
+
 
 __all__ = (
     "warp_size",
@@ -107,4 +113,7 @@ __all__ = (
     "libdevice",
     "address_space_cast",
     "reinterpret_pointer_as_array",
+    "TensorMapSwizzle",
+    "TensorMap",
+    "tensor_map_tiled"
 )

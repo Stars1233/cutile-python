@@ -784,6 +784,22 @@ class MMALayoutAttr(Attribute, dialect='nvvm', mnemonic='mma_layout'):
 
 
 @dataclass(kw_only=True)
+class MMAShapeAttr(Attribute, dialect='nvvm', mnemonic='shape'):
+    m: "int"
+    n: "int"
+    k: "int"
+
+    def _print_mlir_unqualified(self, p):
+        p("<m = ")
+        p(str(self.m))
+        p(", n = ")
+        p(str(self.n))
+        p(", k = ")
+        p(str(self.k))
+        p(">")
+
+
+@dataclass(kw_only=True)
 class MMATypesAttr(Attribute, dialect='nvvm', mnemonic='mma_type'):
     value: "MMATypes"
 
@@ -829,22 +845,6 @@ class NVVMMemorySpaceAttr(Attribute, llvm.LLVMAddrSpaceAttrInterface,
     def _print_mlir_unqualified(self, p):
         p("<")
         self.value._print_mlir_unqualified(p)
-        p(">")
-
-
-@dataclass(kw_only=True)
-class MMAShapeAttr(Attribute, dialect='nvvm', mnemonic='shape'):
-    m: "int"
-    n: "int"
-    k: "int"
-
-    def _print_mlir_unqualified(self, p):
-        p("<m = ")
-        p(str(self.m))
-        p(", n = ")
-        p(str(self.n))
-        p(", k = ")
-        p(str(self.k))
         p(">")
 
 
@@ -1248,20 +1248,6 @@ def add_AggrSmemSize(
     return add_operation(
         name="nvvm.read.ptx.sreg.aggr.smem.size",
         result_type=res_type,
-        operands=[],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_Barrier0Op(
-    *,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> None:
-    all_props = []
-    return add_operation(
-        name="nvvm.barrier0",
-        result_type=None,
         operands=[],
         properties=all_props,
         attributes=extra_attributes,
@@ -1904,84 +1890,6 @@ def add_ConvertBF16x2ToS2F6x2Op(
     )
 
 
-def add_ConvertF4x2ToF16x2Op(
-    *,
-    dst_type: VectorType,
-    src: Value,
-    relu: bool = False,
-    srcType: Type,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    all_props = []
-    all_props.append(('relu', BoolAttr(value=relu)))
-    all_props.append(('srcType', TypeAttr(value=srcType)))
-    return add_operation(
-        name="nvvm.convert.f4x2.to.f16x2",
-        result_type=dst_type,
-        operands=[src],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_ConvertF6x2ToF16x2Op(
-    *,
-    dst_type: VectorType,
-    src: Value,
-    relu: bool = False,
-    srcType: Type,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    all_props = []
-    all_props.append(('relu', BoolAttr(value=relu)))
-    all_props.append(('srcType', TypeAttr(value=srcType)))
-    return add_operation(
-        name="nvvm.convert.f6x2.to.f16x2",
-        result_type=dst_type,
-        operands=[src],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_ConvertF8x2ToBF16x2Op(
-    *,
-    dst_type: VectorType,
-    src: Value,
-    srcType: Type,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    all_props = []
-    all_props.append(('srcType', TypeAttr(value=srcType)))
-    return add_operation(
-        name="nvvm.convert.f8x2.to.bf16x2",
-        result_type=dst_type,
-        operands=[src],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_ConvertF8x2ToF16x2Op(
-    *,
-    dst_type: VectorType,
-    src: Value,
-    relu: bool = False,
-    srcType: Type,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    all_props = []
-    all_props.append(('relu', BoolAttr(value=relu)))
-    all_props.append(('srcType', TypeAttr(value=srcType)))
-    return add_operation(
-        name="nvvm.convert.f8x2.to.f16x2",
-        result_type=dst_type,
-        operands=[src],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
 def add_ConvertF16x2ToF4x2Op(
     *,
     src: Value,
@@ -2066,6 +1974,30 @@ def add_ConvertF32x2ToBF16x2Op(
     )
 
 
+def add_ConvertF32x2ToF16x2Op(
+    *,
+    dst_type: VectorType,
+    src_hi: Value,
+    src_lo: Value,
+    random_bits: Optional[Value] = None,
+    rnd: FPRoundingMode = FPRoundingMode(0),
+    sat: SaturationMode = SaturationMode(0),
+    relu: bool = False,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('rnd', FPRoundingModeAttr(value=rnd)))
+    all_props.append(('sat', SaturationModeAttr(value=sat)))
+    all_props.append(('relu', BoolAttr(value=relu)))
+    return add_operation(
+        name="nvvm.convert.f32x2.to.f16x2",
+        result_type=dst_type,
+        operands=[src_hi, src_lo, *([] if random_bits is None else [random_bits])],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
 def add_ConvertF32x2ToF4x2Op(
     *,
     a: Value,
@@ -2128,30 +2060,6 @@ def add_ConvertF32x2ToF8x2Op(
         name="nvvm.convert.f32x2.to.f8x2",
         result_type=dst_type,
         operands=[a, b],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_ConvertF32x2ToF16x2Op(
-    *,
-    dst_type: VectorType,
-    src_hi: Value,
-    src_lo: Value,
-    random_bits: Optional[Value] = None,
-    rnd: FPRoundingMode = FPRoundingMode(0),
-    sat: SaturationMode = SaturationMode(0),
-    relu: bool = False,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    all_props = []
-    all_props.append(('rnd', FPRoundingModeAttr(value=rnd)))
-    all_props.append(('sat', SaturationModeAttr(value=sat)))
-    all_props.append(('relu', BoolAttr(value=relu)))
-    return add_operation(
-        name="nvvm.convert.f32x2.to.f16x2",
-        result_type=dst_type,
-        operands=[src_hi, src_lo, *([] if random_bits is None else [random_bits])],
         properties=all_props,
         attributes=extra_attributes,
     )
@@ -2235,6 +2143,84 @@ def add_ConvertF32x4ToF8x4Op(
         name="nvvm.convert.f32x4.to.f8x4",
         result_type=dst_type,
         operands=[src, rbits],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConvertF4x2ToF16x2Op(
+    *,
+    dst_type: VectorType,
+    src: Value,
+    relu: bool = False,
+    srcType: Type,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('relu', BoolAttr(value=relu)))
+    all_props.append(('srcType', TypeAttr(value=srcType)))
+    return add_operation(
+        name="nvvm.convert.f4x2.to.f16x2",
+        result_type=dst_type,
+        operands=[src],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConvertF6x2ToF16x2Op(
+    *,
+    dst_type: VectorType,
+    src: Value,
+    relu: bool = False,
+    srcType: Type,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('relu', BoolAttr(value=relu)))
+    all_props.append(('srcType', TypeAttr(value=srcType)))
+    return add_operation(
+        name="nvvm.convert.f6x2.to.f16x2",
+        result_type=dst_type,
+        operands=[src],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConvertF8x2ToBF16x2Op(
+    *,
+    dst_type: VectorType,
+    src: Value,
+    srcType: Type,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('srcType', TypeAttr(value=srcType)))
+    return add_operation(
+        name="nvvm.convert.f8x2.to.bf16x2",
+        result_type=dst_type,
+        operands=[src],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_ConvertF8x2ToF16x2Op(
+    *,
+    dst_type: VectorType,
+    src: Value,
+    relu: bool = False,
+    srcType: Type,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    all_props = []
+    all_props.append(('relu', BoolAttr(value=relu)))
+    all_props.append(('srcType', TypeAttr(value=srcType)))
+    return add_operation(
+        name="nvvm.convert.f8x2.to.f16x2",
+        result_type=dst_type,
+        operands=[src],
         properties=all_props,
         attributes=extra_attributes,
     )
@@ -2688,141 +2674,6 @@ def add_EnvReg0Op(
     )
 
 
-def add_EnvReg1Op(
-    *,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = IntegerType.signless(32)
-    all_props = []
-    return add_operation(
-        name="nvvm.read.ptx.sreg.envreg1",
-        result_type=res_type,
-        operands=[],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_EnvReg2Op(
-    *,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = IntegerType.signless(32)
-    all_props = []
-    return add_operation(
-        name="nvvm.read.ptx.sreg.envreg2",
-        result_type=res_type,
-        operands=[],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_EnvReg3Op(
-    *,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = IntegerType.signless(32)
-    all_props = []
-    return add_operation(
-        name="nvvm.read.ptx.sreg.envreg3",
-        result_type=res_type,
-        operands=[],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_EnvReg4Op(
-    *,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = IntegerType.signless(32)
-    all_props = []
-    return add_operation(
-        name="nvvm.read.ptx.sreg.envreg4",
-        result_type=res_type,
-        operands=[],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_EnvReg5Op(
-    *,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = IntegerType.signless(32)
-    all_props = []
-    return add_operation(
-        name="nvvm.read.ptx.sreg.envreg5",
-        result_type=res_type,
-        operands=[],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_EnvReg6Op(
-    *,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = IntegerType.signless(32)
-    all_props = []
-    return add_operation(
-        name="nvvm.read.ptx.sreg.envreg6",
-        result_type=res_type,
-        operands=[],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_EnvReg7Op(
-    *,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = IntegerType.signless(32)
-    all_props = []
-    return add_operation(
-        name="nvvm.read.ptx.sreg.envreg7",
-        result_type=res_type,
-        operands=[],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_EnvReg8Op(
-    *,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = IntegerType.signless(32)
-    all_props = []
-    return add_operation(
-        name="nvvm.read.ptx.sreg.envreg8",
-        result_type=res_type,
-        operands=[],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_EnvReg9Op(
-    *,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = IntegerType.signless(32)
-    all_props = []
-    return add_operation(
-        name="nvvm.read.ptx.sreg.envreg9",
-        result_type=res_type,
-        operands=[],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
 def add_EnvReg10Op(
     *,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
@@ -2966,6 +2817,21 @@ def add_EnvReg19Op(
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg19",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_EnvReg1Op(
+    *,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = IntegerType.signless(32)
+    all_props = []
+    return add_operation(
+        name="nvvm.read.ptx.sreg.envreg1",
         result_type=res_type,
         operands=[],
         properties=all_props,
@@ -3123,6 +2989,21 @@ def add_EnvReg29Op(
     )
 
 
+def add_EnvReg2Op(
+    *,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = IntegerType.signless(32)
+    all_props = []
+    return add_operation(
+        name="nvvm.read.ptx.sreg.envreg2",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
 def add_EnvReg30Op(
     *,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
@@ -3146,6 +3027,111 @@ def add_EnvReg31Op(
     all_props = []
     return add_operation(
         name="nvvm.read.ptx.sreg.envreg31",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_EnvReg3Op(
+    *,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = IntegerType.signless(32)
+    all_props = []
+    return add_operation(
+        name="nvvm.read.ptx.sreg.envreg3",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_EnvReg4Op(
+    *,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = IntegerType.signless(32)
+    all_props = []
+    return add_operation(
+        name="nvvm.read.ptx.sreg.envreg4",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_EnvReg5Op(
+    *,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = IntegerType.signless(32)
+    all_props = []
+    return add_operation(
+        name="nvvm.read.ptx.sreg.envreg5",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_EnvReg6Op(
+    *,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = IntegerType.signless(32)
+    all_props = []
+    return add_operation(
+        name="nvvm.read.ptx.sreg.envreg6",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_EnvReg7Op(
+    *,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = IntegerType.signless(32)
+    all_props = []
+    return add_operation(
+        name="nvvm.read.ptx.sreg.envreg7",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_EnvReg8Op(
+    *,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = IntegerType.signless(32)
+    all_props = []
+    return add_operation(
+        name="nvvm.read.ptx.sreg.envreg8",
+        result_type=res_type,
+        operands=[],
+        properties=all_props,
+        attributes=extra_attributes,
+    )
+
+
+def add_EnvReg9Op(
+    *,
+    extra_attributes: Sequence[tuple[str, Attribute]] = (),
+) -> Value:
+    res_type = IntegerType.signless(32)
+    all_props = []
+    return add_operation(
+        name="nvvm.read.ptx.sreg.envreg9",
         result_type=res_type,
         operands=[],
         properties=all_props,

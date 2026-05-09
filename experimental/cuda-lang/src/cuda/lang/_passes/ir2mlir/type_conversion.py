@@ -27,6 +27,11 @@ def opaque_pointer_type_to_mlir_type(src_type: ir_type.OpaquePointerTy) -> mlir.
 
 
 @ir_type_to_mlir_type.register
+def tensor_map_type_to_mlir_type(src_type: ir_type.TensorMapTy) -> mlir.Type:
+    return mlir.llvm.LLVMPointerType()
+
+
+@ir_type_to_mlir_type.register
 def tile_type_to_mlir_type(src_type: ir_type.TileTy) -> mlir.Type:
     element_type = ir_type_to_mlir_type(src_type.dtype)
     if src_type.shape == ():
