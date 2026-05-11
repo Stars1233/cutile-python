@@ -230,10 +230,12 @@ def exhaustive_search(
     isatty = _in_terminal()
 
     for i, cfg in enumerate(search_space):
+        if not quiet and isatty:
+            progress(i, total, len(errors))
+
         grid = grid_fn(cfg)
         hints = hints_fn(cfg) if hints_fn is not None else {}
         updated_kernel = kernel.replace_hints(**hints)
-
         try:
             avg_us, error_bar, repeats = _time_us(
                 stream, grid, updated_kernel,
@@ -254,8 +256,6 @@ def exhaustive_search(
             if avg_us < best_time_us:
                 best_time_us = avg_us
                 best_cfg_id = len(successes) - 1
-            if not quiet and isatty:
-                progress(i, total, len(errors))
 
     if len(search_space) == 0:
         raise ValueError("Search space is empty.")

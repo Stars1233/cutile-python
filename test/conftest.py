@@ -148,7 +148,7 @@ def benchmark(benchmark):
     return benchmark
 
 
-@pytest.fixture(params=["cutile", "cutile_autotune", "torch"])
+@pytest.fixture(params=["cutile", "torch"])
 def backend(request):
     """A fixture to automatically find the corresponding cutile/torch implementation of
     the benchmark target.
@@ -163,14 +163,16 @@ def backend(request):
         raise RuntimeError(f"Benchmark function must starts with \"bench_\", got {func_name}")
     base_name = func_name[len("bench_"):]
     backend_name = f'{request.param}_{base_name}'
-    if request.param == "cutile_autotune" and not hasattr(request.module, backend_name):
-        pytest.skip(f"Backend '{backend_name}' not implemented in {request.module.__name__}")
     return getattr(request.module, backend_name)
 
 
 def pytest_benchmark_update_machine_info(config, machine_info):
-    # TODO: PyTorch version, Driver version, and SM version
-    pass
+    fields = ['name', 'compute_cap', 'driver_version',
+              'memory.total', 'clocks.max.sm', 'clocks.max.mem', 'persistence_mode', 'power.limit']
+    query_gpu = f"--query-gpu={','.join(fields)}"
+    command = ["nvidia-smi", "-i", "0", query_gpu, "--format=csv,noheader"]
+    result = subprocess.check_output(command)
+    machine_info["gpu_info"] = dict(zip(fields, result.decode().strip().split(","), strict=True))
 
 
 def pytest_benchmark_update_json(config, benchmarks, output_json):

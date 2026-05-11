@@ -234,17 +234,12 @@ def torch_use_tf32_matmul():
         torch.backends.cuda.matmul.fp32_precision = origin
 
 
-def get_compute_capability_major():
-    major, _minor = get_compute_capability()
-    return major
-
-
 def is_ampere_or_ada():
-    return get_compute_capability_major() == 8
+    return get_compute_capability()[0] == 8
 
 
 def is_hopper_or_newer():
-    return get_compute_capability_major() >= 9
+    return get_compute_capability()[0] >= 9
 
 
 def require_hopper_or_newer():
@@ -253,7 +248,7 @@ def require_hopper_or_newer():
 
 
 def is_blackwell_or_newer():
-    return get_compute_capability_major() >= 10
+    return get_compute_capability()[0] >= 10
 
 
 def require_blackwell_or_newer():

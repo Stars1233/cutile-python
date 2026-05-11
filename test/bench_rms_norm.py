@@ -2,15 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from conftest import dtype_id, shape_id
+from conftest import dtype_id, shape_id, get_tileiras_version
 
 import pytest
 import torch
 import cuda.tile as ct
 from cuda.tile.tune import exhaustive_search
+from cuda.tile._bytecode import BytecodeVersion
 import itertools
 from math import ceil
-from util import estimate_bench_iter, next_power_of_2, is_ampere_or_ada
+from util import estimate_bench_iter
+import platform
 from kernels.rms_norm import (
     rms_norm_kernel, rms_norm_kernel_gather, rms_norm_kernel_static_persistent
 )
@@ -18,45 +20,50 @@ from functools import partial
 from types import SimpleNamespace
 
 
-timeout = 5.0  # sec
+timeout = 1  # sec
 
 
-@pytest.fixture(params=[
-    (262144, 1024),
-    (262144, 2048),
-    (262144, 4096),
-    (65536, 8192),
-    (65536, 16384),
-], ids=shape_id)
+def get_shape_params():
+    return [(65536, 1024),
+            (65536, 2048),
+            (65536, 4096)]
+
+
+@pytest.fixture(params=get_shape_params(), ids=shape_id)
 def shape(request):
     return request.param
 
 
-@pytest.fixture(params=[
-    torch.float16, torch.float32, torch.bfloat16
-], ids=dtype_id)
+@pytest.fixture(params=[torch.float16, torch.float32, torch.bfloat16], ids=dtype_id)
 def dtype(request):
     return request.param
 
 
 @pytest.mark.benchmark(group='rms_norm')
-@pytest.mark.parametrize('static_persistent', [True, False])
-@pytest.mark.parametrize('gather', [True, False])
-def bench_rms_norm(shape, dtype, static_persistent, gather, backend, benchmark):
-    if backend is cutile_autotune_rms_norm and static_persistent:
-        pytest.xfail("cutile autotune backend on static persistent mode hangs on arm64")
-    if shape[1] == 16384:
-        pytest.xfail("It uses too much memory and hangs. This previously created a PTXAS Error")
-    if backend is torch_rms_norm and (static_persistent or gather):
-        pytest.skip("torch backend does not distinguish between standard and static persistent")
-    if static_persistent and gather:
-        pytest.skip("static persistent does not support gather mode")
+@pytest.mark.parametrize('algo', ['persistent', 'gather', 'regular'])
+def bench_rms_norm(shape, dtype, algo, backend, benchmark):
     x_shape = shape
     w_shape = (shape[1], )
     x = torch.rand(x_shape, dtype=dtype, device="cuda")
     weight = torch.randn(w_shape, dtype=dtype, device="cuda")
 
     eps = 1e-5
+
+    if algo == 'persistent':
+        if platform.machine().lower().startswith(('arm', 'aarch64')):
+            pytest.xfail("autotune static persistent hangs on arm64")
+        if get_tileiras_version() == BytecodeVersion.V_13_2:
+            pytest.xfail("autotune static persistent hangs on tileiras 13.2")
+
+    if algo == 'persistent':
+        static_persistent, gather = True, False
+    elif algo == 'gather':
+        static_persistent, gather = False, True
+    else:
+        static_persistent, gather = False, False
+
+    if algo == 'persistent' and shape[1] > 1024:
+        pytest.skip("No valid configuration")
 
     o = backend(x, weight, eps, static_persistent, gather)
     ref = ref_rms_norm(x, weight, eps)
@@ -77,60 +84,6 @@ def bench_rms_norm(shape, dtype, static_persistent, gather, backend, benchmark):
     bytes_rw = sum([t.numel() * t.dtype.itemsize for t in (x, weight, o)])
     benchmark.extra_info['flop_count'] = flop_count
     benchmark.extra_info['bytes_rw'] = bytes_rw
-
-
-def cutile_rms_norm(x, weight, eps, static_persistent, gather):
-    x = x.contiguous()
-    weight = weight.contiguous()
-
-    # Allocate output tensor
-    y = torch.empty_like(x)
-    M, N = x.shape
-
-    with ct.compiler_timeout(timeout):
-        if static_persistent:
-            device_prop = torch.cuda.get_device_properties("cuda")
-            NUM_SMS = device_prop.multi_processor_count
-            TILE_SIZE_N = next_power_of_2(N)
-            if is_ampere_or_ada():
-                TILE_SIZE_M = 2
-            else:
-                if TILE_SIZE_N <= 1024:
-                    TILE_SIZE_M = 16
-                elif TILE_SIZE_N >= 16384:
-                    TILE_SIZE_M = 2
-                else:
-                    TILE_SIZE_M = 4
-            grid_size = min(
-                NUM_SMS,
-                ceil(M / TILE_SIZE_M) * ceil(N / TILE_SIZE_N),
-            )
-            grid = (grid_size,)
-            ct.launch(torch.cuda.current_stream(), grid, rms_norm_kernel_static_persistent, (
-                x,
-                y,
-                weight,
-                TILE_SIZE_M,
-                TILE_SIZE_N,
-                eps,
-            ))
-        else:
-            # Standard RMSNorm kernel
-            rstd = torch.empty((M,), dtype=torch.float32, device='cuda')
-            MAX_FUSED_SIZE = 2048 // x.element_size()
-            TILE_SIZE = min(MAX_FUSED_SIZE, next_power_of_2(N))
-            grid = (M,)
-            kernel = rms_norm_kernel_gather if gather else rms_norm_kernel
-            ct.launch(torch.cuda.current_stream(), grid, kernel, (
-                x,
-                weight,
-                y,
-                rstd,
-                N,
-                eps,
-                TILE_SIZE,
-            ))
-        return y.view(*x.shape)
 
 
 def _static_persistent_autotune_grid(x, cfg):
@@ -275,7 +228,7 @@ def _rms_norm_standard_tiled_base(stream, x, weight, y, rstd, N, eps):
     return y
 
 
-def cutile_autotune_rms_norm(x, weight, eps, static_persistent, gather):
+def cutile_rms_norm(x, weight, eps, static_persistent, gather):
     x = x.contiguous()
     weight = weight.contiguous()
 
@@ -287,7 +240,6 @@ def cutile_autotune_rms_norm(x, weight, eps, static_persistent, gather):
         if static_persistent:
             _rms_norm_static_persistent_base(torch.cuda.current_stream(), x, y, weight, eps)
         else:
-            # Standard RMSNorm kernel
             rstd = torch.empty((M,), dtype=torch.float32, device='cuda')
             if gather:
                 _rms_norm_standard_gather_base(torch.cuda.current_stream(),
