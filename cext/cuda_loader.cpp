@@ -77,9 +77,16 @@ static Status cuda_loader_init(DriverApi& driver_api) {
 
 static constexpr int MIN_DRIVER_VERSION = 13000;
 
+#ifdef Py_GIL_DISABLED
+static PyMutex g_driver_api_mutex = {0};
+#endif
+
 Result<const DriverApi*> get_driver_api() {
     static bool initialized;
     static DriverApi instance;
+#ifdef Py_GIL_DISABLED
+    PyCriticalSectionGuard guard(&g_driver_api_mutex);
+#endif
     if (!initialized) {
         if (!cuda_loader_init(instance))
             return ErrorRaised;

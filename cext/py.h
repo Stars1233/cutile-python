@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "check.h"
 #include "ref_ptr.h"
 #include <Python.h>
 #include <optional>
@@ -275,3 +276,22 @@ static inline PyPtr try_import(const char* modname, SavedException* exc = nullpt
     if (!ret && exc) *exc = save_raised_exception();
     return ret;
 }
+
+#ifdef Py_GIL_DISABLED
+class PyCriticalSectionGuard {
+    public:
+        explicit PyCriticalSectionGuard(PyMutex* mutex) {
+            CHECK(mutex);
+            PyCriticalSection_BeginMutex(&_py_cs, mutex);
+        }
+
+        ~PyCriticalSectionGuard() {
+            PyCriticalSection_End(&_py_cs);
+        }
+
+        PyCriticalSectionGuard(const PyCriticalSectionGuard&) = delete;
+        void operator=(const PyCriticalSectionGuard&) = delete;
+    private:
+        PyCriticalSection _py_cs;
+};
+#endif

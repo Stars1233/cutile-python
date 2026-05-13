@@ -12,8 +12,23 @@ if (MSVC)
     set(cext_compile_flags /GR- /GS- /EHs- -DNDEBUG)
     # /NODEFAULTLIB and /NOENTRY to disable dependency on runtime lib msvcrt.dll
     set(cext_link_flags /NODEFAULTLIB /NOENTRY)
+    # set Py_GIL_DISABLED macro, at it is not defined automatically on Windows
+    execute_process(
+        COMMAND ${Python_EXECUTABLE} -c
+            "import sysconfig; print(sysconfig.get_config_var('Py_GIL_DISABLED') or 0)"
+        OUTPUT_VARIABLE PY_GIL_DISABLED
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if (PY_GIL_DISABLED EQUAL 1)
+        list(APPEND cext_compile_flags -DPy_GIL_DISABLED=1)
+    endif()
 else()
     set(cext_compile_flags -fno-exceptions -fno-rtti -fPIC -fvisibility=hidden)
+    # For arm64 add flag to disable calls to out-of-line helpers for atomic operations 
+    # to avoid undefined reference error during compilation
+    if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+        list(APPEND cext_compile_flags -mno-outline-atomics)
+    endif()
     set(cext_link_flags ${cext_compile_flags})
     set(nostdlib_flags -nostdlib -DNDEBUG -fno-builtin)
 endif()

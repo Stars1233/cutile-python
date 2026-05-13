@@ -377,7 +377,7 @@ static Word* push_single_word_cuarg(LaunchHelper& helper, Word word) {
     return ptr;
 }
 
-static LaunchHelper* g_helper_freelist;  // protected by the GIL
+static LaunchHelper* g_helper_freelist;  // protected by the GIL or g_launch_mutex
 
 namespace { struct LaunchHelperDeleter {
     void operator() (LaunchHelper* helper) const {
@@ -385,6 +385,10 @@ namespace { struct LaunchHelperDeleter {
         g_helper_freelist = helper;
     }
 }; }
+
+#ifdef Py_GIL_DISABLED
+static PyMutex g_launch_mutex = {0};
+#endif
 
 using LaunchHelperPtr = std::unique_ptr<LaunchHelper, LaunchHelperDeleter>;
 
@@ -1489,6 +1493,9 @@ struct CompareKey <Vec<PyTypeObject*>, Vec<PyPtr>> {
 namespace { struct TileContext {
     PyPtr config;
     PyPtr autotune_cache;
+#ifdef Py_GIL_DISABLED
+    PyMutex accessor_mutex = {0};
+#endif
 
     static PyTypeObject pytype;
 }; }
@@ -1913,7 +1920,7 @@ static Result<CUstream> parse_stream(PyObject* py_stream) {
 
 using StreamBufferPoolMap = HashMap<unsigned long long, StreamBufferPool*>;
 
-// Protected by GIL.
+// Protected by GIL or g_launch_mutex.
 // We have no reliable way to detect when a context is destroyed, so we never clean these up.
 static StreamBufferPoolMap* g_stream_buffer_pool_by_ctx_id;
 
@@ -2413,16 +2420,27 @@ static int TileContext_init(PyObject* self, PyObject* args, PyObject* kwargs) {
 
 
 static PyObject * TileContext_get_config(PyObject* self, void *closure) {
-    return Py_NewRef(py_unwrap<TileContext>(self).config.get());
+    TileContext& context = py_unwrap<TileContext>(self);
+#ifdef Py_GIL_DISABLED
+    PyCriticalSectionGuard guard(&context.accessor_mutex);
+#endif
+    return Py_NewRef(context.config.get());
 }
 
 
 static PyObject * TileContext_get_autotune_cache(PyObject* self, void *closure) {
-    return Py_NewRef(py_unwrap<TileContext>(self).autotune_cache.get());
+    TileContext& context = py_unwrap<TileContext>(self);
+#ifdef Py_GIL_DISABLED
+    PyCriticalSectionGuard guard(&context.accessor_mutex);
+#endif
+    return Py_NewRef(context.autotune_cache.get());
 }
 
 static int TileContext_set_autotune_cache(PyObject* self, PyObject* value, void* closure) {
     TileContext& context = py_unwrap<TileContext>(self);
+#ifdef Py_GIL_DISABLED
+    PyCriticalSectionGuard guard(&context.accessor_mutex);
+#endif
 
     // `del ctx.autotune_cache` → set back to None
     if (value == nullptr) {
@@ -2490,6 +2508,9 @@ PyTypeObject TileDispatcher::pytype = {
 };
 
 static PyObject* get_parameter_constraints_from_pyargs(PyObject* self, PyObject* args) {
+#ifdef Py_GIL_DISABLED
+    PyCriticalSectionGuard guard(&g_launch_mutex);
+#endif
     PyObject* dispatcher_pyobj = nullptr;
     PyObject* pyargs = nullptr;
     PyObject* cconv = nullptr;
@@ -2683,6 +2704,9 @@ static Status parse_launch_args(PyObject* const* args, Py_ssize_t nargs, const c
 static PyObject* launch_impl(PyObject* const* args, Py_ssize_t nargs,
                              PyObject* kwargs, const char* signature, bool with_block
                              ) {
+#ifdef Py_GIL_DISABLED
+    PyCriticalSectionGuard guard(&g_launch_mutex);
+#endif
     LaunchArgs launch_args;
     if (!parse_launch_args(args, nargs, signature, with_block, &launch_args))
         return nullptr;
@@ -2723,6 +2747,9 @@ static PyObject *launch_extended(PyObject *, PyObject *const *args,
 #define BENCHMARK_SIGNATURE "_benchmark(stream, grid, kernel, pyargs_tuples, /)"
 
 static PyObject* cuda_tile_benchmark(PyObject* mod, PyObject* const* args, Py_ssize_t nargs) {
+#ifdef Py_GIL_DISABLED
+    PyCriticalSectionGuard guard(&g_launch_mutex);
+#endif
     LaunchArgs launch_args;
     if (!parse_launch_args(args, nargs, BENCHMARK_SIGNATURE, false, &launch_args))
         return nullptr;

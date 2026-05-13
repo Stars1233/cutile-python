@@ -2,16 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-setuptools==80.9.0
-pytest==9.0.1
-pytest-benchmark==5.1.0
-pytest-cov==6.2.1
-pytest-env==1.2.0
-flake8==7.3.0
-pytest-cov==6.2.1
+# Maintain a separate file for free-threading version. This can be removed when ABI environment markers are supported.(PEP 780)
+-r requirements-ft.txt
 
 numba-cuda[cu13]==0.30.0
 cupy-cuda13x==14.0.1
-
---extra-index-url https://download.pytorch.org/whl/cu130
-torch==2.10.0

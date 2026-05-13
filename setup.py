@@ -42,6 +42,7 @@ class BuildExtWithCmake(build_ext):
         cmake_cmd = ["cmake", "-B", build_dir, project_root,
                      f"-DDLPACK_PATH={dlpack_path}",
                      f"-DCMAKE_BUILD_TYPE={build_type}",
+                     f"-DPython_EXECUTABLE={sys.executable}",
                      "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"]
         if self.disable_internal:
             cmake_cmd.append("-DDISABLE_INTERNAL=1")

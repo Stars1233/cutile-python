@@ -143,15 +143,21 @@ PyObject* destroy_stream(PyObject* self, PyObject* arg) {
     Py_RETURN_NONE;
 }
 
-static decltype(cuLaunchKernelEx)* g_real_cuLaunchKernelEx;
-static PyObject* g_cuLaunchKernelEx_spy_callback;
+static decltype(cuLaunchKernelEx)* g_real_cuLaunchKernelEx; // Protected by the GIL or g_spy_mutex
+static PyObject* g_cuLaunchKernelEx_spy_callback; // Protected by the GIL or g_spy_mutex
+
+#ifdef Py_GIL_DISABLED
+static PyMutex g_spy_mutex = {0};
+#endif
 
 static CUresult shim_cuLaunchKernelEx(
         const CUlaunchConfig *config,
         CUfunction f,
         void** kernelParams,
         void** extra) {
-
+#ifdef Py_GIL_DISABLED
+    PyCriticalSectionGuard guard(&g_spy_mutex);
+#endif
     PyPtr res = steal(PyObject_CallFunction(
             g_cuLaunchKernelEx_spy_callback,
             "(K III III I K)",
@@ -167,6 +173,9 @@ static CUresult shim_cuLaunchKernelEx(
 }
 
 static PyObject* spy_on_cuLaunchKernel_begin(PyObject* self, PyObject* arg) {
+#ifdef Py_GIL_DISABLED
+    PyCriticalSectionGuard guard(&g_spy_mutex);
+#endif
     if (g_real_cuLaunchKernelEx)
         return PyErr_Format(PyExc_RuntimeError, "Already spying");
 
@@ -181,6 +190,9 @@ static PyObject* spy_on_cuLaunchKernel_begin(PyObject* self, PyObject* arg) {
 }
 
 static PyObject* spy_on_cuLaunchKernel_end(PyObject* self, PyObject* arg) {
+#ifdef Py_GIL_DISABLED
+    PyCriticalSectionGuard guard(&g_spy_mutex);
+#endif
     if (!g_real_cuLaunchKernelEx)
         return PyErr_Format(PyExc_RuntimeError, "Not spying");
 
