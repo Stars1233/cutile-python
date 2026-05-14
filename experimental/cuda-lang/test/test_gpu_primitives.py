@@ -8,7 +8,7 @@ from cuda.tile._cext import get_compute_capability
 import torch
 import pytest
 
-from .util import require_hopper_or_newer
+from .util import require_blackwell_or_newer, require_hopper_or_newer
 
 
 def test_arch_specific_kernel_failure():
@@ -21,6 +21,156 @@ def test_arch_specific_kernel_failure():
         match="Cannot select: intrinsic %llvm.nvvm.elect.sync",
     ):
         cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, ())
+
+
+def test_coop_launch():
+    @cl.kernel
+    def kernel():
+        pass
+
+    cl.launch(
+        torch.cuda.current_stream(),
+        (1,),
+        (1,),
+        kernel,
+        (),
+        cooperative=True,
+    )
+
+
+@require_hopper_or_newer()
+def test_cluster_dim_launch_updates_cluster_registers():
+    @cl.kernel
+    def kernel(out):
+        if cl.thread_idx(0) != 0:
+            return
+
+        bx, by, _ = cl.block_idx()
+        slot = bx + by * cl.grid_dim(0)
+
+        out[slot, 0] = cl.cluster_idx(0)
+        out[slot, 1] = cl.cluster_idx(1)
+        out[slot, 2] = cl.cluster_idx(2)
+        out[slot, 3] = cl.cluster_dim(0)
+        out[slot, 4] = cl.cluster_dim(1)
+        out[slot, 5] = cl.cluster_dim(2)
+        out[slot, 6] = cl.block_in_cluster_idx(0)
+        out[slot, 7] = cl.block_in_cluster_idx(1)
+        out[slot, 8] = cl.block_in_cluster_idx(2)
+        out[slot, 9] = cl.block_in_cluster_dim(0)
+        out[slot, 10] = cl.block_in_cluster_dim(1)
+        out[slot, 11] = cl.block_in_cluster_dim(2)
+
+    out = torch.zeros(8, 12, dtype=torch.int32, device="cuda")
+    cl.launch(
+        torch.cuda.current_stream(),
+        (4, 2),
+        (1,),
+        kernel,
+        (out,),
+        cluster_dim=(2, 1, 1),
+    )
+
+    expected = [
+        [0, 0, 0, 2, 2, 1, 0, 0, 0, 2, 1, 1],
+        [0, 0, 0, 2, 2, 1, 1, 0, 0, 2, 1, 1],
+        [1, 0, 0, 2, 2, 1, 0, 0, 0, 2, 1, 1],
+        [1, 0, 0, 2, 2, 1, 1, 0, 0, 2, 1, 1],
+        [0, 1, 0, 2, 2, 1, 0, 0, 0, 2, 1, 1],
+        [0, 1, 0, 2, 2, 1, 1, 0, 0, 2, 1, 1],
+        [1, 1, 0, 2, 2, 1, 0, 0, 0, 2, 1, 1],
+        [1, 1, 0, 2, 2, 1, 1, 0, 0, 2, 1, 1],
+    ]
+    assert out.cpu().tolist() == expected
+
+
+@require_hopper_or_newer()
+def test_cluster_dim_launch_requires_grid_multiple():
+    @cl.kernel
+    def kernel():
+        pass
+
+    with pytest.raises(RuntimeError, match="Failed to launch cuTile kernel"):
+        cl.launch(
+            torch.cuda.current_stream(),
+            (3,),
+            (1,),
+            kernel,
+            (),
+            cluster_dim=(2, 1, 1),
+        )
+
+
+@require_blackwell_or_newer()
+def test_preferred_cluster_dim_launch_requires_multiple_of_cluster_dim():
+    @cl.kernel
+    def kernel():
+        pass
+
+    with pytest.raises(RuntimeError, match="Failed to launch cuTile kernel"):
+        cl.launch(
+            torch.cuda.current_stream(),
+            (6,),
+            (1,),
+            kernel,
+            (),
+            cluster_dim=(2, 1, 1),
+            preferred_cluster_dim=(3, 1, 1),
+        )
+
+
+@require_hopper_or_newer()
+def test_cluster_dims():
+    @cl.kernel
+    def kernel():
+        pass
+
+    cl.launch(
+        torch.cuda.current_stream(),
+        (1,),
+        (1,),
+        kernel,
+        (),
+        cluster_dim=(1, 1, 1),
+    )
+
+
+@require_blackwell_or_newer()
+def test_preferred_cluster_dims():
+    @cl.kernel
+    def kernel():
+        pass
+
+    cl.launch(
+        torch.cuda.current_stream(),
+        (1,),
+        (1,),
+        kernel,
+        (),
+        cluster_dim=(1, 1, 1),
+        preferred_cluster_dim=(1, 1, 1),
+    )
+
+
+def test_invalid_cluster_config():
+    @cl.kernel
+    def kernel():
+        pass
+
+    with pytest.raises(
+        ValueError,
+        match="Keyword argument preferred_cluster_dim requires that cluster_dim is also passed",
+    ):
+        cl.launch(
+            torch.cuda.current_stream(),
+            (1,),
+            (1,),
+            kernel,
+            (),
+            # preferred cluster config without "regular" cluster config
+            # cluster_dim=(1, 1, 1),
+            preferred_cluster_dim=(1, 1, 1),
+        )
 
 
 @require_hopper_or_newer()

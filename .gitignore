@@ -25,3 +25,4 @@ docs/source/stubs
 /internal
 .cursor/rules/
 *.pyd
+/compile_commands.json

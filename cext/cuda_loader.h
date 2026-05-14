@@ -16,6 +16,7 @@
     X(cuLibraryGetKernel, 12000) \
     X(cuGetErrorString, 6000) \
     X(cuLaunchKernel, 7000) \
+    X(cuLaunchKernelEx, 11060) \
     X(cuPointerGetAttribute, 4000) \
     X(cuCtxSynchronize, 2000) \
     X(cuCtxPushCurrent, 4000) \

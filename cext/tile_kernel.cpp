@@ -9,6 +9,7 @@
 #include "cuda_loader.h"
 #include "cuda_helper.h"
 #include "hash_map.h"
+#include "py.h"
 #include "ref_ptr.h"
 #include "stream_buffer.h"
 #include "vec.h"
@@ -30,6 +31,9 @@ static PyObject* g_strides_pyunicode;
 static PyObject* g___dlpack___pyunicode;
 static PyObject* g_compile_pyunicode;
 static PyObject* g_dynamic_shared_memory_bytes_pyunicode;
+static PyObject* g_cooperative_pyunicode;
+static PyObject* g_cluster_dim_pyunicode;
+static PyObject* g_preferred_cluster_dim_pyunicode;
 
 static PyTypeObject* g_torch_Tensor_type;
 static PyTypeObject* g_torch_cuda_Stream_type;
@@ -78,7 +82,6 @@ static PyObject* get_signature_module() {
 FOREACH_TORCH_DTYPE(DECLARE_TORCH_DTYPE_GLOBAL)
 
 
-static PyTypeObject* g_cupy_ndarray_type;
 static PyTypeObject* g_cupy_cuda_Stream_type;
 
 static PyTypeObject* g_numba_cuda_Stream_type;
@@ -2187,13 +2190,19 @@ static Result<PreparedLaunch> prepare_launch(
                           static_cast<unsigned>(dyn_smem_size)};
 }
 
+
+static constexpr unsigned kMaxCUlaunchAttrs = /*CU_LAUNCH_ATTRIBUTE_MAX=*/17;
+
 static Status launch(const DriverApi* driver,
                      PyObject* dispatcher_pyobj,
                      Grid grid,
                      Grid block,
                      CUstream launch_stream,
+                     CUlaunchAttribute launch_attrs[kMaxCUlaunchAttrs],
+                     unsigned num_attrs,
                      PyObject* const* pyargs,
-                     Py_ssize_t num_pyargs) {
+                     Py_ssize_t num_pyargs
+                     ) {
     StreamBufferTransaction tx;
     Result<PreparedLaunch> prep = prepare_launch(
             driver, dispatcher_pyobj, launch_stream, pyargs, num_pyargs, tx);
@@ -2203,12 +2212,22 @@ static Status launch(const DriverApi* driver,
     if (!maybe_switch_context(driver, prep->helper->cuda_context, ctx_guard))
         return ErrorRaised;
 
-    CUresult res = driver->cuLaunchKernel(
+    CUlaunchConfig config = {
+      .gridDimX = grid.dims[0],
+      .gridDimY = grid.dims[1],
+      .gridDimZ = grid.dims[2],
+      .blockDimX = block.dims[0],
+      .blockDimY = block.dims[1],
+      .blockDimZ = block.dims[2],
+      .sharedMemBytes = prep->dynamic_smem_bytes,
+      .hStream = launch_stream,
+      .attrs = launch_attrs,
+      .numAttrs = num_attrs,
+    };
+
+    CUresult res = driver->cuLaunchKernelEx(
+            &config,
             reinterpret_cast<CUfunction>(prep->kernel),
-            grid.dims[0], grid.dims[1], grid.dims[2],
-            block.dims[0], block.dims[1], block.dims[2],
-            prep->dynamic_smem_bytes,
-            launch_stream,
             reinterpret_cast<void**>(prep->helper->cuarg_pointers.data()),
             nullptr);
 
@@ -2546,6 +2565,75 @@ struct LaunchArgs {
     Py_ssize_t num_kernel_args;
 };
 
+// Parse extra keyword arguments accepted by the extended launch api into
+// launch attributes.
+static Result<unsigned> parse_launch_kwargs(PyObject *const *args,
+                                            Py_ssize_t nargs, PyObject *kwargs,
+                                            CUlaunchAttribute launch_attrs[kMaxCUlaunchAttrs]) {
+    if (kwargs == nullptr)
+        return 0;
+
+    CHECK(PyTuple_Check(kwargs) &&
+          "Keyword argument tuple is nonnull and not a tuple");
+
+    const auto nkwargs = PyTuple_GET_SIZE(kwargs);
+    bool has_cluster_dim = false, has_preferred_cluster_dim = false;
+    size_t num_attrs = 0;
+
+    for (Py_ssize_t i = 0; i < nkwargs; i++) {
+        PyObject *keyword = PyTuple_GET_ITEM(kwargs, i);
+        PyObject *kwarg = args[nargs + i];
+        CHECK(keyword && kwarg);
+        if (PyUnicode_Compare(keyword, g_cooperative_pyunicode) == 0) {
+            if (!PyBool_Check(kwarg))
+                return raise(PyExc_TypeError,
+                             "expected argument %U to have type bool", keyword);
+            CUlaunchAttribute *attr = &launch_attrs[num_attrs++];
+            attr->id = CU_LAUNCH_ATTRIBUTE_COOPERATIVE;
+            attr->value.cooperative = Py_IsTrue(kwarg);
+        } else if (PyUnicode_Compare(keyword, g_cluster_dim_pyunicode) == 0) {
+            if (Py_IsNone(kwarg))
+                continue;
+            const auto grid = parse_grid(kwarg);
+            if (!grid.is_ok())
+                return ErrorRaised;
+            const auto &dims = grid->dims;
+            CUlaunchAttribute *attr = &launch_attrs[num_attrs++];
+            attr->id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
+            attr->value.clusterDim = {.x = dims[0], .y = dims[1], .z = dims[2]};
+            has_cluster_dim = true;
+        } else if (PyUnicode_Compare(keyword, g_preferred_cluster_dim_pyunicode) ==
+                   0) {
+            if (Py_IsNone(kwarg))
+                continue;
+            const auto grid = parse_grid(kwarg);
+            if (!grid.is_ok())
+                return ErrorRaised;
+            const auto &dims = grid->dims;
+            CUlaunchAttribute *attr = &launch_attrs[num_attrs++];
+            attr->id = CU_LAUNCH_ATTRIBUTE_PREFERRED_CLUSTER_DIMENSION;
+            attr->value.preferredClusterDim = {
+                .x = dims[0], .y = dims[1], .z = dims[2]};
+            has_preferred_cluster_dim = true;
+        } else {
+            return raise(PyExc_RuntimeError, "Unexpected keyword argument %U",
+                         keyword);
+        }
+    }
+
+    // ctk docs say: "This attribute will only take effect when a regular
+    // cluster dimension has been specified." We could technically allow it, but
+    // the user likely made a mistake if preferred dims were passed and
+    // "regular" dims were not.
+    if (has_preferred_cluster_dim && !has_cluster_dim)
+        return raise(PyExc_ValueError,
+                     "Keyword argument %U requires that %U is also passed",
+                     g_preferred_cluster_dim_pyunicode,
+                     g_cluster_dim_pyunicode);
+
+    return num_attrs;
+}
+
 static Status parse_launch_args(PyObject* const* args, Py_ssize_t nargs, const char* signature,
                                 bool with_block, LaunchArgs* out) {
     if (nargs != 4 + with_block)
@@ -2593,16 +2681,23 @@ static Status parse_launch_args(PyObject* const* args, Py_ssize_t nargs, const c
 }
 
 static PyObject* launch_impl(PyObject* const* args, Py_ssize_t nargs,
-                             const char* signature, bool with_block) {
+                             PyObject* kwargs, const char* signature, bool with_block
+                             ) {
     LaunchArgs launch_args;
     if (!parse_launch_args(args, nargs, signature, with_block, &launch_args))
+        return nullptr;
+
+    CUlaunchAttribute launch_attrs[kMaxCUlaunchAttrs];
+    const auto num_attrs = parse_launch_kwargs(args, nargs, kwargs, launch_attrs);
+    if (!num_attrs.is_ok())
         return nullptr;
 
     Result<const DriverApi*> driver = get_driver_api();
     if (!driver.is_ok()) return nullptr;
 
-    if (!launch(*driver, launch_args.dispatcher, launch_args.grid, launch_args.block,
-                launch_args.stream, launch_args.kernel_args, launch_args.num_kernel_args))
+    if (!launch(*driver, launch_args.dispatcher, launch_args.grid,
+                launch_args.block, launch_args.stream, launch_attrs, *num_attrs,
+                launch_args.kernel_args, launch_args.num_kernel_args))
         return nullptr;
 
     return Py_NewRef(Py_None);
@@ -2611,13 +2706,18 @@ static PyObject* launch_impl(PyObject* const* args, Py_ssize_t nargs,
 #define LAUNCH_SIGNATURE "launch(stream, grid, kernel, kernel_args, /)"
 
 static PyObject* cuda_tile_launch(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
-    return launch_impl(args, nargs, LAUNCH_SIGNATURE, /*with_block=*/ false);
+  return launch_impl(args, nargs, nullptr, LAUNCH_SIGNATURE,
+                     /*with_block=*/false);
 }
 
-#define LAUNCH_EXTENDED_SIGNATURE "launch(stream, grid, block, kernel, kernel_args, /)"
+#define LAUNCH_EXTENDED_SIGNATURE                                              \
+  "launch(stream, grid, block, kernel, kernel_args, /, *, "                    \
+  "cooperative=False, cluster_dim=None, preferred_cluster_dim=None)"
 
-static PyObject* launch_extended(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
-    return launch_impl(args, nargs, LAUNCH_EXTENDED_SIGNATURE, /*with_block=*/ true);
+static PyObject *launch_extended(PyObject *, PyObject *const *args,
+                                 Py_ssize_t nargs, PyObject *kwargs) {
+  return launch_impl(args, nargs, kwargs, LAUNCH_EXTENDED_SIGNATURE,
+                     /*with_block=*/true);
 }
 
 #define BENCHMARK_SIGNATURE "_benchmark(stream, grid, kernel, pyargs_tuples, /)"
@@ -2695,12 +2795,6 @@ static void try_get_torch_globals() {
 static void try_get_cupy_globals() {
     PyPtr cupy = try_import("cupy");
     if (!cupy) return;
-
-    // Save a reference to cupy.ndarray
-    if (PyPtr cupy_ndarray = try_getattr(cupy, "ndarray")) {
-        if (PyType_Check(cupy_ndarray.get()))
-            g_cupy_ndarray_type = reinterpret_cast<PyTypeObject*>(cupy_ndarray.release());
-    }
 
     // Save references to cupy.cuda.Stream
     if (PyPtr cupy_cuda = try_getattr(cupy, "cuda")) {
@@ -2789,6 +2883,9 @@ Status tile_kernel_init(PyObject* m) {
     INIT_STRING_CONSTANT(__dlpack__);
     INIT_STRING_CONSTANT(compile);
     INIT_STRING_CONSTANT(dynamic_shared_memory_bytes);
+    INIT_STRING_CONSTANT(cooperative);
+    INIT_STRING_CONSTANT(cluster_dim);
+    INIT_STRING_CONSTANT(preferred_cluster_dim);
 
     g_stream_buffer_pool_by_ctx_id = new StreamBufferPoolMap();
 

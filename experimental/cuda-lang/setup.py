@@ -38,7 +38,7 @@ class BuildBinaries(Command):
         build_dir = os.getenv("CUDA_TILE_CEXT_BUILD_DIR")
         if build_dir is None:
             build_dir = guess_cuda_tile_build_dir()
-        self.spawn(["make", "-C", build_dir])
+        self.spawn(["cmake", "--build", build_dir])
 
         binary_name = "mlir2cubin"
         src_path = os.path.join(build_dir, "internal", "mlir2cubin", binary_name)

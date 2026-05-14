@@ -143,62 +143,54 @@ PyObject* destroy_stream(PyObject* self, PyObject* arg) {
     Py_RETURN_NONE;
 }
 
-static decltype(cuLaunchKernel)* g_real_cuLaunchKernel;
-static PyObject* g_cuLaunchKernel_spy_callback;
+static decltype(cuLaunchKernelEx)* g_real_cuLaunchKernelEx;
+static PyObject* g_cuLaunchKernelEx_spy_callback;
 
-static CUresult shim_cuLaunchKernel(
+static CUresult shim_cuLaunchKernelEx(
+        const CUlaunchConfig *config,
         CUfunction f,
-        unsigned int gridDimX,
-        unsigned int gridDimY,
-        unsigned int gridDimZ,
-        unsigned int blockDimX,
-        unsigned int blockDimY,
-        unsigned int blockDimZ,
-        unsigned int sharedMemBytes,
-        CUstream hStream,
         void** kernelParams,
         void** extra) {
 
     PyPtr res = steal(PyObject_CallFunction(
-            g_cuLaunchKernel_spy_callback,
+            g_cuLaunchKernelEx_spy_callback,
             "(K III III I K)",
             reinterpret_cast<unsigned long long>(f),
-            gridDimX, gridDimY, gridDimZ,
-            blockDimX, blockDimY, blockDimZ,
-            sharedMemBytes,
-            reinterpret_cast<unsigned long long>(hStream)
+            config->gridDimX, config->gridDimY, config->gridDimZ,
+            config->blockDimX, config->blockDimY, config->blockDimZ,
+            config->sharedMemBytes,
+            reinterpret_cast<unsigned long long>(config->hStream)
     ));
     if (!res) return CUDA_ERROR_LAUNCH_FAILED;
 
-    return g_real_cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ,
-                                 sharedMemBytes, hStream, kernelParams, extra);
+    return g_real_cuLaunchKernelEx(config, f, kernelParams, extra);
 }
 
 static PyObject* spy_on_cuLaunchKernel_begin(PyObject* self, PyObject* arg) {
-    if (g_real_cuLaunchKernel)
+    if (g_real_cuLaunchKernelEx)
         return PyErr_Format(PyExc_RuntimeError, "Already spying");
 
     Result<const DriverApi*> driver_result = get_driver_api();
     if (!driver_result.is_ok()) return nullptr;
 
     DriverApi* api = const_cast<DriverApi*>(*driver_result);
-    g_real_cuLaunchKernel = api->cuLaunchKernel;
-    g_cuLaunchKernel_spy_callback = Py_NewRef(arg);
-    api->cuLaunchKernel = shim_cuLaunchKernel;
+    g_real_cuLaunchKernelEx = api->cuLaunchKernelEx;
+    g_cuLaunchKernelEx_spy_callback = Py_NewRef(arg);
+    api->cuLaunchKernelEx = shim_cuLaunchKernelEx;
     return Py_NewRef(Py_None);
 }
 
 static PyObject* spy_on_cuLaunchKernel_end(PyObject* self, PyObject* arg) {
-    if (!g_real_cuLaunchKernel)
+    if (!g_real_cuLaunchKernelEx)
         return PyErr_Format(PyExc_RuntimeError, "Not spying");
 
     Result<const DriverApi*> driver_result = get_driver_api();
     if (!driver_result.is_ok()) return nullptr;
 
     DriverApi* api = const_cast<DriverApi*>(*driver_result);
-    api->cuLaunchKernel = g_real_cuLaunchKernel;
-    g_real_cuLaunchKernel = nullptr;
-    Py_CLEAR(g_cuLaunchKernel_spy_callback);
+    api->cuLaunchKernelEx = g_real_cuLaunchKernelEx;
+    g_real_cuLaunchKernelEx = nullptr;
+    Py_CLEAR(g_cuLaunchKernelEx_spy_callback);
     return Py_NewRef(Py_None);
 }
 

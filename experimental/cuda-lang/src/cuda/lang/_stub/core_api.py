@@ -145,59 +145,52 @@ def full_mask() -> int32:
     return int32(FULL_MASK)
 
 
+def _maybe_axis(axis: int | None, *possible_values) -> tuple[int, int, int] | int:
+    return possible_values if axis is None else possible_values[axis]
+
+
+@function
 def thread_idx(axis: int | None = None, /) -> tuple[int, int, int] | int:
     """Gets the current thread indices as ``(x, y, z)``."""
-    ret = (
+    return _maybe_axis(
+        axis,
         nvvm.read_ptx_sreg_tid_x(),
         nvvm.read_ptx_sreg_tid_y(),
         nvvm.read_ptx_sreg_tid_z(),
     )
-    if axis is None:
-        return ret
-    else:
-        return ret[axis]
 
 
 @function
-def block_idx(axis: int | None = None, /) -> tuple[int, int, int]:
+def block_idx(axis: int | None = None, /) -> tuple[int, int, int] | int:
     """Gets the current block indices as ``(x, y, z)``."""
-    ret = (
+    return _maybe_axis(
+        axis,
         nvvm.read_ptx_sreg_ctaid_x(),
         nvvm.read_ptx_sreg_ctaid_y(),
         nvvm.read_ptx_sreg_ctaid_z(),
     )
-    if axis is None:
-        return ret
-    else:
-        return ret[axis]
 
 
 @function
-def block_dim(axis: int | None = None, /) -> tuple[int, int, int]:
+def block_dim(axis: int | None = None, /) -> tuple[int, int, int] | int:
     """Gets the current block dimensions as ``(x, y, z)``."""
-    ret = (
+    return _maybe_axis(
+        axis,
         nvvm.read_ptx_sreg_ntid_x(),
         nvvm.read_ptx_sreg_ntid_y(),
         nvvm.read_ptx_sreg_ntid_z(),
     )
-    if axis is None:
-        return ret
-    else:
-        return ret[axis]
 
 
 @function
-def grid_dim(axis: int | None = None, /) -> tuple[int, int, int]:
+def grid_dim(axis: int | None = None, /) -> tuple[int, int, int] | int:
     """Gets the current grid dimensions as ``(x, y, z)``."""
-    ret = (
+    return _maybe_axis(
+        axis,
         nvvm.read_ptx_sreg_nctaid_x(),
         nvvm.read_ptx_sreg_nctaid_y(),
         nvvm.read_ptx_sreg_nctaid_z(),
     )
-    if axis is None:
-        return ret
-    else:
-        return ret[axis]
 
 
 @function
@@ -214,8 +207,9 @@ def warp_idx() -> int:
 
 
 @function
-def cluster_idx() -> tuple[int, int, int]:
-    return (
+def cluster_idx(axis: int | None = None, /) -> tuple[int, int, int] | int:
+    return _maybe_axis(
+        axis,
         nvvm.read_ptx_sreg_clusterid_x(),
         nvvm.read_ptx_sreg_clusterid_y(),
         nvvm.read_ptx_sreg_clusterid_z(),
@@ -223,8 +217,9 @@ def cluster_idx() -> tuple[int, int, int]:
 
 
 @function
-def cluster_dim() -> tuple[int, int, int]:
-    return (
+def cluster_dim(axis: int | None = None, /) -> tuple[int, int, int] | int:
+    return _maybe_axis(
+        axis,
         nvvm.read_ptx_sreg_nclusterid_x(),
         nvvm.read_ptx_sreg_nclusterid_y(),
         nvvm.read_ptx_sreg_nclusterid_z(),
@@ -232,8 +227,9 @@ def cluster_dim() -> tuple[int, int, int]:
 
 
 @function
-def block_in_cluster_idx() -> tuple[int, int, int]:
-    return (
+def block_in_cluster_idx(axis: int | None = None, /) -> tuple[int, int, int] | int:
+    return _maybe_axis(
+        axis,
         nvvm.read_ptx_sreg_cluster_ctaid_x(),
         nvvm.read_ptx_sreg_cluster_ctaid_y(),
         nvvm.read_ptx_sreg_cluster_ctaid_z(),
@@ -241,8 +237,9 @@ def block_in_cluster_idx() -> tuple[int, int, int]:
 
 
 @function
-def block_in_cluster_dim() -> tuple[int, int, int]:
-    return (
+def block_in_cluster_dim(axis: int | None = None, /) -> tuple[int, int, int] | int:
+    return _maybe_axis(
+        axis,
         nvvm.read_ptx_sreg_cluster_nctaid_x(),
         nvvm.read_ptx_sreg_cluster_nctaid_y(),
         nvvm.read_ptx_sreg_cluster_nctaid_z(),

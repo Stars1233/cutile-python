@@ -2,13 +2,16 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, Sequence
+from typing import Any, Sequence, TypeAlias
 
 from cuda.tile._context import TileContextConfig
 
 
+Dim3: TypeAlias = tuple[int] | tuple[int, int] | tuple[int, int, int]
+
+
 def launch(stream,
-           grid: tuple[int] | tuple[int, int] | tuple[int, int, int],
+           grid: Dim3,
            kernel,
            kernel_args: tuple[Any, ...],
            /):
@@ -16,11 +19,15 @@ def launch(stream,
 
 
 def launch_extended(stream,
-                    grid: tuple[int] | tuple[int, int] | tuple[int, int, int],
-                    block: tuple[int] | tuple[int, int] | tuple[int, int, int],
+                    grid: Dim3,
+                    block: Dim3,
                     kernel,
                     kernel_args: tuple[Any, ...],
-                    /):
+                    /, *,
+                    cooperative: bool=False,
+                    cluster_dim: Dim3 | None=None,
+                    preferred_cluster_dim: Dim3 | None=None,
+                    ):
     ...
 
 
