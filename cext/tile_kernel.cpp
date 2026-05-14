@@ -273,21 +273,6 @@ static Result<CudaKernel> load_cuda_kernel(const DriverApi* driver,
 }
 
 
-static inline void hash_combine(size_t& h, size_t other) {
-    h ^= other + 0x9e3779b9 + (h << 6) + (h >> 2);
-}
-
-template <typename T>
-struct HashVector {
-    size_t operator() (const Vec<T>& v) const {
-        size_t ret = 0;
-        const std::hash<T> elem_hash;
-        for (const T& x : v)
-            hash_combine(ret, elem_hash(x));
-        return ret;
-    }
-};
-
 // X(Name, #Attrs, MinStack, StackEffect)
 #define FOREACH_SIZE_OPCODE(X) \
     X(Const, 1, 0, 1) \
@@ -1867,18 +1852,6 @@ static Result<TileKernel> compile(const DriverApi* driver,
                       std::move(hoisted_tensor_maps)};
 }
 
-static inline bool has_torch_tensor_input(const Vec<PyTypeObject*>& pyarg_types) {
-    return std::any_of(pyarg_types.begin(), pyarg_types.end(), [](PyTypeObject* pytype) {
-        return PyType_IsSubtype(pytype, g_torch_Tensor_type);
-    });
-}
-
-static inline bool has_cupy_array_input(const Vec<PyTypeObject*>& pyarg_types) {
-    return std::any_of(pyarg_types.begin(), pyarg_types.end(), [](PyTypeObject* pytype) {
-        return PyType_IsSubtype(pytype, g_cupy_ndarray_type);
-    });
-}
-
 static Result<CUstream> parse_stream(PyObject* py_stream) {
     PyPtr py_raw_stream;
     if (g_torch_cuda_Stream_type && PyObject_TypeCheck(py_stream, g_torch_cuda_Stream_type)) {
@@ -2433,7 +2406,7 @@ static int TileContext_set_autotune_cache(PyObject* self, PyObject* value, void*
     TileContext& context = py_unwrap<TileContext>(self);
 
     // `del ctx.autotune_cache` → set back to None
-    if (value == NULL) {
+    if (value == nullptr) {
         context.autotune_cache = newref(Py_None);
         return 0;
     }
@@ -2447,7 +2420,7 @@ static PyGetSetDef TileContext_getsetters[] = {
         (getter)TileContext_get_autotune_cache,
         (setter)TileContext_set_autotune_cache,
         nullptr},
-    {nullptr}  /* Sentinel */
+    {}  /* Sentinel */
 };
 
 
@@ -2786,7 +2759,7 @@ static PyMethodDef functions[] = {
         "Benchmark a cuTile kernel using CUDA graphs.\n\n"
         "Returns total elapsed time in microseconds (L2 flush between invocations).\n"
     },
-    nullptr
+    {}
 };
 
 // Add the launch_extended() function separately because we want its name

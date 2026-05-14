@@ -34,10 +34,10 @@ Status check_driver_version(const DriverApi* driver, int minimum_version) {
 PyObject* get_max_grid_size(PyObject *self, PyObject *args) {
     int device_id;
     if (!PyArg_ParseTuple(args, "i", &device_id))
-        return NULL;
+        return nullptr;
 
     Result<const DriverApi*> driver = get_driver_api();
-    if (!driver.is_ok()) return NULL;
+    if (!driver.is_ok()) return nullptr;
 
     CUdevice dev;
     CUresult res = (*driver)->cuDeviceGet(&dev, device_id);
@@ -62,7 +62,7 @@ PyObject* get_compute_capability(PyObject *self, PyObject *Py_UNUSED(ignored)) {
     CUdevice dev;
 
     Result<const DriverApi*> driver_result = get_driver_api();
-    if (!driver_result.is_ok()) return NULL;
+    if (!driver_result.is_ok()) return nullptr;
     const DriverApi* d = *driver_result;
 
     CUresult res = d->cuDeviceGet(&dev, 0);
@@ -84,7 +84,7 @@ PyObject* get_driver_version(PyObject *self, PyObject *Py_UNUSED(ignored)) {
     int major, minor;
 
     Result<const DriverApi*> driver_result = get_driver_api();
-    if (!driver_result.is_ok()) return NULL;
+    if (!driver_result.is_ok()) return nullptr;
     const DriverApi* d = *driver_result;
 
     CUresult res = d->cuDriverGetVersion(&major);
@@ -100,7 +100,7 @@ PyObject* get_driver_version(PyObject *self, PyObject *Py_UNUSED(ignored)) {
 
 PyObject* synchronize_context(PyObject* self, PyObject* Py_UNUSED(ignored)) {
     Result<const DriverApi*> driver_result = get_driver_api();
-    if (!driver_result.is_ok()) return NULL;
+    if (!driver_result.is_ok()) return nullptr;
     const DriverApi* d = *driver_result;
 
     CUresult res = d->cuCtxSynchronize();
@@ -115,7 +115,7 @@ PyObject* synchronize_context(PyObject* self, PyObject* Py_UNUSED(ignored)) {
 
 PyObject* create_stream(PyObject* self, PyObject* Py_UNUSED(ignored)) {
     Result<const DriverApi*> driver_result = get_driver_api();
-    if (!driver_result.is_ok()) return NULL;
+    if (!driver_result.is_ok()) return nullptr;
     const DriverApi* d = *driver_result;
 
     CUstream stream;
@@ -129,10 +129,10 @@ PyObject* create_stream(PyObject* self, PyObject* Py_UNUSED(ignored)) {
 
 PyObject* destroy_stream(PyObject* self, PyObject* arg) {
     CUstream stream = static_cast<CUstream>(PyLong_AsVoidPtr(arg));
-    if (PyErr_Occurred()) return NULL;
+    if (PyErr_Occurred()) return nullptr;
 
     Result<const DriverApi*> driver_result = get_driver_api();
-    if (!driver_result.is_ok()) return NULL;
+    if (!driver_result.is_ok()) return nullptr;
     const DriverApi* d = *driver_result;
 
     CUresult res = d->cuStreamDestroy(stream);
@@ -217,7 +217,7 @@ static PyMethodDef functions[] = {
         "Destroy a CUDA stream given its int handle."},
     {"_spy_on_cuLaunchKernel_begin", spy_on_cuLaunchKernel_begin, METH_O, nullptr},
     {"_spy_on_cuLaunchKernel_end", spy_on_cuLaunchKernel_end, METH_NOARGS, nullptr},
-    NULL
+    {}
 };
 
 Status cuda_helper_init(PyObject* m) {
