@@ -4,7 +4,7 @@
 
 from typing import Iterable
 
-from cuda.lang._ir.type import ArrayTy, MemorySpace, PointerTy, make_tile_ty, ArrayValue
+from cuda.lang._ir.type import ArrayTy, MemorySpace, PointerTy, ArrayValue, TileTy
 from cuda.lang._ir.ops import MakeTensorView, ReinterpretPointer
 
 
@@ -24,12 +24,11 @@ def _rewrite_make_tensor_view(builder, op, array_parameter_names) -> Iterable:
         strides=array_ty.strides,
         memory_space=MemorySpace.GENERIC,
     )
-    base_ptr_ty = make_tile_ty(
+    base_ptr_ty = TileTy(
         PointerTy(
-            pointee=make_tile_ty(array_ty.dtype, ()),
+            pointee=TileTy(array_ty.dtype),
             memory_space=MemorySpace.GENERIC,
-        ),
-        (),
+        )
     )
     base_ptr = op.base_ptr
     if base_ptr.get_type() != base_ptr_ty:

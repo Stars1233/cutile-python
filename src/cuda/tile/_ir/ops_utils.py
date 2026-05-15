@@ -17,7 +17,7 @@ from cuda.tile._memory_model import MemoryOrder, MemoryScope
 import cuda.tile._bytecode as bc
 
 from .ir import Operation, Builder
-from .type import TileTy, PointerTy, LooselyTypedScalar, make_tile_ty
+from .type import TileTy, PointerTy, LooselyTypedScalar
 from .typing_support import typeof_pyval
 from .._datatype import DType, _DTypePromotionImpl, NumericDTypeCategory, NumericDTypeCategories, \
     get_int_min_max
@@ -294,7 +294,7 @@ def promote_types(t1: TileTy | LooselyTypedScalar,
     dtype_2 = t2 if isinstance(t2, LooselyTypedScalar) else t2.dtype
     dtype = promote_dtypes(dtype_1, dtype_2, force_float)
     shape = broadcast_shapes2(t1.shape, t2.shape)
-    return make_tile_ty(dtype, shape)
+    return TileTy(dtype, shape)
 
 
 def _is_implicit_cast_ok(src_dtype: DType, target_dtype: DType) -> bool:

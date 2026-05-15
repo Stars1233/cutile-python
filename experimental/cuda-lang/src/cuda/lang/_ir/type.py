@@ -19,7 +19,6 @@ from cuda.tile._ir.type import (
     TokenTy,
     TypeTy,
     EnumTy,
-    make_tile_ty,
     ContextManagerTy,
     ContextManagerState,
     MemorySpace,
@@ -54,7 +53,7 @@ def make_vector_ty(dtype: DType, length: int) -> TileTy:
         raise TileTypeError(
             f"Expected vector length to be a positive power of two, got {length}"
         )
-    return make_tile_ty(dtype, (length,))
+    return TileTy(dtype, (length,))
 
 
 @dataclass(frozen=True, eq=True)
@@ -127,7 +126,6 @@ __all__ = (
     "TokenTy",
     "TypeTy",
     "EnumTy",
-    "make_tile_ty",
     "make_vector_ty",
     "is_vector_ty",
     "MemorySpace",

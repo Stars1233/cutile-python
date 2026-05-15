@@ -916,7 +916,7 @@ class IR2MLIR:
         self, result_types: Sequence[ir_type.Type]
     ) -> Sequence[mlir.Type]:
         for result_type in result_types:
-            if result_type == ir_type.make_tile_ty(datatype.bool_, ()):
+            if result_type == ir_type.TileTy(datatype.bool_):
                 yield T.i1()
             else:
                 yield ir_type_to_mlir_type(result_type)

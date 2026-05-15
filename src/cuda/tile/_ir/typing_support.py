@@ -14,12 +14,12 @@ from .type import DataclassInfo
 
 from .type import Type, TupleTy, DTypeConstructor, DTypeSpec, NONE, StringTy, \
     ELLIPSIS, SLICE, ModuleTy, FunctionTy, EnumTy, TypeTy, LooselyTypedScalar, \
-    make_tile_ty
+    TileTy
 
 
-BOOL_TY = make_tile_ty(datatype.bool_, ())
-I32_TY = make_tile_ty(datatype.int32, ())
-I64_TY = make_tile_ty(datatype.int64, ())
+BOOL_TY = TileTy(datatype.bool_)
+I32_TY = TileTy(datatype.int32)
+I64_TY = TileTy(datatype.int64)
 
 
 # Store mapping from 3rd party dtype objects
@@ -131,9 +131,9 @@ def typeof_pyval(val) -> Type:
     if val is None:
         return NONE
     if (t := _safe_get(dtype_registry, type(val))):
-        return make_tile_ty(t.dtype, ())
+        return TileTy(t.dtype)
     if isinstance(val, bool):
-        return make_tile_ty(datatype.bool_, ())
+        return TileTy(datatype.bool_)
     if isinstance(val, Enum):
         return EnumTy(type(val))
     if isinstance(val, int):
@@ -146,9 +146,9 @@ def typeof_pyval(val) -> Type:
         else:
             # FIXME: delay the error and allow arbitrary-precision intermediate constant values
             raise TileValueError(f"Constant {val} is out of range of any supported integer type")
-        return make_tile_ty(dtype, ())
+        return TileTy(dtype)
     if isinstance(val, float):
-        return make_tile_ty(datatype.default_float_type, ())
+        return TileTy(datatype.default_float_type)
     if isinstance(val, str):
         return StringTy(val)
     if isinstance(val, tuple):

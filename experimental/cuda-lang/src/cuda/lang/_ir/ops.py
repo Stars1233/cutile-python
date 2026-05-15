@@ -72,7 +72,6 @@ from .. import _stub as stub
 from .type import (
     MemorySpace,
     Type,
-    make_tile_ty,
     make_vector_ty,
     is_vector_ty,
     ArrayTy,
@@ -219,8 +218,8 @@ def require_any_pointer_var(var: Var) -> TileTy:
 
 
 def _array_base_pointer_type(array_ty: ArrayTy) -> TileTy:
-    return make_tile_ty(
-        PointerTy(make_tile_ty(array_ty.dtype, ()), array_ty.memory_space), ()
+    return TileTy(
+        PointerTy(TileTy(array_ty.dtype, ()), array_ty.memory_space)
     )
 
 
@@ -240,7 +239,7 @@ def _get_array_base_pointer(array: Var) -> Var:
 
 def _array_linear_offset(array: Var, indices: tuple[Var, ...]) -> Var:
     array_val = array.get_aggregate()
-    zero = strictly_typed_const(0, make_tile_ty(datatype.uint64, ()))
+    zero = strictly_typed_const(0, TileTy(datatype.uint64))
     offset = zero
     if len(indices) != len(array_val.strides):
         raise TileTypeError(
@@ -299,7 +298,7 @@ def array_getitem(object: Var, key: Var) -> Var:
     pointer = _array_get_element_pointer(object, indices)
     [result] = add_operation(
         LoadPointer,
-        (make_tile_ty(array_ty.dtype, ()),),
+        (TileTy(array_ty.dtype),),
         pointer=pointer,
         alignment=None,
         volatile=False,
@@ -377,7 +376,7 @@ def atomic_rmw_dispatch_impl(kind: AtomicRMWKind, A: Var, idx: Var, val: Var) ->
     array_ty, _ = require_matching_array_value_type(A, val)
     indices = require_array_indices(A, idx)
     pointer = _array_get_element_pointer(A, indices)
-    result_ty = make_tile_ty(array_ty.dtype, ())
+    result_ty = TileTy(array_ty.dtype)
     memory_order = mlir.llvm.AtomicOrdering.acq_rel
     return add_operation(
         AtomicRMW,
@@ -394,7 +393,7 @@ def atomic_exch_impl(A: Var, idx: Var, val: Var) -> Var:
     array_ty, _ = require_matching_array_value_type(A, val)
     indices = require_array_indices(A, idx)
     pointer = _array_get_element_pointer(A, indices)
-    result_ty = make_tile_ty(array_ty.dtype, ())
+    result_ty = TileTy(array_ty.dtype)
     memory_order = mlir.llvm.AtomicOrdering.acq_rel
     return add_operation(
         AtomicExchange,
@@ -415,7 +414,7 @@ def atomic_cas_impl(A: Var, idx: Var, old: Var, val: Var) -> Var:
         )
     indices = require_array_indices(A, idx)
     pointer = _array_get_element_pointer(A, indices)
-    result_ty = make_tile_ty(array_ty.dtype, ())
+    result_ty = TileTy(array_ty.dtype)
     success_memory_order = mlir.llvm.AtomicOrdering.acq_rel
     failure_memory_order = mlir.llvm.AtomicOrdering.monotonic
     return add_operation(
@@ -548,12 +547,11 @@ def address_space_cast_impl(value: Var, memory_space: Var) -> Var:
     memory_space = require_constant_enum(memory_space, MemorySpace)
     match pointer_tile_ty.dtype:
         case PointerTy():
-            result_ty = make_tile_ty(
-                dataclasses.replace(pointer_tile_ty.dtype, memory_space=memory_space),
-                (),
+            result_ty = TileTy(
+                dataclasses.replace(pointer_tile_ty.dtype, memory_space=memory_space)
             )
         case OpaquePointerTy():
-            result_ty = make_tile_ty(OpaquePointerTy(memory_space), ())
+            result_ty = TileTy(OpaquePointerTy(memory_space))
         case _:
             raise TileTypeError(f"Expected a pointer type, got {pointer_tile_ty}")
     return add_operation(
@@ -574,7 +572,7 @@ def reinterpret_pointer_as_array_impl(pointer: Var, dtype: Var, shape: Var, stri
     shape = require_constant_int_tuple(shape, allow_single_int=True)
     dtype = require_dtype_spec(dtype)
     strides = _contiguous_strides(shape)
-    element_ty = make_tile_ty(dtype, ())
+    element_ty = TileTy(dtype)
     memory_space = pointer_tile_ty.dtype.memory_space
 
     typed_pointer_ty = TileTy(PointerTy(element_ty, memory_space=memory_space), ())
@@ -1102,7 +1100,7 @@ def inline_ptx_impl(ptx_code: Var, constraint_pairs: tuple) -> tuple:
     ptx_code = require_constant_str(ptx_code)
     mlir_ptx_code, ro_args, rw_args, wo_args = require_inline_ptx_constraint_pairs(
         ptx_code, constraint_pairs)
-    result_types = tuple(make_tile_ty(dtype, ()) for dtype in wo_args)
+    result_types = tuple(TileTy(dtype) for dtype in wo_args)
     results = add_operation(
         InlinePTX,
         result_types,
@@ -1157,7 +1155,7 @@ def shfl_sync_impl(mode: str, mask: Var, value: Var, lane_mask: Var, width: Var)
     clamp = 0 if mode == 'up' else 0x1F
     mask_and_clamp = strictly_typed_const(
         ((WARP_SIZE - width) << 8) | clamp,
-        make_tile_ty(datatype.int32, ()),
+        TileTy(datatype.int32),
     )
 
     suffix = "i32" if datatype.is_integral(value_ty.dtype) else "f32"
@@ -1250,11 +1248,11 @@ def require_constant_result_dtype(dtype: Var) -> Type:
         if const_dtype == datatype.any_opaque_ptr:
             raise TileTypeError("Result type cannot have no memory space")
         memory_space = datatype.MemorySpace(const_dtype.value)
-        return make_tile_ty(OpaquePointerTy(memory_space=memory_space), ())
+        return TileTy(OpaquePointerTy(memory_space=memory_space))
     elif is_vector_ty(const_dtype):
         return const_dtype
     elif isinstance(const_dtype, datatype.DType):
-        return make_tile_ty(const_dtype, ())
+        return TileTy(const_dtype)
     else:
         raise TileTypeError(f"Expected a type spec but got {dtype}")
 

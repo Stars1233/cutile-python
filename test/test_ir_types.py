@@ -7,7 +7,7 @@ import pytest
 from cuda.tile import TileValueError
 from cuda.tile._exception import TileTypeError
 from cuda.tile._ir.type import (
-    TupleTy, TileTy, ArrayTy, NONE, LooselyTypedScalar, make_tile_ty
+    TupleTy, TileTy, ArrayTy, NONE, LooselyTypedScalar
 )
 from cuda.tile._datatype import (
     DType,
@@ -157,12 +157,12 @@ def test_check_implicit_cast():
 
     def allow(src, dst):
         if isinstance(src, DType):
-            src = make_tile_ty(src, ())
+            src = TileTy(src)
         check_implicit_cast(src, dst)
 
     def disallow(src, dst):
         if isinstance(src, DType):
-            src = make_tile_ty(src, ())
+            src = TileTy(src)
         with pytest.raises((TileTypeError, TileValueError)):
             check_implicit_cast(src, dst)
 
@@ -332,9 +332,9 @@ def test_torch_dtype_support():
 
 def test_typeof_pyval():
     tp = typeof_pyval
-    assert tp(1) == make_tile_ty(int32, ())
-    assert tp(1.) == make_tile_ty(float32, ())
-    assert tp(np.int16(1)) == make_tile_ty(int16, ())
-    assert tp(np.float64(1.0)) == make_tile_ty(float64, ())
-    assert tp(True) == make_tile_ty(bool_, ())
+    assert tp(1) == TileTy(int32)
+    assert tp(1.) == TileTy(float32)
+    assert tp(np.int16(1)) == TileTy(int16)
+    assert tp(np.float64(1.0)) == TileTy(float64)
+    assert tp(True) == TileTy(bool_)
     assert tp(None) == NONE

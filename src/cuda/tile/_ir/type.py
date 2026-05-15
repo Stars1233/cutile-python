@@ -379,11 +379,18 @@ class PointerTy(Type):
 
 
 class TileTy(Type):
-    def __init__(self,
-                 dtype: "DType | PointerTy",
-                 shape: Tuple[int, ...]):
-        self.dtype = dtype
-        self.shape = shape
+    def __new__(cls, dtype: "DType", shape: Sequence[int] = ()) -> "TileTy":
+        shape = tuple(shape)
+        try:
+            return _tile_ty_cache[(dtype, shape)]
+        except KeyError:
+            pass
+
+        ret = object.__new__(cls)
+        ret.dtype = dtype
+        ret.shape = shape
+        _tile_ty_cache[(dtype, shape)] = ret
+        return ret
 
     def make_symbol(self, var: "Var") -> Symbol:
         return SymbolicTile(var)
@@ -412,8 +419,7 @@ class TileTy(Type):
         return f"Tile[{self.dtype},{shape_str}]"
 
 
-def make_tile_ty(dtype, shape: Sequence[int]) -> TileTy:
-    return TileTy(dtype, tuple(shape))
+_tile_ty_cache: dict[tuple["DType", tuple[int, ...]], TileTy] = dict()
 
 
 class SymbolicTile(Symbol, Tile):
@@ -808,7 +814,7 @@ class RangeIterType(Type):
         return True
 
     def aggregate_item_types(self) -> tuple["Type", ...]:
-        ty = make_tile_ty(self.dtype, ())
+        ty = TileTy(self.dtype)
         return ty, ty, ty
 
     def make_aggregate_value(self, items: tuple["Var", ...]) -> "AggregateValue":

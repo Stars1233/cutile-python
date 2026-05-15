@@ -64,7 +64,7 @@ from .typing_support import (
 from .type import (
     PartitionViewTy, StridedViewTy, GatherScatterViewTy, TupleTy, TileTy, NoneType,
     BoundMethodTy, ArrayTy,
-    ListTy, make_tile_ty, SliceType, DTypeConstructor, RangeIterType, Type,
+    ListTy, SliceType, DTypeConstructor, RangeIterType, Type,
     NONE, ModuleTy, TypeTy, LooselyTypedScalar, DTypeSpec, StringTy, InvalidType,
     ClosureTy, LiveCapturedScope, TokenTy, TiledViewTy, FormattedStringTy,
     StringFormat, FormattedPiece, RawArrayMemoryTy, DataclassTy, IndexSliceTy,
@@ -197,7 +197,7 @@ async def loop_impl(body: hir.Block, iterable: Var):
             state.result_phi.propagate(initial_var)
         # Create an induction variable
         induction_var = builder.ir_ctx.make_temp(builder.loc)
-        induction_var.set_type(make_tile_ty(range_ty.dtype, ()))
+        induction_var.set_type(TileTy(range_ty.dtype))
         scope.hir2ir_varmap[body.params[0].id] = induction_var
         body_params.append(induction_var)
 
@@ -1299,9 +1299,9 @@ class GetArrayListItem(Operation, opcode="get_array_list_item"):
         item_tile_size = get_list_partition_view_tile_size(item_size)
         pv_tile_type_id = ctx.type_table.tile(ctx.type_table.I64, (1, item_tile_size))
         index = ctx.get_value(self.index)
-        index_i32 = ctx.cast(index, ctx.typeof(self.index), make_tile_ty(datatype.int32, ()))
+        index_i32 = ctx.cast(index, ctx.typeof(self.index), TileTy(datatype.int32))
 
-        i32_ty = make_tile_ty(datatype.int32, ())
+        i32_ty = TileTy(datatype.int32)
         zero_i32 = ctx.constant(0, i32_ty)
 
         loaded_tile, _token = bc.encode_LoadViewTkoOp(
@@ -1725,7 +1725,7 @@ def isnan_impl(x: Var) -> Var:
     if isinstance(x_type, TileTy) and is_float(ty.dtype):
         if x.is_constant():
             res = math.isnan(x.get_constant())
-            return strictly_typed_const(res, make_tile_ty(datatype.bool_, ty.shape))
+            return strictly_typed_const(res, TileTy(datatype.bool_, ty.shape))
         else:
             return raw_comparison("ne", x, x)
     raise TileTypeError(f"Unexpected input type {x_type}")
@@ -1963,12 +1963,12 @@ def range_(args: Tuple[Var, ...]) -> Var:
         require_signed_integer_0d_tile_type(arg)
 
     if len(args) == 1:
-        start = strictly_typed_const(0, make_tile_ty(datatype.default_int_type, ()))
+        start = strictly_typed_const(0, TileTy(datatype.default_int_type))
         stop = args[0]
-        step = strictly_typed_const(1, make_tile_ty(datatype.default_int_type, ()))
+        step = strictly_typed_const(1, TileTy(datatype.default_int_type))
     elif len(args) == 2:
         start, stop = args[0], args[1]
-        step = strictly_typed_const(1, make_tile_ty(datatype.default_int_type, ()))
+        step = strictly_typed_const(1, TileTy(datatype.default_int_type))
     else:
         start, stop, step = args[0], args[1], args[2]
         # FIXME(Issue 314): Support negative step.
@@ -1998,7 +1998,7 @@ def dtype_constructor_impl(new_dtype: DType, x: Var) -> Var:
             const_value = new_dtype._py_type(x.get_constant())
         except (ValueError, TypeError):
             raise TileTypeError(f"Invalid argument type for {new_dtype}")
-        return strictly_typed_const(const_value, ty=make_tile_ty(new_dtype, ()))
+        return strictly_typed_const(const_value, ty=TileTy(new_dtype))
 
     require_0d_tile_type(x)
     return astype(x, new_dtype)
@@ -2036,7 +2036,7 @@ class TileBid(Operation, opcode="tile_bid"):
 def bid(axis: int) -> Var:
     if axis not in (0, 1, 2):
         raise TileTypeError(f"Axis must be 0, 1, or 2, but {axis} was given.")
-    return add_operation(TileBid, make_tile_ty(datatype.default_int_type, ()), axis=axis)
+    return add_operation(TileBid, TileTy(datatype.default_int_type), axis=axis)
 
 
 @impl(ct.bid)
@@ -2254,7 +2254,7 @@ def num_blocks(axis: Var) -> Var:
     axis = require_constant_int(axis)
     if axis not in (0, 1, 2):
         raise TileTypeError(f"Axis must be 0, 1, or 2, but {axis} was given.")
-    return add_operation(TileNumBlocks, make_tile_ty(datatype.default_int_type, ()), axis=axis)
+    return add_operation(TileNumBlocks, TileTy(datatype.default_int_type), axis=axis)
 
 
 @impl(ct.Array.slice)
@@ -2463,7 +2463,7 @@ def _tile_load_impl_inner(array: Var, index_items: tuple[Var, ...], shape: Seque
 
     view = _materialize_tiled_view(array, broadcasted_shape, order, padding_mode,
                                    traversal_steps)
-    res_ty = make_tile_ty(array_ty.dtype, broadcasted_shape)
+    res_ty = TileTy(array_ty.dtype, broadcasted_shape)
     result, _token = add_operation(TileLoad, (res_ty, TokenTy()),
                                    view=view, index=index_items, latency=latency,
                                    allow_tma=allow_tma, memory_order=memory_order,
@@ -2539,7 +2539,7 @@ def raw_array_memory_store_offset_impl(self: Var, offset: Var, value: Var,
 def tile_load(array: Var, index: tuple[Var, ...], shape: Sequence[int], order: Sequence[int],
               padding_mode: PaddingMode, latency: Optional[int],
               allow_tma: Optional[bool]) -> tuple[Var, Var]:
-    res_ty = make_tile_ty(array.get_type().dtype, shape)
+    res_ty = TileTy(array.get_type().dtype, shape)
     return add_operation(TileLoad, (res_ty, TokenTy()),
                          array=array, index=index, order=tuple(order),
                          padding_mode=padding_mode, latency=latency,
@@ -2745,7 +2745,7 @@ def pointer_offset(pointer: Var, offset: Var) -> Var:
     common_shape = broadcast_shapes2(pointer_shape, offset_shape)
     pointer = broadcast_to(pointer, common_shape)
     offset = broadcast_to(offset, common_shape)
-    result_ty = make_tile_ty(pointer_ty.dtype, common_shape)
+    result_ty = TileTy(pointer_ty.dtype, common_shape)
     return add_operation(PointerOffset, result_ty, pointer=pointer, offset=offset)
 
 
@@ -2990,7 +2990,7 @@ def _atomic_cas_core(array_dtype: DType,
     memory_scope = require_constant_enum(memory_scope, MemoryScope)
     validate_memory_order_and_scope(memory_order, memory_scope, TileAtomicCAS)
 
-    result_ty = make_tile_ty(array_dtype, pointer_shape)
+    result_ty = TileTy(array_dtype, pointer_shape)
     result, _token = add_operation(TileAtomicCAS, (result_ty, TokenTy()),
                                    pointer=pointer, expected=expected, desired=desired,
                                    mask=mask, memory_order=memory_order,
@@ -3116,7 +3116,7 @@ def _atomic_rmw_core(int_mode: Optional[AtomicRMWMode],
     memory_scope = require_constant_enum(memory_scope, MemoryScope)
     validate_memory_order_and_scope(memory_order, memory_scope, TileAtomicRMW)
 
-    result_ty = make_tile_ty(array_dtype, pointer_shape)
+    result_ty = TileTy(array_dtype, pointer_shape)
     result, _token = add_operation(TileAtomicRMW, (result_ty, TokenTy()),
                                    mode=mode, pointer=pointer, update=update,
                                    mask=mask, memory_order=memory_order,
@@ -3269,7 +3269,7 @@ def num_tiles(array: Var, shape: Sequence[int], order: Sequence[int],
     broadcasted_shape = (1,) * array_ty.ndim if len(shape) == 0 else shape
     view = _materialize_tiled_view(array, broadcasted_shape, order, PaddingMode.UNDETERMINED,
                                    traversal_steps)
-    result_tys = tuple(make_tile_ty(datatype.default_int_type, ()) for _s in broadcasted_shape)
+    result_tys = tuple(TileTy(datatype.default_int_type) for _s in broadcasted_shape)
     return add_operation(NumTiles, result_tys, view=view)
 
 
@@ -3286,7 +3286,7 @@ def num_tiles_impl(array: Var, axis: Var, shape: Var, order: Var) -> Var:
 
 
 def _const(shape: Sequence[int], value: int | float | bool | tuple, dtype: DType) -> Var:
-    res_ty = make_tile_ty(dtype, shape)
+    res_ty = TileTy(dtype, shape)
     return strictly_typed_const(value, res_ty)
 
 
@@ -3692,7 +3692,7 @@ async def _get_reduce_scan_body_block(
             input_shape = x_ty.shape
         else:
             assert input_shape == x_ty.shape
-        tile_0d_ty = make_tile_ty(x_ty.dtype, ())
+        tile_0d_ty = TileTy(x_ty.dtype)
         for _ in range(2):
             var = builder.ir_ctx.make_temp(builder.loc)
             var.set_type(tile_0d_ty)
@@ -3721,7 +3721,7 @@ async def raw_reduce(xs: tuple[Var, ...], identities: tuple[bool | int | float],
 
     assert 0 <= axis < len(input_shape)
     result_shape = input_shape[:axis] + input_shape[axis + 1:]
-    result_types = tuple(make_tile_ty(x.get_type().dtype, result_shape) for x in xs)
+    result_types = tuple(TileTy(x.get_type().dtype, result_shape) for x in xs)
 
     assert len(xs) == len(identities)
 
@@ -4065,7 +4065,7 @@ async def raw_scan(xs: tuple[Var, ...], identities: tuple[bool | int | float, ..
                    reverse: bool, body: Callable) -> tuple[Var, ...]:
     input_shape = require_tile_type(xs[0]).shape
     assert 0 <= axis < len(input_shape)
-    result_types = tuple(make_tile_ty(x.get_type().dtype, input_shape) for x in xs)
+    result_types = tuple(TileTy(x.get_type().dtype, input_shape) for x in xs)
     assert len(xs) == len(identities)
     body_block = await _get_reduce_scan_body_block(xs, body, op_name="scan")
     return add_operation(TileScan, result_types, xs=xs, identities=identities, axis=axis,
@@ -4093,7 +4093,7 @@ async def scan_simple(fn: str, x: Var, axis: int, reverse: bool,
     x_shape = x_type.shape
     axis = normalize_axis(axis, len(x_shape))
     x_dtype = x_type.dtype
-    x = _promote_and_broadcast_to(x, make_tile_ty(x_dtype, x_shape))
+    x = _promote_and_broadcast_to(x, TileTy(x_dtype, x_shape))
 
     async def body(lhs: tuple[Var], rhs: tuple[Var]) -> tuple[Var]:
         [lhs], [rhs] = lhs, rhs
@@ -4174,7 +4174,7 @@ def expand_dims(x: Var, axis: int) -> Var:
     axis = normalize_axis(axis, x_ty.ndim + 1)
     old_shape = x_ty.shape
     new_shape = (*old_shape[:axis], 1, *old_shape[axis:])
-    res_type = make_tile_ty(x_ty.dtype, new_shape)
+    res_type = TileTy(x_ty.dtype, new_shape)
     return add_operation(TileReshape, res_type, x=x)
 
 
@@ -4231,7 +4231,7 @@ def cat(tiles: tuple[Var, ...], axis: int) -> Var:
     if not all(_is_power_of_2(x) for x in shape_value):
         raise TileTypeError(f"Result tile shape must be power of 2, got: {shape_value}")
 
-    res_ty = make_tile_ty(dtype, shape_value)
+    res_ty = TileTy(dtype, shape_value)
     return add_operation(TileCat, res_ty, x=x_tile, y=y_tile, axis=axis)
 
 
@@ -4430,7 +4430,7 @@ def broadcast_to(x: Var, shape: Sequence[int]):
     if old_shape == shape:
         return x
     else:
-        result_ty = make_tile_ty(get_dtype(x_ty), shape)
+        result_ty = TileTy(get_dtype(x_ty), shape)
         return add_operation(TileBroadcast, result_ty, x=x)
 
 
@@ -4458,9 +4458,9 @@ def astype(x: Var, dtype: DType) -> Var:
 
     if x.is_constant():
         val = dtype._py_type(x.get_constant())
-        return strictly_typed_const(val, make_tile_ty(dtype, ()))
+        return strictly_typed_const(val, TileTy(dtype))
 
-    result_ty = make_tile_ty(dtype, x_ty.shape)
+    result_ty = TileTy(dtype, x_ty.shape)
     return add_operation(TileAsType, result_ty, x=x)
 
 
@@ -4494,7 +4494,7 @@ def bitcast(x: Var, dtype: DType) -> Var:
     if x_dtype == dtype:
         return x
 
-    res_ty = make_tile_ty(dtype, tile_ty.shape)
+    res_ty = TileTy(dtype, tile_ty.shape)
     return add_operation(TileBitCast, res_ty, x=x)
 
 
@@ -4525,7 +4525,7 @@ def pack(x: Var) -> Var:
         raise TileTypeError(f"Cannot pack tile {tile_ty}: "
                             f"total bits ({old_dim} * {tile_ty.dtype.bitwidth}) "
                             f"not divisible by 8")
-    res_ty = make_tile_ty(datatype.uint8, (new_dim,))
+    res_ty = TileTy(datatype.uint8, (new_dim,))
     return add_operation(TilePack, res_ty, x=x)
 
 
@@ -4564,7 +4564,7 @@ def unpack(x: Var, dtype: DType) -> Var:
         raise TileTypeError(
             f"Cannot unpack tile {tile_ty} to {dtype}: "
             f"total bits ({old_dim} * 8) not divisible by {dtype.bitwidth}")
-    res_ty = make_tile_ty(dtype, (new_dim,))
+    res_ty = TileTy(dtype, (new_dim,))
     return add_operation(TileUnpack, res_ty, x=x)
 
 
@@ -4598,9 +4598,9 @@ class TileArange(Operation, opcode="tile_arange"):
 
 def arange(size: int, dtype: DType) -> Var:
     if datatype.is_integral(dtype):
-        res_ty = make_tile_ty(dtype, (size,))
+        res_ty = TileTy(dtype, (size,))
     else:
-        res_ty = make_tile_ty(datatype.default_int_type, (size,))
+        res_ty = TileTy(datatype.default_int_type, (size,))
     res = add_operation(TileArange, res_ty)
     return astype(res, dtype)
 
@@ -4654,7 +4654,7 @@ def reshape(x: Var, new_shape: Tuple[int, ...]) -> Var:
     if new_shape == x_shape:
         return x
     else:
-        res_type = make_tile_ty(get_dtype(x_ty), new_shape)
+        res_type = TileTy(get_dtype(x_ty), new_shape)
         return add_operation(TileReshape, res_type, x=x)
 
 
@@ -4681,7 +4681,7 @@ def permute(x: Var, axes: Sequence[int]) -> Var:
     ty = require_tile_type(x)
     axes = tuple(normalize_axis(ax, ty.ndim) for ax in axes)
     shape = tuple(ty.shape[i] for i in axes)
-    result_ty = make_tile_ty(ty.dtype, shape)
+    result_ty = TileTy(ty.dtype, shape)
     return add_operation(TilePermute, result_ty, x=x, axes=axes)
 
 
@@ -4744,7 +4744,7 @@ class TileExtract(Operation, opcode="tile_extract"):
 
 def extract(x: Var, index: tuple[Var, ...], shape: Sequence[int]) -> Var:
     dtype = get_dtype(x.get_type())
-    res_ty = make_tile_ty(dtype, shape)
+    res_ty = TileTy(dtype, shape)
     return add_operation(TileExtract, res_ty, x=x, index=index, shape=tuple(shape))
 
 
@@ -5024,7 +5024,7 @@ def load_advanced_impl(array: Var, indices: Var, padding_mode: Var,
     _check_load_store_hints(latency_val, allow_tma_val)
 
     view = make_gather_scatter_view(array, tile_shape, sparse_dim, padding_mode_val)
-    result, _token = add_operation(TileLoad, (make_tile_ty(array_ty.dtype, tile_shape), TokenTy()),
+    result, _token = add_operation(TileLoad, (TileTy(array_ty.dtype, tile_shape), TokenTy()),
                                    view=view, index=gs_index,
                                    latency=latency_val, allow_tma=allow_tma_val)
     return result

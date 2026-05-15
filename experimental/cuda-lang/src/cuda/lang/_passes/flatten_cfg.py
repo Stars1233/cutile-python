@@ -8,7 +8,7 @@ from typing import Sequence
 
 from cuda.lang._ir.ops import IfElse, EndBranch, Loop, Continue, Break
 from cuda.lang._ir.ir import IRContext, Region, Block, TileBlock, Operation, Var
-from cuda.lang._ir.type import make_tile_ty
+from cuda.lang._ir.type import TileTy
 from cuda.lang._datatype import bool_
 from cuda.lang._ir.ops import (
     Branch,
@@ -129,7 +129,7 @@ class CFGFlattener:
         )
 
         cv = self.ctx.make_temp(op.loc)
-        cv.set_type(make_tile_ty(bool_, ()))
+        cv.set_type(TileTy(bool_))
 
         # Tile's range object requires the step to be positive so
         # we can always use "lt" here.
