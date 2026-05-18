@@ -394,7 +394,7 @@ def _freeze_returned_closure(retval: Var, callee_scope: LocalScope, builder: ir.
         default_value_types=ty.default_value_types,
         captured_scopes=ty.captured_scopes[:-1],
         frozen_capture_types_by_depth=_replace_tuple_item(
-            ty.frozen_capture_types_by_depth, depth, frozen_capture_types)
+            ty.frozen_capture_types_by_depth, depth, frozen_capture_types),
     )
     return builder.make_aggregate(new_closure_val, new_ty)
 
@@ -413,11 +413,15 @@ def _check_recursive_call(call_loc: Loc):
                                  f" while inlining a function call")
 
 
-def _resolve_operand(x: hir.Operand, scope: Scope) \
-        -> Var | hir.Block | hir.Function | hir.StaticEvalExpression | StringFormat:
+_ResolvedOperand = (Var | hir.Block | hir.Function
+                    | hir.StaticEvalExpression | StringFormat | hir.ResolvedName)
+
+
+def _resolve_operand(x: hir.Operand, scope: Scope) -> _ResolvedOperand:
     if isinstance(x, hir.Value):
         return scope.hir2ir_varmap[x.id]
-    elif isinstance(x, hir.Block | hir.Function | hir.StaticEvalExpression | StringFormat):
+    elif isinstance(x, hir.Block | hir.Function | hir.StaticEvalExpression
+                    | StringFormat | hir.ResolvedName):
         return x
     else:
         return sym2var(x, constant_only=True)

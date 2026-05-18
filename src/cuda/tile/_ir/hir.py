@@ -20,7 +20,7 @@ import threading
 from dataclasses import dataclass
 from textwrap import indent
 from types import CodeType
-from typing import Any, Set, OrderedDict, Callable
+from typing import Any, Set, Callable
 
 from cuda.tile._exception import Loc, FunctionDesc
 
@@ -110,7 +110,7 @@ class Block:
     result: Operand
     jump: Jump | None
     jump_loc: Loc
-    stored_names: Set[str]
+    stored_indices: Set[int]
     loc: Loc
 
     def __str__(self):
@@ -183,14 +183,7 @@ class Function:
     # List of all function definitions nested directly inside this function.
     nested_functions: "tuple[Function, ...]"
 
-    # Names of all variables that are ever loaded by this function
-    loaded_names: tuple[str, ...]
-
-    # For each variable name used in this function (i.e. loaded from or stored to),
-    # its resolved position in the scope.
-    used_names: OrderedDict[str, ResolvedName]
-
-    # Pre-computed view of `used_names`: for each non-negative `depth` strictly less than this
+    # Pre-computed view of captured locals: for each non-negative `depth` strictly less than this
     # function's depth, the list of all local variable indices captured by this function.
     # Empty when this is a top-level function.
     captures_by_depth: tuple[tuple[int, ...], ...]

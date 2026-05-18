@@ -119,7 +119,7 @@ async def loop_impl(body: hir.Block, iterable: Var):
         return
 
     builder = Builder.get_current()
-    stored_locals = tuple(sorted(scope.get_local_index(name) for name in body.stored_names))
+    stored_locals = tuple(sorted(body.stored_indices))
     var_states = tuple(LoopVarState(PhiState(initial_constant_state=ConstantState.NONCONSTANT),
                                     PhiState())
                        for _ in stored_locals)
@@ -314,8 +314,7 @@ async def if_else_impl(cond: Var, then_block: hir.Block, else_block: hir.Block) 
     # Get the total number of results by adding the number of stored variables.
     # Note: we sort the stored variable indices to make the order deterministic.
     scope = Scope.get_current()
-    stored_locals = tuple(sorted(scope.get_local_index(name)
-                                 for name in (then_block.stored_names | else_block.stored_names)))
+    stored_locals = tuple(sorted(then_block.stored_indices | else_block.stored_indices))
 
     # Convert the "then" branch from HIR to IR
     info = ControlFlowInfo(stored_locals)
@@ -401,6 +400,17 @@ async def if_else_impl(cond: Var, then_block: hir.Block, else_block: hir.Block) 
             store_var(local_idx, res_var, phi.last_loc)
 
     return ret
+
+
+@impl(hir_stubs.tuple_comp_if)
+async def tuple_comp_if_impl(cond: Var, then_block: hir.Block) -> None:
+    require_bool_scalar_type(cond)
+    if not cond.is_constant():
+        raise TileTypeError("Tuple comprehension if-conditions must be statically known;"
+                            " if the condition can be evaluated at compile time,"
+                            " wrap it with ct.static_eval()")
+    if cond.get_constant():
+        await _flatten_branch(then_block)
 
 
 async def _flatten_branch(branch: hir.Block) -> Var | None:

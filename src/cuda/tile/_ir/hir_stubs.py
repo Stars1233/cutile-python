@@ -16,6 +16,10 @@ def if_else(cond, then_block, else_block, /): ...
 
 
 @stub
+def tuple_comp_if(cond, then_block, /): ...  # Static-only if: rejects dynamic conditions
+
+
+@stub
 def loop(body, iterable, /): ...  # infinite if `iterable` is None
 
 
@@ -40,11 +44,11 @@ def identity(x): ...   # Identity function (i.e. returns `x`)
 
 
 @stub
-def store_var(name, value, /): ...  # Store into a named variable
+def store_var(rn, value, /): ...  # Store value into the local slot given by ResolvedName
 
 
 @stub
-def load_var(name, /): ...  # Load from a named variable
+def load_var(rn, name, /): ...  # Load from the slot/global given by ResolvedName
 
 
 @stub

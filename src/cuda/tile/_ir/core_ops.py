@@ -563,18 +563,13 @@ def store_invalid(local_idx: int, ty: Type, loc: Loc | None = None):
 
 
 @impl(hir_stubs.store_var)
-def store_var_impl(name: Var, value: Var):
-    name = require_constant_str(name)
-    scope = Scope.get_current()
-    index = scope.get_local_index(name)
-    store_var(index, value)
+def store_var_impl(rn: ResolvedName, value: Var):
+    store_var(rn.index, value)
 
 
 @impl(hir_stubs.load_var)
-def load_var_impl(name):
-    name = require_constant_str(name)
+def load_var_impl(rn, name: Var):
     scope = Scope.get_current()
-    rn: ResolvedName = scope.func_hir.used_names[name]
     if rn.depth >= 0:
         ret = scope.local_scopes[rn.depth][rn.index]
         ret.get_type()  # Trigger an InvalidType check
@@ -583,7 +578,7 @@ def load_var_impl(name):
         val = scope.func_hir.frozen_global_values[rn.index]
         return sym2var(val, constant_only=True)
     else:
-        raise TileSyntaxError(f"Undefined variable {name} used")
+        raise TileSyntaxError(f"Undefined variable {name.get_constant()} used")
 
 
 @impl(hir_stubs.pop_context)

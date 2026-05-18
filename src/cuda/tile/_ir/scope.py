@@ -11,7 +11,6 @@ from typing import TypeVar, Generic
 
 from cuda.tile._exception import Loc, FunctionDesc, TileSyntaxError
 from cuda.tile._ir import hir
-from cuda.tile._ir.hir import ResolvedName
 from cuda.tile._ir.ir import Operation, Var, IRContext
 from cuda.tile._ir.type import InvalidType, ContextManagerState
 
@@ -147,11 +146,6 @@ class Scope:
     concrete_func_desc: FunctionDesc
     context_stack: list[ContextManagerState] = dataclasses.field(default_factory=list)
     loop_context_stack_depth: int | None = None
-
-    def get_local_index(self, name: str) -> int:
-        rn: ResolvedName = self.func_hir.used_names[name]
-        assert rn.depth == len(self.local_scopes) - 1
-        return rn.index
 
     @property
     def local(self) -> LocalScope:

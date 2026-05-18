@@ -9,7 +9,7 @@ import operator
 from contextlib import contextmanager
 from enum import Enum, auto
 from functools import lru_cache
-from typing import List, Sequence, Optional, Any, Dict, Type, Callable, OrderedDict, Mapping
+from typing import List, NamedTuple, Sequence, Optional, Any, Dict, Type, Callable, Mapping
 
 from cuda.tile import _datatype as datatype
 from cuda.tile._exception import TileSyntaxError, Loc, FunctionDesc
@@ -72,12 +72,12 @@ def get_function_hir(pyfunc: Callable, entry_point: bool) -> hir.Function:
     desc = FunctionDesc(func_def.name, filename, first_line, func_def.col_offset + 1,
                         is_entry=entry_point)
     local_names, _, _ = ast_get_all_local_names(func_def)
-    ctx = _Context(filename, first_line, desc, func_globals, local_names, entry_point)
+    ctx = _Context(filename, first_line, desc, func_globals, local_names, entry_point,
+                   func_depth=0)
     signature = inspect.signature(pyfunc)
     ret = _get_function_hir_inner(func_def, signature, ctx)
 
-    resolved_names = {name: ResolvedName(-1, i) for i, name in enumerate(ret.frozen_global_names)}
-    _finalize_func(ret, resolved_names, 0, ())
+    _finalize_func(ret, 0, ())
     return ret
 
 
@@ -98,28 +98,31 @@ def _fix_line_and_column_numbers(tree: ast.AST, first_line: int):
             node.end_col_offset -= 1
 
 
-def _finalize_func(func: hir.Function, resolved_names: dict[str, ResolvedName], depth: int,
-                   enclosing_functions: tuple[hir.Function, ...]):
-    resolved_names = dict(resolved_names)
-    for i, name in enumerate(func.local_names):
-        resolved_names[name] = ResolvedName(depth, i)
+def _collect_local_loads(block: hir.Block, result: set[ResolvedName]) -> None:
+    # Collect the ResolvedName of every load_var that targets a local variable.
+    for call in block.calls:
+        if call.callee is hir_stubs.load_var:
+            rn = call.args[0]
+            if isinstance(rn, ResolvedName) and rn.depth >= 0:
+                result.add(rn)
+        for arg in call.args:
+            if isinstance(arg, hir.Block):
+                _collect_local_loads(arg, result)
 
-    all_used_names = set(func.loaded_names + func.local_names)
-    new_enclosing_functions = enclosing_functions + (func,)
-    for nested_func in func.nested_functions:
-        _finalize_func(nested_func, resolved_names, depth + 1, new_enclosing_functions)
-        for name, rn in nested_func.used_names.items():
-            if rn.depth <= depth:
-                all_used_names.add(name)
 
-    captures_by_depth = tuple([] for _ in range(depth))
-    for name in sorted(all_used_names):
-        rn = resolved_names.get(name, UNKNOWN_NAME)
-        func.used_names[name] = rn
-        if 0 <= rn.depth < depth:
-            captures_by_depth[rn.depth].append(rn.index)
-    func.captures_by_depth = tuple(tuple(lst) for lst in captures_by_depth)
+def _finalize_func(func: hir.Function, depth: int,
+                   enclosing_functions: tuple[hir.Function, ...]) -> set[ResolvedName]:
     func.enclosing_funcs = enclosing_functions
+    new_enclosing = enclosing_functions + (func,)
+    accessed: set[ResolvedName] = set()
+    _collect_local_loads(func.body, accessed)
+    for nested_func in func.nested_functions:
+        accessed |= _finalize_func(nested_func, depth + 1, new_enclosing)
+    func.captures_by_depth = tuple(
+        tuple(sorted({rn.index for rn in accessed if rn.depth == d}))
+        for d in range(depth)
+    )
+    return {rn for rn in accessed if rn.depth < depth}
 
 
 def _get_function_hir_inner(func_def: ast.FunctionDef | ast.Lambda, signature: inspect.Signature,
@@ -128,8 +131,7 @@ def _get_function_hir_inner(func_def: ast.FunctionDef | ast.Lambda, signature: i
     body = _ast2hir(func_def, ctx)
     all_ast_args = _get_all_parameters(func_def, ctx)
     param_names = tuple(p.arg for p in all_ast_args)
-    body.stored_names.update(param_names)
-    local_names = tuple(sorted(body.stored_names))
+    local_names = tuple(ctx._own_local_names)
     frozen_global_names = tuple(sorted(ctx.frozen_globals.keys()))
     frozen_global_values = tuple(ctx.frozen_globals[name] for name in frozen_global_names)
     return hir.Function(
@@ -137,14 +139,12 @@ def _get_function_hir_inner(func_def: ast.FunctionDef | ast.Lambda, signature: i
         body=body,
         signature=signature,
         local_names=local_names,
-        param_local_indices=tuple(local_names.index(name) for name in param_names),
+        param_local_indices=tuple(ctx.name_to_local_idx[name] for name in param_names),
         param_locs=tuple(ctx.get_loc(p) for p in all_ast_args),
         frozen_global_names=frozen_global_names,
         frozen_global_values=frozen_global_values,
         value_id_upper_bound=next(ctx.value_id_sequence),
         nested_functions=tuple(ctx.nested_functions),
-        loaded_names=tuple(sorted(ctx.loaded_names)),
-        used_names=OrderedDict(),  # to be filled later
         captures_by_depth=(),  # to be filled later
         enclosing_funcs=(),  # to be filled later
         code_object=None,  # to be maybe filled later
@@ -159,20 +159,52 @@ class LoopKind(Enum):
 
 class _Context:
     def __init__(self, filename: str, first_line: int, function_desc: FunctionDesc,
-                 frozen_globals: Mapping[str, Any], local_names: set[str], entry_point: bool):
+                 frozen_globals: Mapping[str, Any], local_names: set[str], entry_point: bool,
+                 func_depth: int = 0,
+                 outer_rns: Dict[str, ResolvedName] | None = None,
+                 own_locals: set[str] | None = None):
         self.filename = filename
         self.first_line = first_line
         self.function_desc = function_desc
         self.frozen_globals = frozen_globals
-        self.local_names = local_names  # includes captures from parent scopes
+        self.local_names = local_names
         self.entry_point = entry_point
         self.parent_loops: List[LoopKind] = []
         self.current_loc = Loc.unknown()
         self.current_block: Optional[hir.Block] = None
         self.value_id_sequence = itertools.count()
         self.block_id_sequence = itertools.count()
+        self.comp_acc_id_sequence = itertools.count()
         self.nested_functions = []
-        self.loaded_names = set()
+        # This function's depth in the nesting hierarchy.
+        self._func_depth: int = func_depth
+        # Flat list of own local names, position = local index; grows as comp vars are
+        # registered. Excludes outer captures.
+        sorted_own = sorted(own_locals if own_locals is not None else local_names)
+        self._own_local_names: list[str] = list(sorted_own)
+        # Map from own local name → local index.
+        self.name_to_local_idx: dict[str, int] = {n: i for i, n in enumerate(sorted_own)}
+        # ResolvedNames for names captured from outer scopes.
+        self._outer_rns: dict[str, ResolvedName] = outer_rns or {}
+        # Index map for frozen globals: name → index into frozen_global_names.
+        self._frozen_global_idx: dict[str, int] = {
+            n: i for i, n in enumerate(sorted(frozen_globals.keys()))
+        }
+        # Indices of comprehension induction variables(excluded from stored_indices).
+        self._comp_induction_indices: set[int] = set()
+
+    def new_comp_induction_index(self, name: str) -> int:
+        # Allocate a non-phi local index for a comprehension induction variable.
+        idx = len(self._own_local_names)
+        self._own_local_names.append(name)
+        self._comp_induction_indices.add(idx)
+        return idx
+
+    def declare_local(self, name: str) -> None:
+        # Allocate a local index and install it in name_to_local_idx.
+        idx = len(self._own_local_names)
+        self._own_local_names.append(name)
+        self.name_to_local_idx[name] = idx
 
     def make_value(self) -> hir.Value:
         return make_value(next(self.value_id_sequence))
@@ -191,7 +223,7 @@ class _Context:
         block_id = next(self.block_id_sequence)
         new_block = hir.Block(block_id, tuple(params), calls=[], have_result=False, result=None,
                               jump=None, jump_loc=Loc.unknown(),
-                              stored_names=set(), loc=self.current_loc)
+                              stored_indices=set(), loc=self.current_loc)
         old = self.current_block
         self.current_block = new_block
         try:
@@ -200,7 +232,7 @@ class _Context:
             self.current_block = old
 
         if old is not None:
-            old.stored_names.update(new_block.stored_names)
+            old.stored_indices.update(new_block.stored_indices)
 
     def call(self, callee, args, kwargs=()) -> hir.Value:
         res = self.make_value()
@@ -221,12 +253,26 @@ class _Context:
         self.current_block.have_result = True
 
     def store(self, var_name: str, value: hir.Operand):
-        self.call_void(hir_stubs.store_var, (var_name, value))
-        self.current_block.stored_names.add(var_name)
+        index = self.name_to_local_idx.get(var_name)
+        if index is None:
+            raise self.syntax_error(
+                f"Cannot assign to '{var_name}':"
+                " assignment to a global or nonlocal variable is not supported")
+        rn = ResolvedName(self._func_depth, index)
+        self.call_void(hir_stubs.store_var, (rn, value))
+        if index not in self._comp_induction_indices:
+            self.current_block.stored_indices.add(index)
 
     def load(self, var_name: str) -> hir.Value:
-        self.loaded_names.add(var_name)
-        return self.call(hir_stubs.load_var, (var_name,))
+        if var_name in self.name_to_local_idx:
+            rn = ResolvedName(self._func_depth, self.name_to_local_idx[var_name])
+        elif var_name in self._outer_rns:
+            rn = self._outer_rns[var_name]
+        elif var_name in self._frozen_global_idx:
+            rn = ResolvedName(-1, self._frozen_global_idx[var_name])
+        else:
+            rn = UNKNOWN_NAME
+        return self.call(hir_stubs.load_var, (rn, var_name))
 
     def get_loc(self, node: ast.AST) -> Loc:
         return Loc(node.lineno, node.col_offset, self.filename,
@@ -260,6 +306,13 @@ _KEYWORD_LIKE_FUNCS = (static_eval, static_assert, static_iter)
 _KEYWORD_LIKE_FUNC_NAMES = ("static_eval", "static_assert", "static_iter")
 
 
+# tuple(...)
+def _is_builtin_tuple(expr: ast.expr, ctx: _Context) -> bool:
+    return (isinstance(expr, ast.Name)
+            and expr.id not in ctx.local_names
+            and ctx.frozen_globals.get(expr.id) is tuple)
+
+
 @_register(_expr_handlers, ast.Call)
 def _call_expr(call: ast.Call, ctx: _Context) -> hir.Value:
     kwd_func = _parse_keyword_like_func(call.func, ctx)
@@ -288,6 +341,16 @@ def _call_expr(call: ast.Call, ctx: _Context) -> hir.Value:
         else:
             raise TileSyntaxError(f"{kwd_func} is not expected here")
     else:
+        if (len(call.keywords) == 0
+                and _is_builtin_tuple(call.func, ctx)):
+            if len(call.args) == 0:
+                with ctx.change_loc(call):
+                    return ctx.call(hir_stubs.build_tuple, ())
+            if (len(call.args) == 1
+                    and isinstance(genexp := call.args[0], ast.GeneratorExp)):
+                with ctx.change_loc(call):
+                    return _static_tuple_comprehension(genexp.elt, genexp.generators, ctx)
+
         callee = _expr(call.func, ctx)
         args = tuple(_starred_expr(a, ctx) for a in call.args)
         kwargs = tuple((a.arg, _expr(a.value, ctx)) for a in call.keywords)
@@ -683,6 +746,165 @@ def _get_static_iter_expr(expr: ast.expr, ctx: _Context) -> ast.expr | None:
     return expr.args[0]
 
 
+def _combine_ifs(ifs: list[ast.expr]) -> ast.expr:
+    if len(ifs) == 1:
+        return ifs[0]
+    first = ifs[0]
+    return ast.BoolOp(op=ast.And(), values=list(ifs),
+                      lineno=first.lineno, col_offset=first.col_offset,
+                      end_lineno=ifs[-1].end_lineno, end_col_offset=ifs[-1].end_col_offset)
+
+
+def _collect_target_names(target: ast.expr, ctx: _Context) -> set[str]:
+    if isinstance(target, ast.Name):
+        return {target.id}
+    elif isinstance(target, ast.Tuple):
+        names: set[str] = set()
+        for el in target.elts:
+            names |= _collect_target_names(el, ctx)
+        return names
+    else:
+        raise ctx.syntax_error(
+            "Tuple comprehension target must be a name or tuple unpacking", loc=target
+        )
+
+
+class _CompGenInfo(NamedTuple):
+    """Per-generator analysis of a tuple comprehension."""
+    # ct.static_iter(...) inner expression for each generator.
+    static_iters: list[ast.expr]
+    # Names visible when each generator's iterable is evaluated (Python genexp scoping).
+    local_names_per_iterable: list[set[str]]
+    # Induction-var names bound by each generator's target.
+    target_names_per_gen: list[set[str]]
+    # All induction-var names across the comprehension.
+    comprehension_locals: set[str]
+
+
+def _analyze_comprehension_generators(generators: list[ast.comprehension],
+                                      saved_local_names: set[str],
+                                      ctx: _Context) -> _CompGenInfo:
+    target_names_per_gen = [_collect_target_names(comp.target, ctx) for comp in generators]
+    comprehension_locals: set[str] = {n for names in target_names_per_gen for n in names}
+    static_iters: list[ast.expr] = []
+    local_names_per_iterable: list[set[str]] = []
+    introduced: set[str] = set()  # comprehension-locals introduced so far
+    for i, comp in enumerate(generators):
+        static_iter_expr = _get_static_iter_expr(comp.iter, ctx)
+        if static_iter_expr is None:
+            raise ctx.syntax_error("All iterables in a tuple comprehension must be wrapped"
+                                   " in ct.static_iter(),"
+                                   " e.g. tuple(... for x in ct.static_iter(...))",
+                                   loc=comp.iter)
+
+        # Check for undefined names in the iterable, applying Python's genexp scoping:
+        #
+        # - Gen 0 uses the outside scope: a comprehension-local is only
+        #   undefined here if it has no definition in saved_local_names or frozen_globals.
+        # - Gen i>0 uses the comprehension scope: a comprehension-local is only
+        #   accessible once its generator has run.
+        for node in ast.walk(static_iter_expr):
+            # We only check a name being read that is a comprehension-local.
+            if not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)):
+                continue
+            name = node.id
+            if name not in comprehension_locals:
+                continue
+            if i == 0:
+                if name not in saved_local_names and name not in ctx.frozen_globals:
+                    raise ctx.syntax_error(f"Undefined variable {name} used", loc=node)
+            else:
+                if name not in introduced:
+                    raise ctx.syntax_error(f"Undefined variable {name} used", loc=node)
+
+        local_names_per_iterable.append(saved_local_names | introduced)
+        static_iters.append(static_iter_expr)
+        introduced.update(target_names_per_gen[i])
+
+    return _CompGenInfo(static_iters, local_names_per_iterable,
+                        target_names_per_gen, comprehension_locals)
+
+
+def _static_tuple_comprehension(elt: ast.expr, generators: list[ast.comprehension],
+                                ctx: _Context) -> hir.Value:
+    if any(g.is_async for g in generators):
+        raise ctx.syntax_error("async in tuple comprehension is not supported")
+
+    saved_local_names = ctx.local_names.copy()
+    info = _analyze_comprehension_generators(generators, saved_local_names, ctx)
+    comprehension_locals = info.comprehension_locals
+
+    # Outer locals shadowed by induction vars — need their original index restored after.
+    shadowed_locals: dict[str, int] = {
+        name: ctx.name_to_local_idx[name]
+        for name in comprehension_locals
+        if name in ctx.name_to_local_idx
+    }
+    induction_indices: dict[str, int] = {
+        name: ctx.new_comp_induction_index(name) for name in comprehension_locals
+    }
+    # Add induction vars to ctx.local_names so they shadow builtins and keyword-like names.
+    ctx.local_names.update(comprehension_locals)
+
+    acc_name = f"$acc_{next(ctx.comp_acc_id_sequence)}"
+    ctx.declare_local(acc_name)
+    empty_tuple = ctx.call(hir_stubs.build_tuple, ())
+    ctx.store(acc_name, empty_tuple)
+
+    def wrap_gen(comp, static_iter_expr, inner, local_names_for_iterable,
+                 induction_names: set[str]):
+        def emit():
+            saved = ctx.local_names
+            # Narrow ctx.local_names to what was in scope when this generator's iterable
+            # was validated.
+            ctx.local_names = local_names_for_iterable
+            with ctx.change_loc(static_iter_expr):
+                iterable = _call_static_eval(static_iter_expr,
+                                             hir.StaticEvalKind.STATIC_ITER_ITERABLE, ctx)
+            ctx.local_names = saved
+            # Reveal this generator's induction vars after evaluating the iterable.
+            for n in induction_names:
+                ctx.name_to_local_idx[n] = induction_indices[n]
+            induction_var = ctx.make_value()
+            with ctx.new_block(params=(induction_var,)) as body_block:
+                _do_assign(induction_var, comp.target, ctx)
+                if comp.ifs:
+                    cond = _bool_expr(_combine_ifs(comp.ifs), ctx)
+                    with ctx.new_block() as then_block:
+                        inner()
+                        ctx.set_block_jump(hir.Jump.END_BRANCH)
+                    ctx.call_void(hir_stubs.tuple_comp_if, (cond, then_block))
+                else:
+                    inner()
+            ctx.call_void(hir_stubs.static_foreach, (body_block, iterable))
+        return emit
+
+    def emit_elt():
+        elt_val = _expr(elt, ctx)
+        singleton = ctx.call(hir_stubs.build_tuple, (elt_val,))
+        old_acc = ctx.load(acc_name)
+        new_acc = ctx.call(operator.add, (old_acc, singleton))
+        ctx.store(acc_name, new_acc)
+
+    try:
+        # Build inside-out: wrap emit_elt with generators from innermost to outermost,
+        # so that calling emit() runs the outermost loop with inner loops nested inside.
+        emit = emit_elt
+        for i, (comp, static_iter_expr) in reversed(
+                list(enumerate(zip(generators, info.static_iters)))):
+            emit = wrap_gen(comp, static_iter_expr, emit,
+                            info.local_names_per_iterable[i],
+                            info.target_names_per_gen[i])
+        emit()
+        result = ctx.load(acc_name)
+    finally:
+        for name in comprehension_locals:
+            ctx.name_to_local_idx.pop(name, None)
+        ctx.name_to_local_idx.update(shadowed_locals)
+        ctx.local_names = saved_local_names
+    return result
+
+
 def _bool_expr(expr: ast.AST, ctx: _Context) -> hir.Value:
     val = _expr(expr, ctx)
     with ctx.change_loc(expr):
@@ -858,9 +1080,25 @@ def _make_closure(node: ast.FunctionDef | ast.Lambda, ctx: _Context) -> hir.Valu
     name = None if isinstance(node, ast.Lambda) else node.name
     desc = FunctionDesc(name, ctx.filename, node.lineno, node.col_offset + 1)
     new_locals, new_globals, _ = ast_get_all_local_names(node)
+
     local_names = (ctx.local_names - new_globals) | new_locals
+
+    outer_rns: dict[str, ResolvedName] = {}
+    for n, encoded in ctx.name_to_local_idx.items():
+        # Compiler-internal locals ($returning/$retval/$acc) are never captured by name —
+        # a nested function gets its own, so don't leak them into its capture map.
+        if n.startswith("$"):
+            continue
+        outer_rns[n] = ResolvedName(ctx._func_depth, encoded)
+    for n, rn in ctx._outer_rns.items():
+        if n not in outer_rns:
+            outer_rns[n] = rn
+
     new_ctx = _Context(ctx.filename, ctx.first_line, desc, ctx.frozen_globals,
-                       local_names, entry_point=False)
+                       local_names, entry_point=False,
+                       func_depth=ctx._func_depth + 1,
+                       outer_rns=outer_rns,
+                       own_locals=new_locals)
 
     func_hir = _get_function_hir_inner(node, signature, new_ctx)
     func_hir.code_object = (_compile_lambda(node, ctx.filename) if isinstance(node, ast.Lambda)
@@ -1010,6 +1248,9 @@ def _ast2hir(func_def: ast.FunctionDef | ast.Lambda, ctx: _Context) -> hir.Block
         elif isinstance(func_def, ast.FunctionDef):
             # To enable early returns in a helper function, wrap the body in a loop.
             # Thus, we can use "break" to implement the return statement.
+            for special in ("$returning", "$retval"):
+                if special not in ctx.name_to_local_idx:
+                    ctx.declare_local(special)
             with ctx.new_block() as body_block:
                 ctx.store("$returning", False)
                 _stmt_list(func_def.body, ctx)
