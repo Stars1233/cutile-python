@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import inspect
+import typing
 from dataclasses import dataclass
 from types import FunctionType
 from typing import (get_origin, get_args, Annotated, Any, Sequence)
@@ -23,12 +24,13 @@ class AnnotatedFunction:
 
 def get_annotated_function(pyfunc: FunctionType) -> AnnotatedFunction:
     sig = inspect.signature(pyfunc)
-    constant_parameter_mask = tuple(_has_constant_annotation(param.annotation)
-                                    for param in sig.parameters.values())
-    int64_index_parameter_mask = tuple(_has_int64_index_annotation(param.annotation)
-                                       for param in sig.parameters.values())
-    int64_parameter_mask = tuple(_has_int64_annotation(param.annotation)
-                                 for param in sig.parameters.values())
+    # Resolves string annotations produced by `from __future__ import annotations`.
+    hints = typing.get_type_hints(pyfunc, include_extras=True)
+    annotations = [hints.get(name, param.annotation) for name, param in sig.parameters.items()]
+
+    constant_parameter_mask = tuple(_has_constant_annotation(ann) for ann in annotations)
+    int64_index_parameter_mask = tuple(_has_int64_index_annotation(ann) for ann in annotations)
+    int64_parameter_mask = tuple(_has_int64_annotation(ann) for ann in annotations)
     return AnnotatedFunction(pyfunc=pyfunc,
                              pysig=sig,
                              constant_parameter_mask=constant_parameter_mask,
