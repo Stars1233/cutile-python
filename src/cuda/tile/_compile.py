@@ -446,8 +446,7 @@ def _tileiras_effective_opt_and_device_debug(
     """
     if EXPERIMENTAL_CUDA_TILE_DEBUG_BUILD:
         return 0, True
-    hints = compiler_options.specialize_for_target(sm_arch)
-    return hints.opt_level, False
+    return compiler_options.opt_level_for_target(sm_arch), False
 
 
 def is_windows() -> bool:

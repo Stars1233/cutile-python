@@ -7,7 +7,8 @@ import torch
 import pytest
 
 from math import ceil
-from conftest import float_dtypes, bool_dtypes, int_dtypes, dtype_id
+from conftest import float_dtypes, bool_dtypes, get_tileiras_version, int_dtypes, dtype_id
+from cuda.tile._bytecode.version import BytecodeVersion
 from cuda.tile._ir.ops_utils import _is_implicit_cast_ok
 from cuda.tile._ir.typing_support import to_dtype
 from util import assert_close, assert_equal, filecheck, get_bytecode
@@ -83,6 +84,7 @@ def _create_check_directive(allow_tma: bool | None,
                             latency: int | None,
                             load_op: str,
                             store_op: str) -> str:
+    version = get_tileiras_version()
     wildcard = "{{.*}}"
     check_directives = ["// CHECK: div_by<16>"]
     if allow_tma is None and latency is None:
@@ -93,11 +95,12 @@ def _create_check_directive(allow_tma: bool | None,
         allow_tma_hint = [f"allow_tma = {str(allow_tma).lower()}"] if allow_tma is not None else []
         latency_hint = [f"latency = {latency}"] if latency is not None else []
         hints = ", ".join(allow_tma_hint + latency_hint)
+        target = "default = " if version >= BytecodeVersion.V_13_3 else wildcard
         check_directives.append(
-            f"// CHECK: {load_op} {wildcard} optimization_hints{wildcard}{hints}"
+            f"// CHECK: {load_op} {wildcard} optimization_hints{wildcard}{target}{{{hints}}}"
         )
         check_directives.append(
-            f"// CHECK: {store_op} {wildcard} optimization_hints{wildcard}{hints}"
+            f"// CHECK: {store_op} {wildcard} optimization_hints{wildcard}{target}{{{hints}}}"
         )
     return "\n".join(check_directives)
 

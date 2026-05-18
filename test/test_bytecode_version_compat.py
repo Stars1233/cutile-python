@@ -84,6 +84,6 @@ def test_num_worker_warps_warns_below_13_3():
         tx = ct.load(x, 0, shape=64)
         ct.store(y, 0, tile=tx)
 
-    with pytest.warns(UserWarning,
-                      match=r"num_worker_warps requires tileiras 13\.3"):
+    match = r"num_worker_warps is ignored: requires tileiras 13\.3, but current version is 13\.1"
+    with pytest.warns(UserWarning, match=match):
         compile_with_version(kernel, (tensor(), tensor()), "13.1")

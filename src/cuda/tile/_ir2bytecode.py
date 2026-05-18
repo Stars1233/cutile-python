@@ -465,7 +465,10 @@ class BytecodeContext:
         if allow_tma is None:
             allow_tma = True
         load_store_hints = bc.LoadStoreHints(latency=latency, allow_tma=allow_tma)
-        return make_load_store_hints({self.sm_arch: load_store_hints})
+        if self.builder.version < BytecodeVersion.V_13_3:
+            return make_load_store_hints({self.sm_arch: load_store_hints})
+        else:
+            return make_load_store_hints({"default": load_store_hints})
 
 
 def generate_bytecode_for_block(ctx: BytecodeContext, block: Block):
@@ -485,25 +488,39 @@ def generate_bytecode_for_block(ctx: BytecodeContext, block: Block):
                 raise TileInternalError(f"Internal error: {e}") from e
 
 
+def _resolve_num_worker_warps(num_worker_warps: Optional[int],
+                              version: BytecodeVersion) -> Optional[int]:
+    if num_worker_warps is not None and version < BytecodeVersion.V_13_3:
+        warnings.warn(
+            f"num_worker_warps is ignored: requires tileiras {BytecodeVersion.V_13_3.as_string()},"
+            f" but current version is {version.as_string()}."
+        )
+        return None
+
+    return num_worker_warps
+
+
 def generate_bytecode_for_kernel(func_body: Block,
                                  symbol: str,
                                  compiler_options: CompilerOptions,
                                  sm_arch: str,
                                  writer: bc.BytecodeWriter,
                                  anonymize_debug_attr: bool):
-    target_options = compiler_options.specialize_for_target(sm_arch)
-    num_worker_warps = target_options.num_worker_warps
-    if num_worker_warps is not None and writer.version < BytecodeVersion.V_13_3:
-        warnings.warn(
-            f"num_worker_warps requires tileiras "
-            f"{BytecodeVersion.V_13_3.as_string()} or later; ignoring "
-            f"(current version is {writer.version.as_string()}).",
-        )
-        num_worker_warps = None
+    version = writer.version
+    hints_by_target = compiler_options.hints_by_target()
+    if version < BytecodeVersion.V_13_3:
+        specialized_hints = dict(hints_by_target.get("default", {}))
+        specialized_hints.update(hints_by_target.get(sm_arch, {}))
+        hints_by_target = {sm_arch: specialized_hints}
 
-    entry_hints = bc.EntryHints(num_cta_in_cga=target_options.num_ctas,
-                                occupancy=target_options.occupancy,
-                                num_worker_warps_per_cta=num_worker_warps)
+    hints = {
+        target: bc.EntryHints(
+            num_cta_in_cga=fields.get("num_ctas"),
+            occupancy=fields.get("occupancy"),
+            num_worker_warps_per_cta=_resolve_num_worker_warps(fields.get("num_worker_warps"),
+                                                               version))
+        for target, fields in hints_by_target.items()
+    }
 
     param_type_ids = [typeid(writer.type_table, p.get_type()) for p in func_body.params]
     debug_attr_map = DebugAttrMap(writer.debug_attr_table, symbol,
@@ -514,7 +531,7 @@ def generate_bytecode_for_kernel(func_body: Block,
                          parameter_types=param_type_ids,
                          result_types=(),
                          entry_point=True,
-                         hints={sm_arch: entry_hints},
+                         hints=hints,
                          debug_attr=func_debug_attr) as (builder, param_values):
         ctx = BytecodeContext(builder=builder,
                               type_table=writer.type_table,

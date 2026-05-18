@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 import dataclasses
 from dataclasses import dataclass
+from typing import Any, Mapping
 
 from cuda.tile._by_target import ByTarget, UNSPECIFIED
 
@@ -30,16 +32,30 @@ class CompilerOptions:
             else:
                 validator(value)
 
-    def specialize_for_target(self, target_name: str) -> "CompilerOptions":
-        specialized = []
+    def hints_by_target(self) -> Mapping[str, Mapping[str, Any]]:
+        res: dict[str, dict[str, Any]] = defaultdict(dict)
         for field in dataclasses.fields(CompilerOptions):
             value = getattr(self, field.name)
             if isinstance(value, ByTarget):
-                value = value._by_target.get(target_name, value._default)
-                if value is UNSPECIFIED:
-                    value = field.default
-            specialized.append(value)
-        return CompilerOptions(*specialized)
+                for target_name, v in value._by_target.items():
+                    res[target_name][field.name] = v
+                default = value._default if value._default is not UNSPECIFIED else field.default
+            else:
+                default = value
+            res["default"][field.name] = default
+        return dict(res)
+
+    def opt_level_for_target(self, target_name: str) -> int:
+        opt_level = self.opt_level
+        if isinstance(opt_level, ByTarget):
+            if target_name in opt_level._by_target:
+                opt_level = opt_level._by_target[target_name]
+            elif opt_level._default is not UNSPECIFIED:
+                opt_level = opt_level._default
+            else:
+                opt_level = CompilerOptions.__dataclass_fields__["opt_level"].default
+        assert isinstance(opt_level, int)
+        return opt_level
 
 
 def _validate_num_ctas(num_ctas: None | int):
