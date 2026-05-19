@@ -135,3 +135,133 @@ def test_pass_non_tuple_starred():
 
     with pytest.raises(TileTypeError, match=re.escape("Expected a tuple after *")):
         ct.launch(torch.cuda.current_stream(), (1,), kernel, ())
+
+
+def test_tuple_compare_empty_eq():
+    @ct.kernel
+    def kernel(x):
+        if () == ():
+            ct.scatter(x, (), 1)
+        else:
+            ct.scatter(x, (), 0)
+
+    x = torch.zeros((), dtype=torch.int32, device="cuda")
+    ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))
+    assert x.item() == 1
+
+
+def test_tuple_compare_constants_eq():
+    @ct.kernel
+    def kernel(x):
+        if (1, 2, 3) == (1, 2, 3):
+            ct.scatter(x, (), 1)
+        else:
+            ct.scatter(x, (), 0)
+
+    x = torch.zeros((), dtype=torch.int32, device="cuda")
+    ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))
+    assert x.item() == 1
+
+
+def test_tuple_compare_constants_ne():
+    @ct.kernel
+    def kernel(x):
+        if (1, 2) != (1, 3):
+            ct.scatter(x, (), 1)
+        else:
+            ct.scatter(x, (), 0)
+
+    x = torch.zeros((), dtype=torch.int32, device="cuda")
+    ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))
+    assert x.item() == 1
+
+
+def test_tuple_compare_different_lengths():
+    @ct.kernel
+    def kernel(x):
+        a = ct.bid(0)
+        if (a, 1) != (a, 1, 2):
+            ct.scatter(x, (), 1)
+        else:
+            ct.scatter(x, (), 0)
+
+    x = torch.zeros((), dtype=torch.int32, device="cuda")
+    ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))
+    assert x.item() == 1
+
+
+def test_tuple_compare_0d_tiles_eq():
+    @ct.kernel
+    def kernel(x):
+        a = ct.bid(0)
+        b = ct.bid(1)
+        if (a, b) == (0, 0):
+            ct.scatter(x, (a, b), 1)
+        else:
+            ct.scatter(x, (a, b), -1)
+
+    x = torch.zeros((2, 2), dtype=torch.int32, device="cuda")
+    ct.launch(torch.cuda.current_stream(), (2, 2), kernel, (x,))
+    assert x.tolist() == [[1, -1], [-1, -1]]
+
+
+def test_tuple_compare_nd_tile_error():
+    @ct.kernel
+    def kernel():
+        t = ct.ones((4,), dtype=ct.int32)
+        if (t,) == (t,):
+            pass
+
+    with pytest.raises(TileTypeError, match="not supported for N-D tile elements"):
+        ct.launch(torch.cuda.current_stream(), (1,), kernel, ())
+
+
+def test_tuple_compare_unsupported_op():
+    @ct.kernel
+    def kernel():
+        if (1, 2) < (3, 4):
+            pass
+
+    with pytest.raises(TileTypeError, match="not supported for tuples"):
+        ct.launch(torch.cuda.current_stream(), (1,), kernel, ())
+
+
+def test_tuple_compare_nested():
+    @ct.kernel
+    def kernel(x):
+        a = ct.bid(0)
+        if ((a, 1), 2) == ((0, 1), 2):
+            ct.scatter(x, (a, ), 1)
+        else:
+            ct.scatter(x, (a, ), -1)
+
+    x = torch.zeros((2, ), dtype=torch.int32, device="cuda")
+    ct.launch(torch.cuda.current_stream(), (2, ), kernel, (x,))
+    assert x.tolist() == [1, -1]
+
+
+def test_tuple_compare_array_element_error():
+    @ct.kernel
+    def kernel(x, y):
+        if (x,) == (y,):
+            pass
+
+    with pytest.raises(TileTypeError, match="not supported for elements of type"):
+        ct.launch(torch.cuda.current_stream(), (1,), kernel,
+                  (torch.zeros(4, dtype=torch.int32, device="cuda"),
+                   torch.zeros(4, dtype=torch.int32, device="cuda")))
+
+
+def test_tuple_compare_constant_args():
+    @ct.kernel
+    def kernel(x, M: ct.Constant[int], N: ct.Constant[int]):
+        if (M, N) == (4, 8):
+            ct.scatter(x, (), 1)
+        else:
+            ct.scatter(x, (), -1)
+
+    x = torch.zeros((), dtype=torch.int32, device="cuda")
+    ct.launch(torch.cuda.current_stream(), (1,), kernel, (x, 4, 8))
+    assert x.item() == 1
+    ct.launch(torch.cuda.current_stream(), (1,), kernel, (x, 4, 9))
+    assert x.item() == -1

@@ -797,6 +797,42 @@ def operator_is_not_impl(x: Var, y: Var):
     return _is_none_compare(x, y, negate=True, op_name="is not")
 
 
+def _tuple_comparison(fn: str, x: Var, y: Var) -> Var:
+    if fn not in ("eq", "ne"):
+        raise TileTypeError(f"Operator '{fn}' is not supported for tuples")
+
+    x_ty = require_tuple_type(x)
+    y_ty = require_tuple_type(y)
+
+    if x.is_constant() and y.is_constant():
+        res = x.get_constant() == y.get_constant()
+        return loosely_typed_const(res if fn == "eq" else not res)
+
+    if len(x_ty) != len(y_ty):
+        return loosely_typed_const(fn == "ne")
+
+    x_items = x.get_aggregate().items
+    y_items = y.get_aggregate().items
+
+    for item in (*x_items, *y_items):
+        item_ty = item.get_type()
+        if isinstance(item_ty, TileTy) and item_ty.ndim > 0:
+            raise TileTypeError("Tuple comparison is not supported for N-D tile elements")
+        if not isinstance(item_ty, (TileTy, TupleTy, LooselyTypedScalar, DTypeSpec, StringTy)):
+            raise TileTypeError(
+                f"Tuple comparison is not supported for elements of type {item_ty}"
+            )
+
+    elem_cmps = [comparison_operator_impl("eq", xi, yi) for xi, yi in zip(x_items, y_items)]
+    result = functools.reduce(lambda a, b: binary_bitwise("and_", a, b), elem_cmps,
+                              loosely_typed_const(True))
+
+    if fn == "ne":
+        result = logical_not_impl(result)
+
+    return result
+
+
 @impl(operator.eq, fixed_args=["eq"])
 @impl(operator.ne, fixed_args=["ne"])
 @impl(operator.lt, fixed_args=["lt"])
@@ -812,6 +848,8 @@ def comparison_operator_impl(fn: str, x: Var, y: Var) -> Var:
             return _binop_propagate_constant(fn, x_ty.dtype, y_ty.dtype, None)
         case StringTy(), StringTy():
             return _binop_propagate_constant(fn, x_ty.value, y_ty.value, None)
+        case TupleTy(), TupleTy():
+            return _tuple_comparison(fn, x, y)
         case _, _:
             return comparison(fn, x, y)
 
