@@ -851,6 +851,18 @@ def address_space_cast(value: Pointer[T], memory_space: MemorySpace) -> Pointer[
 
 
 @stub
+def map_shared_to_cluster(ptr: Pointer[T], rank: int) -> Pointer[T]:
+    '''
+    Map a pointer in shared memory from another CTA within the same cluster
+    with rank ``rank`` to this CTA.
+    The pointer is expected to have memory space
+    ``MemorySpace.SHARED`` and a pointer with memory space
+    ``MemorySpace.SHARED_CLUSTER`` is returned.
+    Corresponds to the ptx instruction ``mapa.shared::cluster``.
+    '''
+
+
+@stub
 def reinterpret_pointer_as_array(
     pointer: Pointer[T],
     dtype: DType,
@@ -888,6 +900,13 @@ def reinterpret_pointer_as_array(
         7
 
     """
+
+
+def nanosleep(nanoseconds: int):
+    '''
+    Sleep for ``nanoseconds`` nanoseconds.
+    '''
+    nvvm.nanosleep(nanoseconds)
 
 
 __all__ = (
@@ -934,5 +953,7 @@ __all__ = (
     "static_assert",
     "static_iter",
     "address_space_cast",
+    "map_shared_to_cluster",
     "reinterpret_pointer_as_array",
+    "nanosleep",
 )

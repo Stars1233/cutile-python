@@ -21,6 +21,7 @@ from .type import Type, TupleTy, DTypeConstructor, DTypeSpec, NONE, StringTy, \
 BOOL_TY = TileTy(datatype.bool_)
 I32_TY = TileTy(datatype.int32)
 I64_TY = TileTy(datatype.int64)
+U64_TY = TileTy(datatype.uint64)
 
 
 # Store mapping from 3rd party dtype objects

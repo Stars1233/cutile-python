@@ -64,6 +64,10 @@ def dtype_to_mlir_type(dtype: datatype.DType) -> mlir.Type:
             return mlir.Float32Type()
         case datatype.float64:
             return mlir.Float64Type()
+        case datatype.mbarrier:
+            return mlir.IntegerType(
+                width=64, signedness=mlir.SignednessSemantics.SIGNLESS
+            )
         case _:
             raise NotImplementedError(f"Unable to convert {dtype=} to MLIR type")
 

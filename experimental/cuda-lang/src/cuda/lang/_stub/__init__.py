@@ -55,13 +55,28 @@ from .core_api import (
     inline_ptx,
     ptx_comment,
     address_space_cast,
+    map_shared_to_cluster,
     reinterpret_pointer_as_array,
+    nanosleep,
 )
 
 from .tensor_map import (
     TensorMapSwizzle,
     TensorMap,
     tensor_map_tiled,
+)
+
+from .mbarrier import (
+    mbarrier_init,
+    mbarrier_invalidate,
+    mbarrier_arrive,
+    mbarrier_arrive_expect_tx,
+    mbarrier_expect_tx,
+    mbarrier_complete_tx,
+    mbarrier_test_wait,
+    mbarrier_test_wait_parity,
+    mbarrier_try_wait,
+    mbarrier_try_wait_parity,
 )
 
 
@@ -117,8 +132,20 @@ __all__ = (
     "nvvm",
     "libdevice",
     "address_space_cast",
+    "map_shared_to_cluster",
     "reinterpret_pointer_as_array",
     "TensorMapSwizzle",
     "TensorMap",
-    "tensor_map_tiled"
+    "tensor_map_tiled",
+    "nanosleep",
+    "mbarrier_init",
+    "mbarrier_invalidate",
+    "mbarrier_arrive",
+    "mbarrier_arrive_expect_tx",
+    "mbarrier_expect_tx",
+    "mbarrier_complete_tx",
+    "mbarrier_test_wait",
+    "mbarrier_test_wait_parity",
+    "mbarrier_try_wait",
+    "mbarrier_try_wait_parity",
 )

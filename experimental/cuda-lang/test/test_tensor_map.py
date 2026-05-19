@@ -9,9 +9,56 @@ from .util import require_hopper_or_newer
 
 
 @require_hopper_or_newer()
+def test_mbar_manager():
+    @cl.kernel()
+    def kernel(x, y, i, j, W: cl.Constant[int], H: cl.Constant[int]):
+        x_tm = cl.tensor_map_tiled(x, (W, H))
+        mbar = cl.shared_array(shape=(), dtype=cl.mbarrier, alignment=8).get_base_pointer()
+        smem = cl.shared_array(shape=(W * H,), dtype=cl.int32, alignment=512)
+
+        if cl.thread_idx(0) == 0:
+            cl.mbarrier_init(mbar, cl.block_dim(0))
+
+        cl.syncthreads()
+        if cl.elect_sync():
+            # TODO: proper cp.async API
+            cl.nvvm.cp_async_bulk_tensor_g2s_cta_tile_2d(
+                smem.get_base_pointer(),
+                mbar,
+                x_tm.as_opaque_ptr(),
+                j,
+                i,
+                0,
+                False,
+            )
+            tok = cl.mbarrier_arrive_expect_tx(mbar, W * H * 4)
+        else:
+            tok = cl.mbarrier_arrive(mbar)
+
+        while not cl.mbarrier_try_wait(mbar, tok, time_hint=10_000):
+            pass
+
+        y[cl.thread_idx(0)] = smem[cl.thread_idx(0)]
+
+    x = (
+        torch.arange(37 * 48, dtype=torch.int32, device="cuda")
+        .reshape((37, 48))
+        .contiguous()
+    )
+    H, W = 32, 8
+
+    for i, j in [(0, 0), (1, 12)]:
+        y = torch.zeros(256, dtype=torch.int32, device="cuda")
+        cl.launch(torch.cuda.current_stream(), (1,), (256,), kernel, (x, y, i, j, H, W))
+        y = y.reshape((H, W))
+        ref = x[i:i + H, j:j + W]
+        torch.testing.assert_close(y, ref)
+
+
+@require_hopper_or_newer()
 def test_tensor_map_tiled():
     @cl.kernel
-    def kern(x, y, i, j, W: cl.Constant, H: cl.Constant):
+    def kern(x, y, i, j, W: cl.Constant[int], H: cl.Constant[int]):
         # TODO: barrier API
         barrier = cl.shared_array(shape=(), dtype=cl.uint64)
         smem = cl.shared_array(shape=(W * H,), dtype=cl.int32, alignment=512)
@@ -27,28 +74,37 @@ def test_tensor_map_tiled():
                 smem.get_base_pointer(),
                 barrier.get_base_pointer(),
                 x_tm.as_opaque_ptr(),
-                j, i,
-                0, False
+                j,
+                i,
+                0,
+                False,
             )
             tok = cl.nvvm.mbarrier_arrive_expect_tx_scope_cta_space_cta(
-                barrier.get_base_pointer(),
-                W * H * 4
+                barrier.get_base_pointer(), W * H * 4
             )
         else:
-            tok = cl.nvvm.mbarrier_arrive_scope_cta_space_cta(barrier.get_base_pointer(), 1)
+            tok = cl.nvvm.mbarrier_arrive_scope_cta_space_cta(
+                barrier.get_base_pointer(), 1
+            )
 
-        while not cl.nvvm.mbarrier_try_wait_scope_cta_space_cta(barrier.get_base_pointer(), tok):
+        while not cl.nvvm.mbarrier_try_wait_scope_cta_space_cta(
+            barrier.get_base_pointer(), tok
+        ):
             # TODO: back off (see __cccl_thread_poll_with_backoff in CUDA C++ stdlib)
             cl.nvvm.nanosleep(10000)
 
         y[cl.thread_idx(0)] = smem[cl.thread_idx(0)]
 
-    x = torch.arange(37 * 48, dtype=torch.int32, device="cuda").reshape((37, 48)).contiguous()
+    x = (
+        torch.arange(37 * 48, dtype=torch.int32, device="cuda")
+        .reshape((37, 48))
+        .contiguous()
+    )
     H, W = 32, 8
 
     for i, j in [(0, 0), (1, 12)]:
         y = torch.zeros(256, dtype=torch.int32, device="cuda")
         cl.launch(torch.cuda.current_stream(), (1,), (256,), kern, (x, y, i, j, H, W))
         y = y.reshape((H, W))
-        ref = x[i:i+H, j:j+W]
+        ref = x[i:i + H, j:j + W]
         torch.testing.assert_close(y, ref)

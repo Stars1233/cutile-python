@@ -45,8 +45,14 @@ from cuda.tile._datatype import (
     is_integral,
     is_signed,
     get_signedness,
-    default_int_type, is_pointer_dtype, PointerInfo,
+    default_int_type,
+    is_pointer_dtype,
+    PointerInfo,
 )
+
+
+mbarrier = DType('mbarrier', bitwidth=64, py_type=None, bytecode_type=None)
+register_dtypes({mbarrier: mbarrier}, usable_as_constructor=False)
 
 
 def vector_ty(dtype: DType, length: int) -> TileTy:
@@ -183,6 +189,7 @@ __all__ = [
     "float8_e5m2",
     "float8_e8m0fnu",
     "float4_e2m1fn",
+    "mbarrier",
     "DType",
     "NumericDType",
     "ArithmeticDType",

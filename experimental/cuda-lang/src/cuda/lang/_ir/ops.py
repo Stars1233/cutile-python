@@ -62,9 +62,14 @@ from cuda.tile._ir.ops import (
     Unary, implicit_cast,
 )
 from cuda.tile._ir.ir import MemoryEffect, make_aggregate
-from cuda.lang._exception import TileTypeError
+from cuda.lang._exception import TileCompilerError, TileTypeError
 import cuda.lang._datatype as datatype
-from cuda.tile._datatype import is_pointer_dtype, pointer_dtype, PointerInfo, opaque_pointer_dtype
+from cuda.tile._datatype import (
+    is_pointer_dtype,
+    pointer_dtype,
+    PointerInfo,
+    opaque_pointer_dtype,
+)
 import cuda.lang._mlir as mlir
 
 from .. import _stub as stub
@@ -92,7 +97,7 @@ from .ir import (
 )
 from .._stub import TensorMapSwizzle
 from cuda.tile._ir import hir_stubs
-from cuda.tile._ir.typing_support import I32_TY, BOOL_TY
+from cuda.tile._ir.typing_support import I32_TY, U64_TY, BOOL_TY
 
 cuda_lang_impl_registry = tile_impl_registry.clone()
 impl = cuda_lang_impl_registry.impl
@@ -298,7 +303,7 @@ def _get_array_base_pointer(array: Var) -> Var:
 
 def _array_linear_offset(array: Var, indices: tuple[Var, ...]) -> Var:
     array_val = array.get_aggregate()
-    zero = strictly_typed_const(0, TileTy(datatype.uint64))
+    zero = strictly_typed_const(0, U64_TY)
     offset = zero
     if len(indices) != len(array_val.strides):
         raise TileTypeError(
@@ -1210,7 +1215,7 @@ def shfl_sync_impl(mode: str, mask: Var, value: Var, lane_mask: Var, width: Var)
     clamp = 0 if mode == 'up' else 0x1F
     mask_and_clamp = strictly_typed_const(
         ((WARP_SIZE - width) << 8) | clamp,
-        TileTy(datatype.int32),
+        I32_TY,
     )
 
     suffix = "i32" if datatype.is_integral(value_ty.dtype) else "f32"
@@ -1364,6 +1369,287 @@ def _call_foreign_function_impl(func: Var, return_type: Var, parameters: Var) ->
         operands_=parameters,
     )
     return result if result_type else None
+
+
+def require_mbarrier_ptr(
+    mbar: Var,
+    expected_memory_spaces: tuple[MemorySpace, ...] = (
+        MemorySpace.SHARED,
+        MemorySpace.SHARED_CLUSTER,
+    ),
+) -> PointerInfo:
+    info = PointerInfo(require_pointer_var(mbar).dtype)
+    if info.opaque or info.pointee_dtype is not datatype.mbarrier:
+        raise TileTypeError(f"Expected a pointer to an mbarrier, got {mbar}")
+    if info.memory_space not in expected_memory_spaces:
+        expected = ', '.join(x.value for x in expected_memory_spaces)
+        raise TileTypeError(
+            f"Expected mbarrier to be allocated in one of {expected} "
+            f"but got {info.memory_space}"
+        )
+    return info
+
+
+@impl(stub.mbarrier_init)
+def mbarrier_init_impl(mbar: Var, participants: Var) -> Var:
+    require_mbarrier_ptr(mbar)
+    participants = astype(participants, datatype.int32)
+    add_operation(
+        RawNVVMIntrinsic,
+        tuple(),
+        intrinsic="llvm.nvvm.mbarrier.init.shared",
+        operands_=(mbar, participants),
+    )
+
+
+@impl(stub.mbarrier_invalidate)
+def mbarrier_invalidate_impl(mbar: Var) -> Var:
+    require_mbarrier_ptr(mbar)
+    add_operation(
+        RawNVVMIntrinsic,
+        tuple(),
+        intrinsic="llvm.nvvm.mbarrier.inval.shared",
+        operands_=(mbar,),
+    )
+
+
+def _memory_space_to_mbar_suffix(memory_space: MemorySpace) -> str:
+    match memory_space:
+        case MemorySpace.SHARED:
+            return 'cta'
+        case MemorySpace.SHARED_CLUSTER:
+            return 'cluster'
+
+    raise TileCompilerError(f"Unexpected {memory_space=}")
+
+
+def _mbar_space_scope_suffix(scope: MemorySpace, space: MemorySpace):
+    return (
+        ".scope."
+        + _memory_space_to_mbar_suffix(scope)
+        + ".space."
+        + _memory_space_to_mbar_suffix(space)
+    )
+
+
+@impl(stub.mbarrier_arrive)
+def mbarrier_arrive_impl(
+    mbar: Var,
+    count: Var,
+    drop: Var,
+    scope: Var,
+    relaxed: Var,
+) -> Var | None:
+    count = astype(count, datatype.int32)
+    drop = require_constant_bool(drop)
+    scope = require_constant_enum(scope, MemorySpace)
+    relaxed = require_constant_bool(relaxed)
+    space = require_mbarrier_ptr(mbar).memory_space
+    intrinsic = "llvm.nvvm.mbarrier.arrive"
+    if drop:
+        intrinsic += '.drop'
+    if relaxed:
+        intrinsic += '.relaxed'
+    intrinsic += _mbar_space_scope_suffix(scope, space)
+
+    return_type = (TileTy(datatype.uint64),) if space is MemorySpace.SHARED else ()
+    results = add_operation(
+        RawNVVMIntrinsic,
+        return_type,
+        intrinsic=intrinsic,
+        operands_=(mbar, count),
+    )
+    return results[0] if return_type else None
+
+
+@impl(stub.mbarrier_arrive_expect_tx)
+def mbarrier_arrive_expect_tx_impl(
+    mbar: Var,
+    bytes: Var,
+    drop: Var,
+    scope: Var,
+    relaxed: Var,
+) -> Var | None:
+    bytes = astype(bytes, datatype.int32)
+    drop = require_constant_bool(drop)
+    scope = require_constant_enum(scope, MemorySpace)
+    relaxed = require_constant_bool(relaxed)
+    space = require_mbarrier_ptr(mbar).memory_space
+    intrinsic = "llvm.nvvm.mbarrier.arrive"
+    if drop:
+        intrinsic += '.drop'
+    intrinsic += '.expect.tx'
+    if relaxed:
+        intrinsic += '.relaxed'
+    intrinsic += _mbar_space_scope_suffix(scope, space)
+
+    return_type = (TileTy(datatype.uint64),) if space is MemorySpace.SHARED else ()
+    results = add_operation(
+        RawNVVMIntrinsic,
+        return_type,
+        intrinsic=intrinsic,
+        operands_=(mbar, bytes),
+    )
+    return results[0] if return_type else None
+
+
+@impl(stub.mbarrier_expect_tx)
+def mbarrier_expect_tx_impl(mbar: Var, bytes: Var, scope: Var) -> Var:
+    space = require_mbarrier_ptr(mbar).memory_space
+    bytes = astype(bytes, datatype.int32)
+    scope = require_constant_enum(scope, MemorySpace)
+    intrinsic = "llvm.nvvm.mbarrier.expect.tx"
+    intrinsic += _mbar_space_scope_suffix(scope, space)
+    add_operation(
+        RawNVVMIntrinsic,
+        (),
+        intrinsic=intrinsic,
+        operands_=(mbar, bytes),
+    )
+
+
+@impl(stub.mbarrier_complete_tx)
+def mbarrier_complete_tx_impl(mbar: Var, bytes: Var, scope: Var) -> Var:
+    space = require_mbarrier_ptr(mbar).memory_space
+    bytes = astype(bytes, datatype.int32)
+    scope = require_constant_enum(scope, MemorySpace)
+    intrinsic = "llvm.nvvm.mbarrier.complete.tx"
+    intrinsic += _mbar_space_scope_suffix(scope, space)
+    add_operation(
+        RawNVVMIntrinsic,
+        (),
+        intrinsic=intrinsic,
+        operands_=(mbar, bytes),
+    )
+
+
+@impl(stub.mbarrier_test_wait)
+def mbarrier_test_wait_impl(
+    mbar: Var, state: Var, scope: Var, relaxed: Var
+) -> Var:
+    scope = require_constant_enum(scope, MemorySpace)
+    state = astype(state, datatype.int64)
+    require_mbarrier_ptr(mbar, (MemorySpace.SHARED,))
+    relaxed = require_constant_bool(relaxed)
+    intrinsic = "llvm.nvvm.mbarrier.test.wait"
+    if relaxed:
+        intrinsic += ".relaxed"
+    intrinsic += _mbar_space_scope_suffix(scope, MemorySpace.SHARED)
+    results = add_operation(
+        RawNVVMIntrinsic,
+        (TileTy(datatype.bool_),),
+        intrinsic=intrinsic,
+        operands_=(mbar, state),
+    )
+    return results[0]
+
+
+@impl(stub.mbarrier_test_wait_parity)
+def mbarrier_test_wait_parity_impl(
+    mbar: Var, parity: Var, scope: Var, relaxed: Var
+) -> Var:
+    require_mbarrier_ptr(mbar, (MemorySpace.SHARED,))
+    parity = astype(parity, datatype.int32)
+    scope = require_constant_enum(scope, MemorySpace)
+    relaxed = require_constant_bool(relaxed)
+    intrinsic = "llvm.nvvm.mbarrier.test.wait.parity"
+    if relaxed:
+        intrinsic += ".relaxed"
+    intrinsic += _mbar_space_scope_suffix(scope, MemorySpace.SHARED)
+    results = add_operation(
+        RawNVVMIntrinsic,
+        (TileTy(datatype.bool_),),
+        intrinsic=intrinsic,
+        operands_=(mbar, parity),
+    )
+    return results[0]
+
+
+def _is_none(var: Var):
+    return var.is_constant() and var.get_constant() is None
+
+
+@impl(stub.mbarrier_try_wait)
+def mbarrier_try_wait_impl(
+    mbar: Var,
+    state: Var,
+    time_hint: Var,
+    scope: Var,
+    relaxed: Var,
+) -> Var:
+    require_mbarrier_ptr(mbar, (MemorySpace.SHARED,))
+    state = astype(state, datatype.int64)
+    scope = require_constant_enum(scope, MemorySpace)
+    relaxed = require_constant_bool(relaxed)
+    intrinsic = "llvm.nvvm.mbarrier.try.wait"
+    args = (mbar, state)
+    if not _is_none(time_hint):
+        intrinsic += ".tl"
+        time_hint = astype(time_hint, datatype.int32)
+        args = (*args, time_hint)
+    if relaxed:
+        intrinsic += ".relaxed"
+    intrinsic += _mbar_space_scope_suffix(scope, MemorySpace.SHARED)
+    results = add_operation(
+        RawNVVMIntrinsic,
+        (TileTy(datatype.bool_),),
+        intrinsic=intrinsic,
+        operands_=args,
+    )
+    return results[0]
+
+
+@impl(stub.mbarrier_try_wait_parity)
+def mbarrier_try_wait_parity_impl(
+    mbar: Var,
+    parity: Var,
+    time_hint: Var,
+    scope: Var,
+    relaxed: Var,
+) -> Var:
+    require_mbarrier_ptr(mbar, (MemorySpace.SHARED,))
+    parity = astype(parity, datatype.int32)
+    scope = require_constant_enum(scope, MemorySpace)
+    relaxed = require_constant_bool(relaxed)
+    intrinsic = "llvm.nvvm.mbarrier.try.wait.parity"
+    args = (mbar, parity)
+    if not _is_none(time_hint):
+        time_hint = astype(time_hint, datatype.int32)
+        args = (*args, time_hint)
+        intrinsic += ".tl"
+    if relaxed:
+        intrinsic += ".relaxed"
+    intrinsic += _mbar_space_scope_suffix(scope, MemorySpace.SHARED)
+    results = add_operation(
+        RawNVVMIntrinsic,
+        (TileTy(datatype.bool_),),
+        intrinsic=intrinsic,
+        operands_=args,
+    )
+    return results[0]
+
+
+@impl(stub.map_shared_to_cluster)
+def map_shared_to_cluster_impl(ptr: Var, rank: Var):
+    ptr_ty = require_pointer_var(ptr).dtype
+    rank = astype(rank, datatype.int32)
+    info = PointerInfo(ptr_ty)
+    if info.memory_space != MemorySpace.SHARED:
+        raise TileTypeError(
+            f"Expected pointer in shared memory, but got memory_space={info.memory_space}"
+        )
+    if info.opaque:
+        result_scalar_ty = opaque_pointer_dtype(MemorySpace.SHARED_CLUSTER)
+    else:
+        result_scalar_ty = pointer_dtype(info.pointee_dtype, MemorySpace.SHARED_CLUSTER)
+    result_ty = TileTy(result_scalar_ty)
+    results = add_operation(
+        RawNVVMIntrinsic,
+        (result_ty,),
+        intrinsic="llvm.nvvm.mapa.shared.cluster",
+        operands_=(ptr, rank),
+    )
+    return results[0]
 
 
 __all__ = (
