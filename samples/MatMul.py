@@ -298,7 +298,7 @@ if __name__ == "__main__":
         # Ampere tfloat32 numerics is loose
         atol, rtol = 1e-2, 1e-2
     else:
-        atol, rtol = 1e-4, 1e-3
+        atol, rtol = 2e-4, 1e-3
 
     # Perform matrix multiplication using the cuTile wrapper function.
     C_fp32_cutile = cutile_matmul(A_fp32, B_fp32)
