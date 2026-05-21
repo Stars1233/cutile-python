@@ -3,6 +3,75 @@
 
 Release Notes
 =============
+
+1.4.0 (2026-05-26)
+------------------
+
+This release highlights Hopper(sm_90) GPU support with block-scaled MMA new
+narrow float dtypes, atomic store operations, load and store with advanced indexing,
+tiled view with gapped or overlapped tile access, and support for large arrays and scalars.
+It also adds support for Python 3.14 including free-threading, star "\*" expression,
+and frozen dataclasses, as well as integration with JAX.
+
+### CTK 13.3 features
+- Support Hopper (sm_90 family) GPUs.
+- Add `float8_e8m0fnu` and `float4_e2m1fn` restricted float dtype.
+- Add {py:func}`ct.mma_scaled() <cuda.tile.mma_scaled>` operation for
+  block-scaled matrix multiply-accumulate.
+- Add {py:func}`ct.pack_to_bytes() <cuda.tile.pack_to_bytes>` operation that
+  flattens a tile and reinterprets its raw bytes as a 1D uint8 tile;
+  {py:func}`ct.unpack_from_bytes() <cuda.tile.unpack_from_bytes>`
+  is the inverse of {py:func}`ct.pack_to_bytes() <cuda.tile.pack_to_bytes>`.
+- Add {py:func}`ct.load_advanced_indexing() <cuda.tile.load_advanced_indexing>`
+  and {py:func}`ct.store_advanced_indexing() <cuda.tile.store_advanced_indexing>`
+  for gathering/scattering along one dimension while slicing on other
+  dimensions.
+- Add {py:meth}`atomic_store_add <cuda.tile.TiledView.atomic_store_add>` and
+  more atomic methods on
+  {py:class}`TiledView <cuda.tile.TiledView>` for performing element-wise
+  atomic read-modify-write operations on a tiled view at a given tile index.
+- Add support for {py:meth}`Array.tiled_view() <cuda.tile.Array.tiled_view>`
+  with `traversal_steps` for creating a tiled space with overlapped or spaced tiles.
+- {py:class}`ByTarget <cuda.tile.ByTarget>` now accepts a `default` value that
+  applies to all architectures (e.g. `ByTarget(sm_100=8, default=2)`), allowing
+  generated TileIR bytecode to be independent of the GPU architecture.
+- Add {py:func}`ct.astile() <cuda.tile.astile>` for creating a tile from a
+  scalar (yielding a 0-d tile) or a (possibly nested) tuple of scalars whose
+  nesting determines the tile's shape.
+- Support large arrays (>2B elements):
+    - New {py:data}`ct.IndexedWithInt64 <cuda.tile.IndexedWithInt64>` annotation
+      for array kernel parameters whose shape or stride values exceed the range
+      of a 32-bit integer. Arrays without the annotation continue to use
+      `int32` for shape and stride.
+    - New {py:data}`ct.ScalarInt64 <cuda.tile.ScalarInt64>` annotation that
+      forces a scalar integer kernel parameter to be inferred as `int64`
+      instead of the default `int32`.
+- Add `use_fast_acc` option to {py:func}`ct.mma() <cuda.tile.mma>`
+  to enable fast accumulation mode for FP8 inputs (`float8_e4m3fn`,
+  `float8_e5m2`) on Hopper GPUs.
+- Add a new kernel hint `num_worker_warps` to {py:class}`ct.kernel <cuda.tile.kernel>`.
+
+### Python features
+- Add Python 3.14 and Python 3.14t (free-threading) support.
+- Add support for frozen dataclasses.
+- Add support for passing a tuple as a starred function argument, e.g. `foo(a, *b, c)`.
+- Add support for variadic parameters in user-defined functions, e.g. `def foo(*args)`.
+
+### Enhancements
+- {py:func}`ct.atomic_add() <cuda.tile.atomic_add>` now supports `bfloat16`
+  operands on Hopper (sm_90) and newer architectures.
+- Optional `rounding_mode` parameter for {py:func}`ct.exp() <cuda.tile.exp>`
+  (supports `RoundingMode.FULL` and
+  `RoundingMode.APPROX` for f32).
+- {py:func}`ct.extract() <cuda.tile.extract>` now raises a compile-time
+  `TileTypeError` when a constant index is out of bounds for the tile grid.
+  Dynamic indices are unaffected.
+- {py:func}`ct.floordiv() <cuda.tile.floordiv>` and the `//` operator now
+  support floating-point operands.
+
+### Ecosystem
+- Add support for JAX via {py:func}`ct.jax.cutile_call() <cuda.tile.jax.cutile_call>`.
+
 1.3.0 (2026-04-20)
 ------------------
 ### Features

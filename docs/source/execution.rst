@@ -183,3 +183,7 @@ Constant Type Hints
 .. autoclass:: cuda.tile.ConstantAnnotation
 
 .. autodata:: cuda.tile.Constant
+
+.. autodata:: cuda.tile.IndexedWithInt64
+
+.. autodata:: cuda.tile.ScalarInt64

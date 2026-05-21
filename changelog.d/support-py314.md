@@ -1,2 +1,0 @@
-- Add Python3.14 support
-- Add Python3.14 free threading support, safe to launch kernels via different threads with GIL disabled. 

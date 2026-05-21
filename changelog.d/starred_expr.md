@@ -1,2 +1,0 @@
-- Added support for passing a tuple as a starred function argument, e.g. ``foo(a, *b, c)``.
-- Added support for variadic parameters in user-defined functions, e.g. ``def foo(*args)``.
