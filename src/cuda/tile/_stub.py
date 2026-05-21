@@ -1962,7 +1962,7 @@ def zeros(shape, dtype) -> Tile:
 
 
 @stub
-def astile(value, /, *, dtype: Optional[DType] = None) -> Tile:
+def astile(value, /, *, dtype: DType) -> Tile:
     """Creates a tile from a value.
 
     Args:
@@ -1970,12 +1970,10 @@ def astile(value, /, *, dtype: Optional[DType] = None) -> Tile:
             or a (possibly nested) tuple of scalars whose nesting determines the 
             tile's shape. Every tuple's length must be a power of two, and sibling tuples
             at each level must have uniform length.
-        dtype (DType, optional): The |Data type| of the tile. If ``None``, the
-            dtype is inferred from ``value``.
+        dtype (DType): The |Data type| of the tile.
 
     Returns:
-        Tile: A tile shaped from ``value``, with elements cast to ``dtype`` if
-        given.
+        Tile: A tile shaped from ``value``, with elements cast to ``dtype``.
 
     Examples:
 

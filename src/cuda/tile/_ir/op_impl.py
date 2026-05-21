@@ -323,12 +323,6 @@ def require_dtype_spec(var: Var) -> DType:
     return ty.dtype
 
 
-def require_optional_dtype_spec(var: Var) -> DType | None:
-    if var.is_constant() and var.get_constant() is None:
-        return None
-    return require_dtype_spec(var)
-
-
 def require_constant_pointer_info(var: Var) -> PointerInfo:
     ty = var.get_type()
     if not isinstance(ty, PointerInfoTy):

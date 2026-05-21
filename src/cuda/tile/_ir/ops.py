@@ -36,7 +36,6 @@ from . import hir, hir_stubs
 from .hir import ResolvedName
 from .op_impl import (
     ImplRegistry, is_0d_tile, require_constant_int, require_constant_int_tuple,
-    require_optional_dtype_spec,
     require_signed_integer_0d_tile_type,
     require_tile_type, normalize_axis, require_dtype_spec,
     require_constant_bool, require_optional_constant_enum,
@@ -3413,10 +3412,10 @@ def _cat_tuple(tiles: tuple[Var, ...]) -> Var:
 
 @impl(ct.astile)
 def astile_impl(value: Var, dtype: Var) -> Var:
-    dtype: Optional[DType] = require_optional_dtype_spec(dtype)
+    dtype = require_dtype_spec(dtype)
     value_ty = value.get_type()
     if is_0d_tile(value_ty):
-        return value if dtype is None else astype(value, dtype)
+        return astype(value, dtype)
 
     if not isinstance(value_ty, TupleTy):
         raise TileTypeError(
@@ -3425,9 +3424,6 @@ def astile_impl(value: Var, dtype: Var) -> Var:
 
     shape = _tuple_shape(value_ty, path=())
     tiles = _flatten_tuple(value)
-    dtype = (functools.reduce(promote_dtypes, (require_0d_tile_type(t).dtype for t in tiles))
-             if dtype is None
-             else dtype)
 
     if value.is_constant():
         return _const(shape, value.get_constant(), dtype)

@@ -129,24 +129,6 @@ def test_astile_nested_const():
     assert_equal(x, ref)
 
 
-@pytest.mark.parametrize("value,expected_dtype", [
-    ((1,), ct.int32),
-    ((-2**42,), ct.int64),
-    ((2**63,), ct.uint64),
-    ((2.5,), ct.float32),
-    ((True,), ct.bool_),
-    ((1, True), ct.int32),
-    ((1, 2.5, True, 2**63), ct.float32),
-])
-def test_astile_dtype_infer_const(value, expected_dtype):
-    @ct.kernel
-    def kernel():
-        t = ct.astile(value)
-        ct.static_assert(t.dtype == expected_dtype)
-
-    ct.launch(torch.cuda.current_stream(), (1,), kernel, ())
-
-
 def test_astile_scalar_runtime():
     @ct.kernel
     def kernel(X, a: float):
@@ -180,24 +162,6 @@ def test_astile_2d_runtime():
     ref = torch.tensor([[0, 1], [0.0, True]], dtype=torch.bool, device="cuda")
     ct.launch(torch.cuda.current_stream(), (1,), kernel, (x, 0, 1, 0.0, True))
     assert_equal(x, ref)
-
-
-@pytest.mark.parametrize("ann1,ann2,val1,val2,expected_dtype", [
-    (int, int, 1, 2, ct.int32),
-    (int, ct.ScalarInt64, 1, 2, ct.int64),
-    (float, float, 1.5, 2.5, ct.float32),
-    (bool, bool, True, False, ct.bool_),
-    (int, float, 1, 2.5, ct.float32),
-    (int, bool, 1, True, ct.int32),
-    (float, bool, 2.5, True, ct.float32),
-])
-def test_astile_dtype_infer_runtime(ann1, ann2, val1, val2, expected_dtype):
-    @ct.kernel
-    def kernel(a: ann1, b: ann2):
-        t = ct.astile((a, b))
-        ct.static_assert(t.dtype == expected_dtype)
-
-    ct.launch(torch.cuda.current_stream(), (1,), kernel, (val1, val2))
 
 
 def test_astile_3d_mixed():
@@ -263,7 +227,7 @@ def test_astile_ragged_shape():
 def test_astile_top_level_not_supported():
     @ct.kernel
     def kernel():
-        ct.astile(ct.full((4,), 1, dtype=ct.int32))
+        ct.astile(ct.full((4,), 1, dtype=ct.int32), dtype=ct.int32)
     with pytest.raises(TileTypeError,
                        match=r"Expected a scalar or \(possibly nested\) tuple of scalars"):
         ct.launch(torch.cuda.current_stream(), (1,), kernel, ())
