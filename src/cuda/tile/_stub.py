@@ -2114,7 +2114,9 @@ def mma_scaled(x, x_scale, y, y_scale, /, acc) -> Tile:
     Returns:
         Tile:
 
-    Example:
+    Examples:
+
+        Basic usage.
 
         .. testcode::
             :template: kernel_wrapper.py
@@ -2132,6 +2134,75 @@ def mma_scaled(x, x_scale, y, y_scale, /, acc) -> Tile:
             :skipif: not is_blackwell_or_newer()
 
             [[256.0, 256.0], [256.0, 256.0]]
+
+        For best performance on sm_100.
+
+        .. testcode::
+            :template: setup_only.py
+            :skipif: not is_blackwell_or_newer()
+
+            m1, m2, k1 = 32, 4, 4
+
+            def swizzle_32_4_4(scale):
+                '''
+                Prepare the original scale tensor to align with the expected tmem layout.
+                With the innermost dimensions being (m1=32, m2=4, k1=4), and the outer dimensions
+                being (m0=(M // m1 * m2), k0=(K_s // k1)).
+
+                Reference: PTX ISA tcgen05.mma scale factor layout.
+                https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-scale-factor-a-layout-1x
+                '''
+                M, K_s = scale.shape
+                m0 = M // (m1 * m2)
+                k0 = K_s // k1
+                scale = scale.reshape(m0, m2, m1, k0, k1).permute(0, 3, 2, 1, 4).contiguous()
+                return scale.reshape(m0, k0, m1, m2 * k1)
+
+            def unswizzle_32_4_4(tile):
+                '''
+                Kernel-side inverse of ``swizzle_32_4_4``: take a tile loaded
+                from the host swizzled scale tensor and recover the ``(M, K_s)``
+                view that ``ct.mma_scaled`` expects.
+                '''
+                m0, k0, _, _ = tile.shape
+                m1, m2, k1 = (32, 4, 4)
+                return (tile.reshape((m0, k0, m1, m2, k1))
+                            .permute((0, 3, 2, 1, 4))
+                            .reshape((m0 * m1 * m2, k0 * k1)))
+
+            @ct.kernel
+            def kernel(X, X_scale, Y, Y_scale, Z,
+                       TM: ct.Constant[int], TN: ct.Constant[int], TK: ct.Constant[int]):
+                x = ct.load(X, index=(0, 0), shape=(TM, TK))
+                y = ct.load(Y, index=(0, 0), shape=(TN, TK)).transpose()
+                x_s = ct.load(X_scale, index=(0, 0, 0, 0), shape=(1, 1, m1, m2 * k1))
+                x_s = unswizzle_32_4_4(x_s)
+                y_s = ct.load(Y_scale, index=(0, 0, 0, 0), shape=(1, 1, m1, m2 * k1))
+                y_s = unswizzle_32_4_4(y_s).transpose()
+                acc = ct.zeros((TM, TN), ct.float32)
+                ct.store(Z, index=(0, 0),
+                         tile=ct.mma_scaled(x, x_s, y, y_s, acc))
+
+            M, N, K = 128, 128, 128
+            SCALE_BLOCK_SIZE = 32
+            K_s = K // SCALE_BLOCK_SIZE
+            TM, TN, TK = 128, 128, 128
+
+            X = torch.ones((M, K), device='cuda').to(torch.float8_e4m3fn)
+            Y = torch.ones((N, K), device='cuda').to(torch.float8_e4m3fn)
+            X_scale = torch.full((M, K_s), 2.0, device='cuda').to(torch.float8_e8m0fnu)
+            X_scale = swizzle_32_4_4(X_scale)
+            Y_scale = torch.full((N, K_s), 2.0, device='cuda').to(torch.float8_e8m0fnu)
+            Y_scale = swizzle_32_4_4(Y_scale)
+            Z = torch.zeros((M, N), dtype=torch.float32, device='cuda')
+            ct.launch(stream, (1, 1, 1), kernel, (X, X_scale, Y, Y_scale, Z, TM, TN, TK))
+            torch.cuda.synchronize()
+            print(Z.unique().tolist())
+
+        .. testoutput::
+            :skipif: not is_blackwell_or_newer()
+
+            [512.0]
     """
 
 
