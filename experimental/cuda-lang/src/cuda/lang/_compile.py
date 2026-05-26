@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from functools import total_ordering
 import sys
 from typing import Sequence
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ from cuda.tile._passes.dce import dead_code_elimination_pass
 from cuda.tile._passes.eliminate_assign_ops import eliminate_assign_ops
 from cuda.tile._compile import _create_kernel_parameters, get_sm_arch
 from cuda.tile._annotated_function import AnnotatedFunction, get_annotated_function
-from cuda.tile._cext import get_compute_capability
+from cuda.tile._cext import get_compute_capability as _get_compute_capability
 from cuda.tile._compiler_options import CompilerOptions
 from cuda.tile._exception import TileCompilerExecutionError
 from cuda.lang._logging import get_log_flags
@@ -75,6 +76,37 @@ def get_compiler_binary_path() -> str:
     if os.name == "nt":
         binary_name += ".exe"
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), "bin", binary_name)
+
+
+@total_ordering
+@dataclass(frozen=True)
+class ComputeCapability:
+    major: int
+    minor: int
+
+    def __lt__(self: "ComputeCapability", other: "ComputeCapability | tuple[int, int]"):
+        match other:
+            case tuple():
+                assert len(other) == 2
+                return (self.major, self.minor) < other
+            case ComputeCapability():
+                return (self.major, self.minor) < (other.major, other.minor)
+
+    def __iter__(self):
+        yield self.major
+        yield self.minor
+
+    @property
+    def arch(self):
+        return f'compute_{self.major}{self.minor}'
+
+    @property
+    def gpu_name(self):
+        return f'sm_{self.major}{self.minor}'
+
+
+def get_compute_capability() -> ComputeCapability:
+    return ComputeCapability(*_get_compute_capability())
 
 
 @dataclass

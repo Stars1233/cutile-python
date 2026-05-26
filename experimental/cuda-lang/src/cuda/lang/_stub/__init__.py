@@ -81,6 +81,12 @@ from .mbarrier import (
     mbarrier_try_wait_parity,
 )
 
+from .cluster_launch_control import (
+    clusterlaunchcontrol_try_cancel,
+    clusterlaunchcontrol_is_canceled,
+    clusterlaunchcontrol_get_first_block_idx,
+)
+
 
 __all__ = (
     "is_pointer_dtype",
@@ -151,4 +157,7 @@ __all__ = (
     "mbarrier_test_wait_parity",
     "mbarrier_try_wait",
     "mbarrier_try_wait_parity",
+    "clusterlaunchcontrol_try_cancel",
+    "clusterlaunchcontrol_is_canceled",
+    "clusterlaunchcontrol_get_first_block_idx",
 )

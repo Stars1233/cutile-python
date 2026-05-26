@@ -4,7 +4,7 @@
 
 import cuda.lang as cl
 from cuda.lang._exception import TileCompilerExecutionError
-from cuda.tile._cext import get_compute_capability
+from cuda.lang._compile import get_compute_capability
 import torch
 import pytest
 
@@ -175,10 +175,9 @@ def test_invalid_cluster_config():
 
 @require_hopper_or_newer()
 def test_setmaxregister():
-    major, minor = get_compute_capability()
-    target = f"{major}{minor}a"
+    cc = get_compute_capability()
 
-    @cl.kernel(arch=f"compute_{target}", gpu_name=f"sm_{target}")
+    @cl.kernel(arch=cc.arch + 'a', gpu_name=cc.gpu_name + 'a')
     def kernel():
         cl.setmaxregister_increase(64)
         cl.setmaxregister_decrease(32)

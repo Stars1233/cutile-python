@@ -81,6 +81,9 @@ from ._stub import (
     mbarrier_test_wait_parity,
     mbarrier_try_wait,
     mbarrier_try_wait_parity,
+    clusterlaunchcontrol_try_cancel,
+    clusterlaunchcontrol_is_canceled,
+    clusterlaunchcontrol_get_first_block_idx,
 )
 
 from ._datatype import (
@@ -101,6 +104,7 @@ from ._datatype import (
     uint32,
     uint64,
     mbarrier,
+    clusterlaunchcontrol_token,
     any_opaque_ptr,
     opaque_ptr,
     opaque_generic_ptr,
@@ -214,4 +218,8 @@ __all__ = (
     "mbarrier_test_wait_parity",
     "mbarrier_try_wait",
     "mbarrier_try_wait_parity",
+    "clusterlaunchcontrol_token",
+    "clusterlaunchcontrol_try_cancel",
+    "clusterlaunchcontrol_is_canceled",
+    "clusterlaunchcontrol_get_first_block_idx",
 )

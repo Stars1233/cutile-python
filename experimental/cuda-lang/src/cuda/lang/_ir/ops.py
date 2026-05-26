@@ -265,17 +265,6 @@ def require_array_indices(array: Var, indices: Var) -> tuple[Var, ...]:
     )
 
 
-def require_matching_array_value_type(array: Var, value: Var) -> tuple[ArrayTy, TileTy]:
-    array_ty = require_array_type(array)
-    value_ty = require_tile_type(value)
-    if array_ty.dtype != value_ty.dtype:
-        raise TileTypeError(
-            "Expected type of value to match element type of array"
-            f", but got {array_ty.dtype=} != {value_ty.dtype=}"
-        )
-    return array_ty, value_ty
-
-
 def require_any_pointer_var(var: Var) -> TileTy:
     ty = require_tile_type(var)
     if ty.shape != () or not is_pointer_dtype(ty.dtype):
@@ -372,13 +361,10 @@ def array_getitem(object: Var, key: Var) -> Var:
 
 @impl(operator.setitem, overload=(ArrayTy, WILDCARD, WILDCARD))
 def array_setitem(object: Var, key: Var, value: Var):
-    array_ty, value_ty = require_matching_array_value_type(object, value)
+    array_ty = require_array_type(object)
+    require_scalar_tile_type(value)
+    value = astype(value, array_ty.dtype)
     indices = require_array_indices(object, key)
-    if array_ty.dtype != value_ty.dtype:
-        raise TileTypeError(
-            f"Expected value of type {array_ty.dtype} on "
-            f"right-hand side of assignment but got {value_ty.dtype}"
-        )
     pointer = _array_get_element_pointer(object, indices)
     add_operation(
         StorePointer,
@@ -437,7 +423,9 @@ class AtomicCAS(Operation, opcode="atomic_cas", memory_effect=MemoryEffect.STORE
 @impl(stub.atomic_inc, fixed_args=[AtomicRMWKind.INC])
 @impl(stub.atomic_dec, fixed_args=[AtomicRMWKind.DEC])
 def atomic_rmw_dispatch_impl(kind: AtomicRMWKind, A: Var, idx: Var, val: Var) -> Var:
-    array_ty, _ = require_matching_array_value_type(A, val)
+    array_ty = require_array_type(A)
+    require_scalar_tile_type(val)
+    val = astype(val, array_ty.dtype)
     indices = require_array_indices(A, idx)
     pointer = _array_get_element_pointer(A, indices)
     result_ty = TileTy(array_ty.dtype)
@@ -454,7 +442,9 @@ def atomic_rmw_dispatch_impl(kind: AtomicRMWKind, A: Var, idx: Var, val: Var) ->
 
 @impl(stub.atomic_exch)
 def atomic_exch_impl(A: Var, idx: Var, val: Var) -> Var:
-    array_ty, _ = require_matching_array_value_type(A, val)
+    array_ty = require_array_type(A)
+    require_scalar_tile_type(val)
+    val = astype(val, array_ty.dtype)
     indices = require_array_indices(A, idx)
     pointer = _array_get_element_pointer(A, indices)
     result_ty = TileTy(array_ty.dtype)
@@ -470,7 +460,9 @@ def atomic_exch_impl(A: Var, idx: Var, val: Var) -> Var:
 
 @impl(stub.atomic_cas)
 def atomic_cas_impl(A: Var, idx: Var, old: Var, val: Var) -> Var:
-    array_ty, _ = require_matching_array_value_type(A, val)
+    array_ty = require_array_type(A)
+    require_scalar_tile_type(val)
+    val = astype(val, array_ty.dtype)
     compare_ty = require_tile_type(old)
     if array_ty.dtype != compare_ty.dtype:
         raise TileTypeError(
@@ -1324,7 +1316,7 @@ def require_constant_result_dtypes(result_dtypes: Var) -> tuple[Type, ...]:
 
 
 @impl(stub.nvvm._raw_nvvm_intrinsic)
-def _raw_nvvm_intrinsic_impl(intrinsic: Var, result_dtypes: Var, operands: Var) -> Operation:
+def raw_nvvm_intrinsic_impl(intrinsic: Var, result_dtypes: Var, operands: Var) -> Operation:
     intrinsic = require_constant_str(intrinsic)
     intrinsic = _require_nvvm_intrinsic_name(intrinsic)
     require_tuple_type(operands)
@@ -1345,6 +1337,79 @@ def _raw_nvvm_intrinsic_impl(intrinsic: Var, result_dtypes: Var, operands: Var) 
             return results[0]
         case _:
             return build_tuple(results)
+
+
+@impl(stub.clusterlaunchcontrol_try_cancel)
+def clusterlaunchcontrol_try_cancel_impl(addr: Var, mbar: Var, multicast: Var) -> None:
+    addr_info = PointerInfo(require_pointer_var(addr).dtype)
+    mbar_info = PointerInfo(require_pointer_var(mbar).dtype)
+    multicast = require_constant_bool(multicast)
+
+    if (
+        addr_info.opaque
+        or addr_info.pointee_dtype is not datatype.clusterlaunchcontrol_token
+        or addr_info.memory_space is not MemorySpace.SHARED
+    ):
+        raise TileTypeError(
+            "Expected a pointer to a cluster launch control "
+            f"token in shared memory, got {addr.get_type()}"
+        )
+
+    if (
+        mbar_info.opaque
+        or mbar_info.pointee_dtype is not datatype.mbarrier
+        or mbar_info.memory_space is not MemorySpace.SHARED
+    ):
+        raise TileTypeError(
+            f"Expected a pointer to an mbarrier in shared memory, got {mbar.get_type()}"
+        )
+
+    intrinsic = "llvm.nvvm.clusterlaunchcontrol.try_cancel.async"
+    if multicast:
+        intrinsic += ".multicast"
+    intrinsic += ".shared"
+
+    add_operation(
+        RawNVVMIntrinsic,
+        (),
+        intrinsic=intrinsic,
+        operands_=(addr, mbar),
+    )
+
+
+@impl(stub.clusterlaunchcontrol_is_canceled)
+def clusterlaunchcontrol_is_canceled_impl(token: Var) -> Var:
+    require_scalar_tile_type(token, (datatype.clusterlaunchcontrol_token,))
+    return add_operation(
+        RawNVVMIntrinsic,
+        TileTy(datatype.bool_),
+        intrinsic="llvm.nvvm.clusterlaunchcontrol.query_cancel.is_canceled",
+        operands_=(token,),
+    )
+
+
+@impl(stub.clusterlaunchcontrol_get_first_block_idx)
+def clusterlaunchcontrol_get_first_block_idx_impl(token: Var, axis: Var) -> Var:
+    require_scalar_tile_type(token, (datatype.clusterlaunchcontrol_token,))
+    if not axis.is_constant():
+        raise TileTypeError(
+            f"Expected axis to be constant int or None, but got {axis=}"
+        )
+    axis = axis.get_constant()
+    if type(axis) not in (int, None):
+        raise TileTypeError(
+            f"Expected axis to be constant int or None, but got {axis=}"
+        )
+    cta_ids = tuple(
+        add_operation(
+            RawNVVMIntrinsic,
+            TileTy(datatype.int32),
+            intrinsic=f"llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.{dim}",
+            operands_=(token,),
+        )
+        for dim in ("x", "y", "z")
+    )
+    return build_tuple(cta_ids) if axis is None else cta_ids[axis]
 
 
 @dataclass(eq=False)

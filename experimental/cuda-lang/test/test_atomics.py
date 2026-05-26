@@ -6,9 +6,7 @@ import pytest
 import torch
 
 import cuda.lang as cl
-from cuda.lang._exception import TileTypeError
 
-from .util import compile_for_arguments, make_symbolic_tensor
 
 ALL_INT_DTYPES = ["int32", "int64"]
 ALL_UINT_DTYPES = ["uint32", "uint64"]
@@ -140,19 +138,3 @@ def test_atomic_tuple_index():
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (A, out))
     assert out.cpu()[0].item() == 2
     assert A.cpu()[0, 1].item() == 7
-
-
-def test_atomic_add_requires_matching_dtype():
-    def kernel(A):
-        cl.atomic_add(A, 0, cl.float32(1))
-
-    with pytest.raises(TileTypeError):
-        compile_for_arguments(kernel, [make_symbolic_tensor((1,), cl.int32)])
-
-
-def test_atomic_cas_requires_matching_dtype():
-    def kernel(A):
-        cl.atomic_cas(A, 0, cl.int32(1), cl.int64(2))
-
-    with pytest.raises(TileTypeError):
-        compile_for_arguments(kernel, [make_symbolic_tensor((1,), cl.int32)])

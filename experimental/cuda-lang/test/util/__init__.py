@@ -4,7 +4,7 @@
 
 import pytest
 
-from cuda.tile._cext import get_compute_capability
+from cuda.lang._compile import get_compute_capability
 
 from .filecheck_utils import filecheck, get_source
 from .ir_utils import (
@@ -17,14 +17,14 @@ from .ir_utils import (
 
 def require_blackwell_or_newer():
     return pytest.mark.skipif(
-        get_compute_capability()[0] < 10,
+        get_compute_capability() < (10, 0),
         reason="feature requires Blackwell or newer",
     )
 
 
 def require_hopper_or_newer():
     return pytest.mark.skipif(
-        get_compute_capability()[0] < 9,
+        get_compute_capability() < (9, 0),
         reason="feature requires Hopper or newer",
     )
 

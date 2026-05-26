@@ -50,6 +50,9 @@ from cuda.tile._datatype import (
 
 
 mbarrier = _define_dtype('mbarrier', _DTypeDefinition(bitwidth=64))
+clusterlaunchcontrol_token = _define_dtype(
+    "clusterlaunchcontrol_token", _DTypeDefinition(bitwidth=128)
+)
 
 
 def vector_ty(dtype: DType, length: int) -> TileTy:
@@ -186,6 +189,7 @@ __all__ = [
     "float8_e8m0fnu",
     "float4_e2m1fn",
     "mbarrier",
+    "clusterlaunchcontrol_token",
     "DType",
     "vector_ty",
     "to_torch_dtype",

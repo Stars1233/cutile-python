@@ -8,6 +8,7 @@ import pytest
 import cuda.lang._mlir as mlir
 from cuda.lang._compile import mlir2cubin
 import cuda.lang as cl
+from cuda.lang._compile import get_compute_capability
 from cuda.tile import _cext
 from cuda.tile._exception import TileCompilerExecutionError
 
@@ -80,10 +81,8 @@ def construct_1d_memref_from(
 
 
 def mlir_launch(mlir_module: mlir.Operation, entrypoint: str, args: tuple):
-    major, minor = _cext.get_compute_capability()
-    gpu_name = f"sm_{major}{minor}"
-    arch = f"compute_{major}{minor}"
-    cubin = mlir2cubin(str(mlir_module), gpu_name=gpu_name, arch=arch)
+    cc = get_compute_capability()
+    cubin = mlir2cubin(str(mlir_module), gpu_name=cc.gpu_name, arch=cc.arch)
     kernel = _HackKernel(cubin, entrypoint, len(args))
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, args)
 
