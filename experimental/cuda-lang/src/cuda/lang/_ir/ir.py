@@ -6,7 +6,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 import itertools
 from collections import defaultdict
+from typing import Sequence
 
+from typing_extensions import override
+
+from cuda.tile._datatype import DType
 from cuda.tile._ir.ir import (
     Block as TileBlock,
     Builder as TileBuilder,
@@ -18,8 +22,9 @@ from cuda.tile._ir.ir import (
     attribute,
     add_operation,
     format_var,
-    AggregateValue,
+    AggregateValue, TypingHooks,
 )
+from cuda.tile._ir.type import TensorLikeTy, TileTy
 
 
 class Builder:
@@ -86,11 +91,18 @@ class Block(TileBlock):
         return f"{' ' * indent}^{self._name}({params}):\n{ops}"
 
 
+class _LangTypingHooks(TypingHooks):
+    @override
+    def get_tensor_like_type(self, dtype: DType, shape: Sequence[int]) -> TensorLikeTy:
+        return TileTy(dtype, shape)
+
+
 class IRContext(TileIRContext):
     def __init__(self, log_ir_on_error: bool = True):
         self._block_names: dict[int, str] = {}
         self._block_counter: dict[str, itertools.count] = defaultdict(itertools.count)
-        super().__init__(log_ir_on_error, tileiras_version=None)
+        super().__init__(log_ir_on_error, tileiras_version=None,
+                         typing_hooks=_LangTypingHooks())
 
     def make_block(self, name: str, loc: Loc, params: tuple[Var, ...] = ()) -> Block:
         block = Block(self, loc)

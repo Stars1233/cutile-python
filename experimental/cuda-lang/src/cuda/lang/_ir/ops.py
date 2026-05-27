@@ -24,19 +24,16 @@ from cuda.tile._ir.op_impl import (
     require_tile_type, require_constant_bool, require_constant_pointer_info,
     require_scalar_pointer_type,
 )
-from cuda.lang._ir.type import (
-    LocalArrayContextManagerTy, ContextManagerState, TensorMapTy,
-    dtype_to_tensor_map_type, ArrayValue, PointerInfoTy
-)
+from cuda.tile._ir.type import TensorLikeTy
 from cuda.tile._ir.ops import (
-    binary_arithmetic,
+    binary_arithmetic_tensorlike,
+    binary_arithmetic_tensorlike_raw,
     loosely_typed_const,
     tile_impl_registry,
     bind_method,
     build_tuple,
     strictly_typed_const,
     astype,
-    raw_binary_arithmetic,
     Return,
     return_,
     Assign,
@@ -76,6 +73,8 @@ import cuda.lang._mlir as mlir
 from .. import _stub as stub
 
 from .type import (
+    LocalArrayContextManagerTy, ContextManagerState, TensorMapTy,
+    dtype_to_tensor_map_type, ArrayValue, PointerInfoTy,
     MemorySpace,
     Type,
     make_vector_ty,
@@ -285,8 +284,8 @@ def _array_linear_offset(array: Var, indices: tuple[Var, ...]) -> Var:
     for index, stride in zip(indices, array_val.strides, strict=True):
         index = astype(index, datatype.uint64)
         stride = astype(stride, datatype.uint64)
-        scaled = raw_binary_arithmetic("mul", index, stride)
-        offset = raw_binary_arithmetic("add", offset, scaled)
+        scaled = binary_arithmetic_tensorlike_raw("mul", index, stride)
+        offset = binary_arithmetic_tensorlike_raw("add", offset, scaled)
     return offset
 
 
@@ -538,7 +537,7 @@ def _is_pointer_type(ty):
     return isinstance(ty, TileTy) and is_pointer_dtype(ty.dtype)
 
 
-@impl(operator.add, overload=(TileTy, TileTy))
+@impl(operator.add, overload=(TensorLikeTy, TensorLikeTy))
 async def add_impl(x: Var, y: Var) -> Var:
     xty, yty = x.get_type(), y.get_type()
     if _is_pointer_type(yty):
@@ -554,7 +553,7 @@ async def add_impl(x: Var, y: Var) -> Var:
         return await call_function(operator.add, x, y)
 
 
-@impl(operator.sub, overload=(TileTy, TileTy))
+@impl(operator.sub, overload=(TensorLikeTy, TensorLikeTy))
 async def sub_impl(x: Var, y: Var) -> Var:
     xty, yty = x.get_type(), y.get_type()
     if _is_pointer_type(xty):
@@ -563,7 +562,7 @@ async def sub_impl(x: Var, y: Var) -> Var:
             raise TileTypeError(f"Expected integer pointer offset, got {offset_dtype}")
         y = astype(y, datatype.int64)
         c0 = loosely_typed_const(0)
-        offset = binary_arithmetic('sub', c0, y)
+        offset = binary_arithmetic_tensorlike('sub', c0, y)
         return _pointer_with_offset(x, offset)
     if _is_pointer_type(yty):
         raise TileTypeError('It is invalid to subtract a pointer from an integer')
@@ -868,7 +867,7 @@ def shared_array_impl(shape: Var, dtype: Var, dynamic: Var, alignment: Var) -> O
 
         if size is None or total_size is None:
             total_size = None
-            total_size_var = raw_binary_arithmetic("mul", total_size_var, size_var)
+            total_size_var = binary_arithmetic_tensorlike_raw("mul", total_size_var, size_var)
         else:
             total_size *= size
             total_size_var = strictly_typed_const(total_size, size_ty)

@@ -14,6 +14,8 @@ import operator
 
 from typing import TYPE_CHECKING
 
+from typing_extensions import override
+
 from cuda.tile._exception import Loc, TileTypeError, TileValueError
 from cuda.tile._memory_model import MemorySpace
 from cuda.tile._stub import Tile, Array
@@ -71,12 +73,28 @@ def var2sym(var: "Var") -> Any:
     return var.get_type().make_symbol(var)
 
 
+class TensorLikeTy(Type):
+    """
+    Base class for all tensor-like types, e.g. tiles, loosely typed scalars, etc.
+    """
+    def tensor_dtype(self) -> "DType":
+        raise NotImplementedError()
+
+    def tensor_shape(self) -> tuple[int, ...]:
+        raise NotImplementedError()
+
+
 @dataclass
-class LooselyTypedScalar(Type):
+class LooselyTypedScalar(TensorLikeTy):
     value: Any
 
-    @property
-    def shape(self):
+    @override
+    def tensor_dtype(self) -> "DType":
+        from .typing_support import dtype_of_constant_scalar
+        return dtype_of_constant_scalar(self.value)
+
+    @override
+    def tensor_shape(self) -> tuple[int, ...]:
         return ()
 
 
@@ -366,7 +384,7 @@ class FormattedStringValue(AggregateValue):
 # ============== Tile Type ===============
 
 
-class TileTy(Type):
+class TileTy(TensorLikeTy):
     def __new__(cls, dtype: "DType", shape: Sequence[int] = ()) -> "TileTy":
         shape = tuple(shape)
         try:
@@ -379,6 +397,14 @@ class TileTy(Type):
         ret.shape = shape
         _tile_ty_cache[(dtype, shape)] = ret
         return ret
+
+    @override
+    def tensor_dtype(self) -> "DType":
+        return self.dtype
+
+    @override
+    def tensor_shape(self) -> tuple[int, ...]:
+        return self.shape
 
     def make_symbol(self, var: "Var") -> Symbol:
         return SymbolicTile(var)

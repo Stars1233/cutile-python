@@ -27,12 +27,14 @@ from cuda.tile._annotated_function import AnnotatedFunction, get_annotated_funct
 from cuda.tile._bytecode.version import BytecodeVersion
 from cuda.tile._cext import get_compute_capability, TileContext, default_tile_context
 from cuda.tile._compiler_options import CompilerOptions
+from cuda.tile._datatype import DType
 from cuda.tile._exception import (
     TileCompilerError,
     TileCompilerExecutionError,
     TileCompilerTimeoutError, FunctionDesc, Loc
 )
 from cuda.tile._ir import ir, hir
+from cuda.tile._ir.ir import TypingHooks
 from cuda.tile._ir.ops import loosely_typed_const, flatten_block_parameters, tile_impl_registry
 from cuda.tile._ir.type import TileTy, ArrayTy, ListTy
 from cuda.tile._passes.ast2hir import get_function_hir
@@ -234,6 +236,11 @@ def unique_path_from_func_desc(base_dir: str, desc: FunctionDesc, suffix: str, m
         yield f
 
 
+class _TileTypingHooks(TypingHooks):
+    def get_tensor_like_type(self, dtype: DType, shape: Sequence[int]) -> TileTy:
+        return TileTy(dtype, shape)
+
+
 class _IrKeeper:
     def __init__(self,
                  ann_func: AnnotatedFunction,
@@ -260,7 +267,8 @@ class _IrKeeper:
             sig = self.signatures[signature_index]
             param_names = tuple(self.ann_func.pysig.parameters.keys())
             ir_ctx = ir.IRContext(log_ir_on_error=self._log_cutile_ir,
-                                  tileiras_version=self.bytecode_version)
+                                  tileiras_version=self.bytecode_version,
+                                  typing_hooks=_TileTypingHooks())
             with ir.Builder(ir_ctx, self._func_hir.body.loc) as ir_builder:
                 params = _create_kernel_parameters(sig.parameters,
                                                    self.ann_func.constant_parameter_mask,

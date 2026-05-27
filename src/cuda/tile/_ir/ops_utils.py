@@ -16,8 +16,8 @@ from cuda.tile._exception import Loc, TileTypeError, TileValueError, TileUnsuppo
 from cuda.tile._memory_model import MemoryOrder, MemoryScope, MemorySpace
 import cuda.tile._bytecode as bc
 
-from .ir import Operation, Builder
-from .type import TileTy, LooselyTypedScalar
+from .ir import Operation, Builder, TypingHooks
+from .type import TileTy, LooselyTypedScalar, TensorLikeTy
 from .typing_support import dtype_of_constant_scalar
 from .._datatype import DType, _DTypePromotionImpl, NumericDTypeCategory, PointerInfo
 
@@ -281,14 +281,15 @@ def promote_dtypes(t1: DType | LooselyTypedScalar,
             return _DTypePromotionImpl.promote_dtypes(dtype1, dtype2, force_float)
 
 
-def promote_types(t1: TileTy | LooselyTypedScalar,
-                  t2: TileTy | LooselyTypedScalar,
-                  force_float: bool = False) -> TileTy:
-    dtype_1 = t1 if isinstance(t1, LooselyTypedScalar) else t1.dtype
-    dtype_2 = t2 if isinstance(t2, LooselyTypedScalar) else t2.dtype
+def promote_types(t1: TensorLikeTy | LooselyTypedScalar,
+                  t2: TensorLikeTy | LooselyTypedScalar,
+                  typing_hooks: TypingHooks,
+                  force_float: bool = False) -> TensorLikeTy:
+    dtype_1 = t1 if isinstance(t1, LooselyTypedScalar) else t1.tensor_dtype()
+    dtype_2 = t2 if isinstance(t2, LooselyTypedScalar) else t2.tensor_dtype()
     dtype = promote_dtypes(dtype_1, dtype_2, force_float)
-    shape = broadcast_shapes2(t1.shape, t2.shape)
-    return TileTy(dtype, shape)
+    shape = broadcast_shapes2(t1.tensor_shape(), t2.tensor_shape())
+    return typing_hooks.get_tensor_like_type(dtype, shape)
 
 
 def _is_implicit_cast_ok(src_dtype: DType, target_dtype: DType) -> bool:

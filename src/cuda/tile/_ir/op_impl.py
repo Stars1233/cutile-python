@@ -452,11 +452,15 @@ def require_constant_axis_order(var: Var, rank: int) -> Tuple[int, ...]:
     return tuple(normalize_axis(x, rank, var) for x in value)
 
 
-def require_tile_type(var: Var) -> TileTy:
+def ensure_tile(var: Var) -> Var[TileTy]:
     ty = var.get_type()
     if not isinstance(ty, TileTy):
         raise _make_type_error(f"Expected a tile, but given value has type {ty}", var)
-    return ty
+    return var
+
+
+def require_tile_type(var: Var) -> TileTy:
+    return ensure_tile(var).get_type()
 
 
 def require_tile_or_tile_tuple_type(var: Var) -> TileTy | TupleTy:

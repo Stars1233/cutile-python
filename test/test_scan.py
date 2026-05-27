@@ -71,7 +71,7 @@ def test_cumsum_restricted_dtype_error():
         ct.cumsum(tx, axis=0)
 
     x = torch.rand((16,), dtype=torch.float32, device="cuda").to(torch.float8_e4m3fn)
-    with pytest.raises(TileTypeError, match="does not support restricted float dtype"):
+    with pytest.raises(TileTypeError, match="Non-arithmetic dtype float8_e4m3fn is unsupported"):
         ct.launch(torch.cuda.current_stream(), (1,), kernel, (x,))
 
 

@@ -18,10 +18,11 @@ from typing import (
 )
 
 from cuda.tile._ir.aggregate_value import AggregateValue
-from cuda.tile._ir.type import Type, InvalidType, LooselyTypedScalar
+from cuda.tile._ir.type import Type, InvalidType, LooselyTypedScalar, TensorLikeTy
 from cuda.tile._exception import (
     TileTypeError, Loc, TileInternalError
 )
+from cuda.tile._datatype import DType
 from cuda.tile._bytecode.version import BytecodeVersion
 
 
@@ -29,8 +30,14 @@ if TYPE_CHECKING:
     from cuda.tile._ir2bytecode import BytecodeContext
 
 
+class TypingHooks:
+    def get_tensor_like_type(self, dtype: DType, shape: Sequence[int]) -> TensorLikeTy:
+        raise NotImplementedError()
+
+
 class IRContext:
-    def __init__(self, log_ir_on_error: bool, tileiras_version: BytecodeVersion):
+    def __init__(self, log_ir_on_error: bool, tileiras_version: BytecodeVersion,
+                 typing_hooks: TypingHooks):
         self._all_vars: Dict[str, str] = {}
         self._counter_by_name: Dict[str, Iterator[int]] = defaultdict(itertools.count)
         self._temp_counter = itertools.count()
@@ -41,6 +48,7 @@ class IRContext:
         self._aggregate_values: Dict[str, Any] = dict()
         self.tileiras_version: BytecodeVersion = tileiras_version
         self._function_specialization_id_counter = itertools.count()
+        self.typing_hooks = typing_hooks
 
     def next_function_specialization_id(self) -> str:
         # Monotonic counter used as a unique id when creating concrete FunctionDescs

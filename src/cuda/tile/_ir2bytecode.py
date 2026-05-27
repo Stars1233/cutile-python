@@ -234,7 +234,7 @@ def _get_reduce_indices(
 
 
 def encode_comparison(builder: bc.CodeBuilder, fn: str, lhs: bc.Value, rhs: bc.Value,
-                      dtype: Type, result_typeid: bc.TypeId) -> bc.Value:
+                      dtype: DType, result_typeid: bc.TypeId) -> bc.Value:
     match fn:
         case "eq": pred = bc.ComparisonPredicate.EQUAL
         case "ne": pred = bc.ComparisonPredicate.NOT_EQUAL

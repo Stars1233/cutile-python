@@ -7,8 +7,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 from cuda.lang._ir import ir
-from cuda.tile._ir.ops import loosely_typed_const, raw_binary_arithmetic, strictly_typed_const, \
-    unary, _UNARY_BOOL_INT, raw_binary_bitwise, TypedConst, AssumeBounded, AssumeDivBy, Assign
+from cuda.tile._ir.ops import (
+    loosely_typed_const, binary_arithmetic_tensorlike_raw,
+    strictly_typed_const, unary, _UNARY_BOOL_INT, TypedConst, AssumeBounded, AssumeDivBy, Assign,
+    binary_bitwise_tensorlike_raw
+)
 from cuda.tile._ir.typing_support import I32_TY, I64_TY
 
 HostOpcode = Literal["Const", "KernelArgI32", "KernelArgI64", "Mul", "Add", "RoundUpToPow2"]
@@ -70,10 +73,10 @@ def host_program_to_ir(program: HostProgram, kernel_params: tuple[ir.Var, ...]) 
             case "KernelArgI64": stack.append(kernel_params[next(attrs)])
             case "Mul":
                 b = stack.pop()
-                stack[-1] = raw_binary_arithmetic("mul", stack[-1], b)
+                stack[-1] = binary_arithmetic_tensorlike_raw("mul", stack[-1], b)
             case "Add":
                 b = stack.pop()
-                stack[-1] = raw_binary_arithmetic("add", stack[-1], b)
+                stack[-1] = binary_arithmetic_tensorlike_raw("add", stack[-1], b)
             case "RoundUpToPow2":
                 stack[-1] = _round_up_ir(stack[-1], next(attrs))
             case _:
@@ -86,7 +89,7 @@ def host_program_to_ir(program: HostProgram, kernel_params: tuple[ir.Var, ...]) 
 def _round_up_ir(value: ir.Var, alignment: int) -> ir.Var:
     value_ty = value.get_type()
     mask = strictly_typed_const(alignment - 1, value_ty)
-    value_plus_mask = raw_binary_arithmetic("add", value, mask)
+    value_plus_mask = binary_arithmetic_tensorlike_raw("add", value, mask)
     neg_mask = unary('neg', _UNARY_BOOL_INT, mask)
-    rounded = raw_binary_bitwise('and_', value_plus_mask, neg_mask)
+    rounded = binary_bitwise_tensorlike_raw('and_', value_plus_mask, neg_mask)
     return rounded
