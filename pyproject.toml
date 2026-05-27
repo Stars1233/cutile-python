@@ -53,6 +53,7 @@ version = {file = "src/cuda/tile/VERSION"}
 [tool.setuptools.packages.find]
 where = ["src"]
 include = [
+    "cuda",
     "cuda.tile",
     "cuda.tile.compilation",
     "cuda.tile._ir",
