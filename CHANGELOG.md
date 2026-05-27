@@ -7,7 +7,7 @@ Release Notes
 1.4.0 (2026-05-26)
 ------------------
 
-This release highlights compatability with CTK 13.3 which introduces
+This release highlights compatibility with CTK 13.3 which introduces
 Hopper(sm_90) GPU support, block-scaled MMA, new float dtypes, pack/unpack
 operations, atomic store operations, load and store with advanced indexing,
 tiled view with gapped or overlapped tile access, and support for large arrays
