@@ -14,11 +14,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import (
-    List, Optional, Dict, Tuple, Any, TYPE_CHECKING, Sequence, Iterator, Callable
+    List, Optional, Dict, Tuple, Any, TYPE_CHECKING, Sequence, Iterator, Callable, TypeVar, Generic
 )
 
 from cuda.tile._ir.aggregate_value import AggregateValue
-from cuda.tile._ir.type import Type, InvalidType
+from cuda.tile._ir.type import Type, InvalidType, LooselyTypedScalar
 from cuda.tile._exception import (
     TileTypeError, Loc, TileInternalError
 )
@@ -156,22 +156,25 @@ class PhiState:
         dst.set_loose_type(self.loose_ty)
 
 
-class Var:
+T = TypeVar("T", bound=Type, covariant=True)
+
+
+class Var(Generic[T]):
     def __init__(self, name: str, loc: Loc, ctx: IRContext):
         self.name = name
         self.loc = loc
         self.ctx = ctx
 
-    def try_get_type(self) -> Optional[Type]:
+    def try_get_type(self) -> Optional[T]:
         return self.ctx.typemap.get(self.name)
 
-    def get_type(self) -> Type:
+    def get_type(self) -> T:
         ty = self.get_type_allow_invalid()
         if isinstance(ty, InvalidType):
             raise TileTypeError(ty.error_message, ty.loc)
         return ty
 
-    def get_type_allow_invalid(self) -> Type:
+    def get_type_allow_invalid(self) -> T | InvalidType:
         try:
             return self.ctx.typemap[self.name]
         except KeyError:
@@ -193,7 +196,7 @@ class Var:
         assert self.name not in self.ctx.constants
         self.ctx.constants[self.name] = value
 
-    def get_loose_type(self) -> Type:
+    def get_loose_type(self) -> T | LooselyTypedScalar:
         ty = self.ctx._loose_typemap.get(self.name, None)
         if ty is not None:
             return ty
@@ -202,7 +205,7 @@ class Var:
             raise TileTypeError(ty.error_message, ty.loc)
         return ty
 
-    def get_loose_type_allow_invalid(self) -> Type:
+    def get_loose_type_allow_invalid(self) -> T | LooselyTypedScalar | InvalidType:
         ty = self.ctx._loose_typemap.get(self.name, None)
         return self.get_type_allow_invalid() if ty is None else ty
 
@@ -284,10 +287,14 @@ class Mapper:
         self._var_map[old_var.name] = new_var
 
 
-def add_operation(op_class,
-                  result_ty: Type | None | Tuple[Type | None, ...],
-                  **attrs_and_operands) -> Var | Tuple[Var, ...]:
+def add_operation(op_class, result_ty: T, **attrs_and_operands) -> Var[T]:
     return Builder.get_current().add_operation(op_class, result_ty, attrs_and_operands)
+
+
+def add_operation_variadic(op_class,
+                           result_types: tuple[T, ...],
+                           **attrs_and_operands) -> tuple[Var, ...]:
+    return Builder.get_current().add_operation_variadic(op_class, result_types, attrs_and_operands)
 
 
 def make_aggregate(value: AggregateValue,
@@ -339,9 +346,23 @@ class Builder:
         self.block_restriction = block_restriction
 
     def add_operation(self, op_class,
-                      result_ty: Type | None | Tuple[Type | None, ...],
+                      result_ty: T,
                       attrs_and_operands: Mapping,
-                      result: Var | Sequence[Var] | None = None) -> Var | Tuple[Var, ...]:
+                      result: Var | None = None) -> Var[T]:
+        assert isinstance(result_ty, Type)
+        return self._add_operation(op_class, result_ty, attrs_and_operands, result)
+
+    def add_operation_variadic(self, op_class,
+                               result_types: tuple[Type, ...],
+                               attrs_and_operands: Mapping,
+                               result: Var | None = None) -> tuple[Var, ...]:
+        assert isinstance(result_types, tuple)
+        return self._add_operation(op_class, result_types, attrs_and_operands, result)
+
+    def _add_operation(self, op_class,
+                       result_ty: Type | None | Tuple[Type | None, ...],
+                       attrs_and_operands: Mapping,
+                       result: Var | Sequence[Var] | None = None) -> Var | Tuple[Var, ...]:
         if self.block_restriction is not None:
             self.block_restriction.validate_operation(op_class)
 

@@ -25,7 +25,7 @@ from cuda.tile._exception import TileInternalError, TileTypeError, TileSyntaxErr
 from cuda.tile._ir.ir import (
     Operation, Var, Loc, Block, add_operation, Builder, enter_nested_block, nested_block,
     PhiState, LoopVarState, make_aggregate, ConstantState, MemoryEffect, attribute, operand,
-    BlockRestriction,
+    BlockRestriction, add_operation_variadic,
 )
 from .type import (
     var2sym, TupleValue, BoundMethodValue, ArrayValue, DataclassValue, DataclassInfo,
@@ -288,12 +288,12 @@ async def loop_impl(body: hir.Block, iterable: Var):
         range_val = iterable.get_aggregate()
         assert isinstance(range_val, RangeValue)
         start, stop, step = range_val.start, range_val.stop, range_val.step
-    flat_result_vars = add_operation(Loop, flat_var_types,
-                                     start=start,
-                                     stop=stop,
-                                     step=step,
-                                     initial_values=flat_initial_values,
-                                     body=new_body)
+    flat_result_vars = add_operation_variadic(Loop, flat_var_types,
+                                              start=start,
+                                              stop=stop,
+                                              step=step,
+                                              initial_values=flat_initial_values,
+                                              body=new_body)
 
     result_types = tuple(s.result_phi.ty for s, is_valid in zip(var_states, mask, strict=True)
                          if is_valid)
@@ -435,8 +435,8 @@ async def if_else_impl(cond: Var, then_block: hir.Block, else_block: hir.Block) 
         with enter_nested_block(else_loc) as new_else_block, scope.change_if_else_info(info), \
                 scope.local.enter_branch():
             end_branch(None)
-        add_operation(IfElse, (),
-                      cond=cond, then_block=new_then_block, else_block=new_else_block)
+        add_operation_variadic(IfElse, (),
+                               cond=cond, then_block=new_then_block, else_block=new_else_block)
         return await _flatten_branch(else_block)
 
     # Convert the "else" branch from HIR to IR
@@ -464,8 +464,8 @@ async def if_else_impl(cond: Var, then_block: hir.Block, else_block: hir.Block) 
 
     # Generate an IfElse op
     flat_types = flatten_aggregate_types(valid_result_types)
-    flat_results = add_operation(IfElse, flat_types,
-                                 cond=cond, then_block=new_then_block, else_block=new_else_block)
+    flat_results = add_operation_variadic(IfElse, flat_types, cond=cond,
+                                          then_block=new_then_block, else_block=new_else_block)
     valid_results = unflatten_aggregates(flat_results, valid_result_types, valid_result_types)
 
     # Finalize the constant/loose type information
@@ -527,7 +527,7 @@ def continue_():
         ctx_state.exit_callback()
 
     builder = Builder.get_current()
-    builder.add_operation(Continue, (), dict(values=()))
+    builder.add_operation_variadic(Continue, (), dict(values=()))
     op = builder.ops[-1]
     next_values = tuple(scope.local.get(local_idx, builder.loc) for local_idx in info.stored_locals)
     info.jumps.append(JumpInfo(op, next_values))
@@ -561,7 +561,7 @@ def break_():
         ctx_state.exit_callback()
 
     builder = Builder.get_current()
-    builder.add_operation(Break, (), dict(values=()))
+    builder.add_operation_variadic(Break, (), dict(values=()))
     op = builder.ops[-1]
     outputs = tuple(scope.local.get(local_idx, builder.loc) for local_idx in info.stored_locals)
     info.jumps.append(JumpInfo(op, outputs))
@@ -591,7 +591,7 @@ def end_branch(output: Var | None):
         op = None
     else:
         builder = Builder.get_current()
-        builder.add_operation(EndBranch, (), dict(outputs=()))
+        builder.add_operation_variadic(EndBranch, (), dict(outputs=()))
         op = builder.ops[-1]
         outputs += tuple(scope.local.get(local_idx, builder.loc)
                          for local_idx in info.stored_locals)
@@ -614,7 +614,7 @@ class Return(Operation, opcode="return", terminator=True):
 def return_(value: Var | None):
     if value is not None and value.get_type() is not NONE:
         raise TileTypeError("Tile kernels cannot return values")
-    add_operation(Return, ())
+    add_operation_variadic(Return, ())
 
 
 def _check_value_numeric_type(value: Any, dtype: DType) -> None:
@@ -753,7 +753,7 @@ class RawComparisonOperation(Operation, opcode="raw_cmp"):
         return encode_comparison(ctx.builder, self.fn, lhs, rhs, dtype, result_typeid)
 
 
-def raw_comparison(fn: str, x: Var, y: Var) -> Var:
+def raw_comparison(fn: str, x: Var[TileTy], y: Var[TileTy]) -> Var[TileTy]:
     if fn == 'is':
         raise TileTypeError("\"is\" only supports constants")
 
@@ -1439,7 +1439,7 @@ def getitem_list_impl(object: Var, key: Var) -> Var:
         raise TileTypeError(f"Indexing a list of {list_ty.item_type} is not implemented")
 
     flat_types = tuple(item_ty.flatten_aggregate())
-    flat_results = add_operation(GetArrayListItem, flat_types, x=object, index=key)
+    flat_results = add_operation_variadic(GetArrayListItem, flat_types, x=object, index=key)
     [ret] = unflatten_aggregates(flat_results, (item_ty,), (item_ty,))
     return ret
 
@@ -2525,10 +2525,10 @@ def _tile_load_impl_inner(array: Var, index_items: tuple[Var, ...], shape: Seque
     view = _materialize_tiled_view(array, broadcasted_shape, order, padding_mode,
                                    traversal_steps)
     res_ty = TileTy(array_ty.dtype, broadcasted_shape)
-    result, _token = add_operation(TileLoad, (res_ty, TokenTy()),
-                                   view=view, index=index_items, latency=latency,
-                                   allow_tma=allow_tma, memory_order=memory_order,
-                                   memory_scope=memory_scope)
+    result, _token = add_operation_variadic(TileLoad, (res_ty, TokenTy()),
+                                            view=view, index=index_items, latency=latency,
+                                            allow_tma=allow_tma, memory_order=memory_order,
+                                            memory_scope=memory_scope)
     return reshape(result, shape)
 
 
@@ -2594,17 +2594,7 @@ def raw_array_memory_store_offset_impl(self: Var, offset: Var, value: Var,
 
     latency_val = require_optional_constant_int(latency)
     _check_load_store_hints(latency_val)
-    [_token] = store_pointer(pointer, value, final_mask, latency_val)
-
-
-def tile_load(array: Var, index: tuple[Var, ...], shape: Sequence[int], order: Sequence[int],
-              padding_mode: PaddingMode, latency: Optional[int],
-              allow_tma: Optional[bool]) -> tuple[Var, Var]:
-    res_ty = TileTy(array.get_type().dtype, shape)
-    return add_operation(TileLoad, (res_ty, TokenTy()),
-                         array=array, index=index, order=tuple(order),
-                         padding_mode=padding_mode, latency=latency,
-                         allow_tma=allow_tma)
+    store_pointer(pointer, value, final_mask, latency_val)
 
 
 @impl(ct.load)
@@ -2748,9 +2738,9 @@ def _tile_store_impl_inner(array: Var, index_items: tuple[Var, ...], tile: Var,
     tile = reshape(tile, broadcasted_shape)
     view = _materialize_tiled_view(array, broadcasted_shape, order, PaddingMode.UNDETERMINED,
                                    traversal_steps)
-    [_token] = add_operation(TileStore, (TokenTy(),), view=view, index=index_items, tile=tile,
-                             latency=latency, allow_tma=allow_tma, memory_order=memory_order,
-                             memory_scope=memory_scope)
+    add_operation(TileStore, TokenTy(), view=view, index=index_items, tile=tile,
+                  latency=latency, allow_tma=allow_tma, memory_order=memory_order,
+                  memory_scope=memory_scope)
 
 
 @impl(ct.store)
@@ -2798,15 +2788,16 @@ class LoadPointer(Operation, opcode="load_pointer", memory_effect=MemoryEffect.L
 
 
 def load_pointer(pointer: Var, mask: Optional[Var], padding_value: Optional[Var],
-                 latency: Optional[int]) -> tuple[Var, Var]:
+                 latency: Optional[int]) -> tuple[Var[TileTy], Var[TokenTy]]:
     pointer_ty = pointer.get_type()
     shape = pointer_ty.shape
     info = PointerInfo(pointer_ty.dtype)
     dtype = info.pointee_dtype
     result_ty = TileTy(dtype, shape)
-    return add_operation(LoadPointer, (result_ty, TokenTy()),
-                         pointer=pointer, mask=mask, padding_value=padding_value,
-                         latency=latency)
+    res, tok = add_operation_variadic(LoadPointer, (result_ty, TokenTy()),
+                                      pointer=pointer, mask=mask, padding_value=padding_value,
+                                      latency=latency)
+    return res, tok
 
 
 @dataclass(eq=False)
@@ -2832,8 +2823,9 @@ class StorePointer(Operation, opcode="store_pointer", memory_effect=MemoryEffect
         )
 
 
-def store_pointer(pointer: Var, value: Var, mask: Optional[Var], latency: Optional[int]) -> Var:
-    return add_operation(StorePointer, (TokenTy(),),
+def store_pointer(pointer: Var[TileTy], value: Var[TileTy], mask: Optional[Var],
+                  latency: Optional[int]) -> Var[TokenTy]:
+    return add_operation(StorePointer, TokenTy(),
                          pointer=pointer, value=value, mask=mask, latency=latency)
 
 
@@ -2904,7 +2896,7 @@ def scatter_impl(array: Var, indices: Var, value: Var, mask: Var,
     latency = require_optional_constant_int(latency)
     _check_load_store_hints(latency)
 
-    [_token] = store_pointer(pointer, value, final_mask, latency)
+    store_pointer(pointer, value, final_mask, latency)
 
 
 def _get_scatter_value(value: Var, pointer_shape: Tuple[int, ...], array_dtype: DType,
@@ -3106,10 +3098,10 @@ def _atomic_cas_core(array_dtype: DType,
     validate_memory_order_and_scope(memory_order, memory_scope, TileAtomicCAS)
 
     result_ty = TileTy(array_dtype, pointer_shape)
-    result, _token = add_operation(TileAtomicCAS, (result_ty, TokenTy()),
-                                   pointer=pointer, expected=expected, desired=desired,
-                                   mask=mask, memory_order=memory_order,
-                                   memory_scope=memory_scope)
+    result, _token = add_operation_variadic(TileAtomicCAS, (result_ty, TokenTy()),
+                                            pointer=pointer, expected=expected, desired=desired,
+                                            mask=mask, memory_order=memory_order,
+                                            memory_scope=memory_scope)
     return result
 
 
@@ -3232,10 +3224,10 @@ def _atomic_rmw_core(int_mode: Optional[AtomicRMWMode],
     validate_memory_order_and_scope(memory_order, memory_scope, TileAtomicRMW)
 
     result_ty = TileTy(array_dtype, pointer_shape)
-    result, _token = add_operation(TileAtomicRMW, (result_ty, TokenTy()),
-                                   mode=mode, pointer=pointer, update=update,
-                                   mask=mask, memory_order=memory_order,
-                                   memory_scope=memory_scope)
+    result, _token = add_operation_variadic(TileAtomicRMW, (result_ty, TokenTy()),
+                                            mode=mode, pointer=pointer, update=update,
+                                            mask=mask, memory_order=memory_order,
+                                            memory_scope=memory_scope)
     return result
 
 
@@ -3385,7 +3377,7 @@ def num_tiles(array: Var, shape: Sequence[int], order: Sequence[int],
     view = _materialize_tiled_view(array, broadcasted_shape, order, PaddingMode.UNDETERMINED,
                                    traversal_steps)
     result_tys = tuple(TileTy(datatype.default_int_type) for _s in broadcasted_shape)
-    return add_operation(NumTiles, result_tys, view=view)
+    return add_operation_variadic(NumTiles, result_tys, view=view)
 
 
 @impl(ct.num_tiles)
@@ -3822,7 +3814,7 @@ async def _get_reduce_scan_body_block(
             assert body_res_ty.shape == ()
             assert body_res_ty.dtype == x.get_type().dtype
 
-        add_operation(EndBranch, (), outputs=body_results)
+        add_operation_variadic(EndBranch, (), outputs=body_results)
 
     return body_block
 
@@ -3839,8 +3831,8 @@ async def raw_reduce(xs: tuple[Var, ...], identities: tuple[bool | int | float],
 
     body_block = await _get_reduce_scan_body_block(xs, body, op_name="reduction")
 
-    return add_operation(TileReduce, result_types, xs=xs, identities=identities, axis=axis,
-                         body=body_block)
+    return add_operation_variadic(TileReduce, result_types, xs=xs, identities=identities, axis=axis,
+                                  body=body_block)
 
 
 async def reduce(xs: tuple[Var, ...], identities: tuple[bool | int | float, ...],
@@ -4180,8 +4172,8 @@ async def raw_scan(xs: tuple[Var, ...], identities: tuple[bool | int | float, ..
     result_types = tuple(TileTy(x.get_type().dtype, input_shape) for x in xs)
     assert len(xs) == len(identities)
     body_block = await _get_reduce_scan_body_block(xs, body, op_name="scan")
-    return add_operation(TileScan, result_types, xs=xs, identities=identities, axis=axis,
-                         reverse=reverse, body=body_block)
+    return add_operation_variadic(TileScan, result_types, xs=xs, identities=identities, axis=axis,
+                                  reverse=reverse, body=body_block)
 
 
 async def scan_simple(fn: str, x: Var, axis: int, reverse: bool,
@@ -4423,7 +4415,7 @@ def printf_impl(format: Var, args: Tuple[Var, ...]) -> None:
     format_str = require_constant_str(format)
     arg_types = tuple(require_tile_type(x) for x in args)
     parsed_format = PrintfValidator.parse_format(format_str, arg_types)
-    add_operation(TilePrintf, (), format=parsed_format, args=args)
+    add_operation_variadic(TilePrintf, (), format=parsed_format, args=args)
 
 
 @impl(ct.print)
@@ -4492,7 +4484,7 @@ def print_impl(args: Tuple[Var, ...], sep: Var, end: Var) -> None:
     format_parts.append(PrintfValidator.escape_str(require_constant_str(end)))
 
     final_format = ''.join(format_parts)
-    add_operation(TilePrintf, (), format=final_format, args=tuple(leaf_vars))
+    add_operation_variadic(TilePrintf, (), format=final_format, args=tuple(leaf_vars))
 
 
 @dataclass(eq=False)
@@ -4513,7 +4505,7 @@ def assert_impl(cond: Var, message: Var) -> None:
         raise TileTypeError(f"Type of condition must be bool, got {ty}")
     msg_str = require_optional_constant_str(message)
     msg_str = "" if msg_str is None else msg_str
-    add_operation(TileAssert, (), cond=cond, message=msg_str)
+    add_operation_variadic(TileAssert, (), cond=cond, message=msg_str)
 
 
 @dataclass(eq=False)
@@ -4563,8 +4555,9 @@ class TileAsType(Operation, opcode="tile_astype"):
         return convert_dtype(ctx, value, ctx.typeof(self.x), ctx.typeof(self.result_var))
 
 
-def astype(x: Var, dtype: DType) -> Var:
-    x_ty = require_tile_type(x)
+def astype(x: Var[TileTy], dtype: DType) -> Var[TileTy]:
+    x_ty = x.get_type()
+    assert isinstance(x_ty, TileTy)
     if x_ty.dtype == dtype:
         return x
 
@@ -4578,6 +4571,7 @@ def astype(x: Var, dtype: DType) -> Var:
 
 @impl(ct.astype)
 def astype_impl(x: Var, dtype: Var) -> Var:
+    require_tile_type(x)
     dtype = require_dtype_spec(dtype)
     return astype(x, dtype)
 
@@ -4737,7 +4731,7 @@ class TileReshape(Operation, opcode="tile_reshape"):
         return bc.encode_ReshapeOp(ctx.builder, res_type_id, x_value)
 
 
-def reshape(x: Var, new_shape: Tuple[int, ...]) -> Var:
+def reshape(x: Var, new_shape: Sequence[int]) -> Var:
     x_ty = require_tile_type(x)
     x_shape = x_ty.shape
     numel = math.prod(x_shape)
@@ -5050,7 +5044,7 @@ def tiled_view_atomic_store_rmw_impl(int_mode: Optional[AtomicRMWMode],
     order = get_default_order(view_ty.ndim)
     view = _materialize_tiled_view(array, broadcasted_shape, order, PaddingMode.UNDETERMINED,
                                    view_ty.traversal_steps)
-    add_operation(TileAtomicRedView, (TokenTy(),),
+    add_operation(TileAtomicRedView, TokenTy(),
                   mode=mode, memory_order=memory_order, memory_scope=memory_scope,
                   view=view, index=index_items, update=update)
 
@@ -5145,9 +5139,10 @@ def load_advanced_impl(array: Var, indices: Var, padding_mode: Var,
     _check_load_store_hints(latency_val, allow_tma_val)
 
     view = make_gather_scatter_view(array, tile_shape, sparse_dim, padding_mode_val)
-    result, _token = add_operation(TileLoad, (TileTy(array_ty.dtype, tile_shape), TokenTy()),
-                                   view=view, index=gs_index,
-                                   latency=latency_val, allow_tma=allow_tma_val)
+    result, _token = add_operation_variadic(TileLoad,
+                                            (TileTy(array_ty.dtype, tile_shape), TokenTy()),
+                                            view=view, index=gs_index,
+                                            latency=latency_val, allow_tma=allow_tma_val)
     return result
 
 
@@ -5172,9 +5167,9 @@ def store_advanced_impl(array: Var, indices: Var, tile: Var,
     _check_load_store_hints(latency_val, allow_tma_val)
 
     view = make_gather_scatter_view(array, tile_shape, sparse_dim, PaddingMode.UNDETERMINED)
-    [_token] = add_operation(TileStore, (TokenTy(),),
-                             view=view, index=gs_index, tile=tile,
-                             latency=latency_val, allow_tma=allow_tma_val)
+    add_operation(TileStore, TokenTy(),
+                  view=view, index=gs_index, tile=tile,
+                  latency=latency_val, allow_tma=allow_tma_val)
 
 
 def store_var(local_idx: int, value: Var, loc: Loc | None = None):

@@ -12,7 +12,7 @@ from cuda.tile import DType, TileValueError, TileTypeError
 from cuda.tile._ir.op_impl import require_integer_0d_tile_type, require_scalar_pointer_type, \
     require_scalar_type, require_vector_type, require_any_vector_type, \
     require_any_scalar_or_vector_type
-from cuda.tile._ir.ir import Var, add_operation
+from cuda.tile._ir.ir import Var, add_operation_variadic
 from cuda.tile._ir.ops import implicit_cast, build_tuple
 from cuda.tile import _datatype as datatype
 from cuda.tile._memory_model import MemorySpace
@@ -47,15 +47,12 @@ def _raw_nvvm_intrinsic_impl(stub, *args: Var):
     if stub_sig.return_annotation is None:
         ret_type_hints = []
         def make_retval(_): return None
-        result_type_tuple = True
     elif typing.get_origin(stub_sig.return_annotation) is tuple:
         ret_type_hints = typing.get_args(stub_sig.return_annotation)
         def make_retval(result_vars): return build_tuple(result_vars)
-        result_type_tuple = True
     else:
         ret_type_hints = [stub_sig.return_annotation]
-        def make_retval(result_var): return result_var
-        result_type_tuple = False
+        def make_retval(result_vars): return result_vars[0]
 
     result_types = []
     for h in ret_type_hints:
@@ -64,9 +61,9 @@ def _raw_nvvm_intrinsic_impl(stub, *args: Var):
         shape = () if ann.vector_length is None else (ann.vector_length,)
         result_types.append(TileTy(ann.dtype, shape))
 
-    return make_retval(add_operation(
+    return make_retval(add_operation_variadic(
         RawNVVMIntrinsic,
-        tuple(result_types) if result_type_tuple else result_types[0],
+        tuple(result_types),
         intrinsic="llvm.nvvm." + name,
         operands_=tuple(prepared_operands),
     ))

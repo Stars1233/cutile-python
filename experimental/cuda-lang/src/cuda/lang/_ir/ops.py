@@ -62,7 +62,7 @@ from cuda.tile._ir.ops import (
     Unary, implicit_cast, address_space_cast, reinterpret_pointer, AddrSpaceCast,
     ReinterpretPointer,
 )
-from cuda.tile._ir.ir import MemoryEffect, make_aggregate
+from cuda.tile._ir.ir import MemoryEffect, make_aggregate, add_operation_variadic
 from cuda.lang._exception import TileCompilerError, TileTypeError
 import cuda.lang._datatype as datatype
 from cuda.tile._datatype import (
@@ -324,14 +324,13 @@ def array_getitem(object: Var, key: Var) -> Var:
     array_ty = require_array_type(object)
     indices = require_array_indices(object, key)
     pointer = _array_get_element_pointer(object, indices)
-    [result] = add_operation(
+    return add_operation(
         LoadPointer,
-        (TileTy(array_ty.dtype),),
+        TileTy(array_ty.dtype),
         pointer=pointer,
         alignment=None,
         volatile=False,
     )
-    return result
 
 
 @impl(operator.setitem, overload=(ArrayTy, WILDCARD, WILDCARD))
@@ -341,7 +340,7 @@ def array_setitem(object: Var, key: Var, value: Var):
     value = astype(value, array_ty.dtype)
     indices = require_array_indices(object, key)
     pointer = _array_get_element_pointer(object, indices)
-    add_operation(
+    add_operation_variadic(
         StorePointer,
         (),
         pointer=pointer,
@@ -485,15 +484,14 @@ def _pointer_load(
         result_ty = TileTy(pointee_dtype)
     else:
         result_ty = make_vector_ty(pointee_dtype, count)
-    [result] = add_operation(
+    return add_operation(
         LoadPointer,
-        (result_ty,),
+        result_ty,
         pointer=pointer,
         volatile=volatile,
         alignment=alignment,
         ordering=ordering,
     )
-    return result
 
 
 def _pointer_store(
@@ -514,7 +512,7 @@ def _pointer_store(
     value = implicit_cast(value, pointee_dtype,
                           "Stored value type is incompatible with pointer type")
 
-    add_operation(
+    add_operation_variadic(
         StorePointer,
         (),
         pointer=pointer,
@@ -669,8 +667,8 @@ class Branch(Operation, opcode="br", terminator=True):
         return f"{self.op} ^{self.target._name}({', '.join(format_var(arg) for arg in self.args)})"
 
 
-def branch(target: Block, args: tuple[Var, ...]) -> Branch:
-    return add_operation(Branch, (), target=target, args=args)
+def branch(target: Block, args: tuple[Var, ...]) -> None:
+    add_operation_variadic(Branch, (), target=target, args=args)
 
 
 @dataclass(eq=False)
@@ -699,8 +697,8 @@ def cond_branch(
     false_args: tuple[Var, ...],
     true_target: Block,
     false_target: Block,
-) -> CondBranch:
-    return add_operation(
+) -> None:
+    add_operation_variadic(
         CondBranch,
         (),
         cond=cond,
@@ -795,7 +793,7 @@ def enter_context_local_array_impl(manager: Var):
     )
 
     def exit_callback():
-        add_operation(DeallocLocalMemory, (), ptr=base_ptr)
+        add_operation_variadic(DeallocLocalMemory, (), ptr=base_ptr)
 
     mgr_ty.state.exit_callback = exit_callback
 
@@ -912,8 +910,8 @@ class SyncThreads(Operation, opcode="syncthreads", memory_effect=MemoryEffect.ST
 
 
 @impl(stub.syncthreads)
-def syncthreads_impl() -> Operation:
-    return add_operation(SyncThreads, None,)
+def syncthreads_impl() -> None:
+    add_operation_variadic(SyncThreads, (),)
 
 
 @impl(stub.elect_sync)
@@ -921,10 +919,10 @@ def elect_sync_impl(membermask) -> Var:
     mask = require_constant_int(membermask)
     mask = strictly_typed_const(mask & 0xffffffff, I32_TY)
 
-    _, is_elected = add_operation(RawNVVMIntrinsic,
-                                  (I32_TY, BOOL_TY),
-                                  intrinsic="llvm.nvvm.elect.sync",
-                                  operands_=(mask,))
+    _, is_elected = add_operation_variadic(RawNVVMIntrinsic,
+                                           (I32_TY, BOOL_TY),
+                                           intrinsic="llvm.nvvm.elect.sync",
+                                           operands_=(mask,))
     return is_elected
 
 
@@ -1110,12 +1108,12 @@ def require_inline_ptx_constraint_pairs(ptx_code: str, constraint_pairs: tuple) 
 
 
 @impl(stub.inline_ptx)
-def inline_ptx_impl(ptx_code: Var, constraint_pairs: tuple) -> tuple:
+def inline_ptx_impl(ptx_code: Var, constraint_pairs: tuple) -> Var[TupleTy]:
     ptx_code = require_constant_str(ptx_code)
     mlir_ptx_code, ro_args, rw_args, wo_args = require_inline_ptx_constraint_pairs(
         ptx_code, constraint_pairs)
     result_types = tuple(TileTy(dtype) for dtype in wo_args)
-    results = add_operation(
+    results = add_operation_variadic(
         InlinePTX,
         result_types,
         ptx_code=mlir_ptx_code,
@@ -1307,7 +1305,7 @@ def clusterlaunchcontrol_try_cancel_impl(addr: Var, mbar: Var, multicast: Var) -
         intrinsic += ".multicast"
     intrinsic += ".shared"
 
-    add_operation(
+    add_operation_variadic(
         RawNVVMIntrinsic,
         (),
         intrinsic=intrinsic,
@@ -1357,21 +1355,26 @@ class ForeignFunction(Operation, opcode="foreign_function", memory_effect=Memory
 
 
 @impl(stub.foreign_function._call_foreign_function)
-def _call_foreign_function_impl(func: Var, return_type: Var, parameters: Var) -> Operation:
+def _call_foreign_function_impl(func: Var, return_type: Var, parameters: Var):
     function_name = require_constant_str(func)
-    if return_type.is_constant() and return_type.get_constant() is None:
-        result_type = tuple()
-    else:
-        result_type = require_constant_result_dtype(return_type)
     require_tuple_type(parameters)
     parameters = parameters.get_aggregate().items
-    result = add_operation(
-        ForeignFunction,
-        result_type,
-        function_name=function_name,
-        operands_=parameters,
-    )
-    return result if result_type else None
+    if return_type.is_constant() and return_type.get_constant() is None:
+        add_operation_variadic(
+            ForeignFunction,
+            (),
+            function_name=function_name,
+            operands_=parameters,
+        )
+        return None
+    else:
+        result_type = require_constant_result_dtype(return_type)
+        return add_operation(
+            ForeignFunction,
+            result_type,
+            function_name=function_name,
+            operands_=parameters,
+        )
 
 
 def require_mbarrier_ptr(
@@ -1397,7 +1400,7 @@ def require_mbarrier_ptr(
 def mbarrier_init_impl(mbar: Var, participants: Var) -> Var:
     require_mbarrier_ptr(mbar)
     participants = astype(participants, datatype.int32)
-    add_operation(
+    add_operation_variadic(
         RawNVVMIntrinsic,
         tuple(),
         intrinsic="llvm.nvvm.mbarrier.init.shared",
@@ -1408,7 +1411,7 @@ def mbarrier_init_impl(mbar: Var, participants: Var) -> Var:
 @impl(stub.mbarrier_invalidate)
 def mbarrier_invalidate_impl(mbar: Var) -> Var:
     require_mbarrier_ptr(mbar)
-    add_operation(
+    add_operation_variadic(
         RawNVVMIntrinsic,
         tuple(),
         intrinsic="llvm.nvvm.mbarrier.inval.shared",
@@ -1470,7 +1473,7 @@ def mbarrier_arrive_impl(
     intrinsic += _mbar_space_scope_suffix(scope, space)
 
     return_type = (TileTy(datatype.uint64),) if space is MemorySpace.SHARED else ()
-    results = add_operation(
+    results = add_operation_variadic(
         RawNVVMIntrinsic,
         return_type,
         intrinsic=intrinsic,
@@ -1501,7 +1504,7 @@ def mbarrier_arrive_expect_tx_impl(
     intrinsic += _mbar_space_scope_suffix(scope, space)
 
     return_type = (TileTy(datatype.uint64),) if space is MemorySpace.SHARED else ()
-    results = add_operation(
+    results = add_operation_variadic(
         RawNVVMIntrinsic,
         return_type,
         intrinsic=intrinsic,
@@ -1511,13 +1514,13 @@ def mbarrier_arrive_expect_tx_impl(
 
 
 @impl(stub.mbarrier_expect_tx)
-def mbarrier_expect_tx_impl(mbar: Var, bytes: Var, scope: Var) -> Var:
+def mbarrier_expect_tx_impl(mbar: Var, bytes: Var, scope: Var):
     space = require_mbarrier_ptr(mbar).memory_space
     bytes = astype(bytes, datatype.int32)
     scope = require_constant_enum(scope, MbarrierScope)
     intrinsic = "llvm.nvvm.mbarrier.expect.tx"
     intrinsic += _mbar_space_scope_suffix(scope, space)
-    add_operation(
+    add_operation_variadic(
         RawNVVMIntrinsic,
         (),
         intrinsic=intrinsic,
@@ -1532,7 +1535,7 @@ def mbarrier_complete_tx_impl(mbar: Var, bytes: Var, scope: Var) -> Var:
     scope = require_constant_enum(scope, MbarrierScope)
     intrinsic = "llvm.nvvm.mbarrier.complete.tx"
     intrinsic += _mbar_space_scope_suffix(scope, space)
-    add_operation(
+    add_operation_variadic(
         RawNVVMIntrinsic,
         (),
         intrinsic=intrinsic,
@@ -1552,13 +1555,12 @@ def mbarrier_test_wait_impl(
     if ordering is MemoryOrder.RELAXED:
         intrinsic += ".relaxed"
     intrinsic += _mbar_space_scope_suffix(scope, MemorySpace.SHARED)
-    results = add_operation(
+    return add_operation(
         RawNVVMIntrinsic,
-        (TileTy(datatype.bool_),),
+        TileTy(datatype.bool_),
         intrinsic=intrinsic,
         operands_=(mbar, state),
     )
-    return results[0]
 
 
 @impl(stub.mbarrier_test_wait_parity)
@@ -1573,13 +1575,12 @@ def mbarrier_test_wait_parity_impl(
     if ordering is MemoryOrder.RELAXED:
         intrinsic += ".relaxed"
     intrinsic += _mbar_space_scope_suffix(scope, MemorySpace.SHARED)
-    results = add_operation(
+    return add_operation(
         RawNVVMIntrinsic,
-        (TileTy(datatype.bool_),),
+        TileTy(datatype.bool_),
         intrinsic=intrinsic,
         operands_=(mbar, parity),
     )
-    return results[0]
 
 
 def _is_none(var: Var):
@@ -1607,13 +1608,12 @@ def mbarrier_try_wait_impl(
     if ordering is MemoryOrder.RELAXED:
         intrinsic += ".relaxed"
     intrinsic += _mbar_space_scope_suffix(scope, MemorySpace.SHARED)
-    results = add_operation(
+    return add_operation(
         RawNVVMIntrinsic,
-        (TileTy(datatype.bool_),),
+        TileTy(datatype.bool_),
         intrinsic=intrinsic,
         operands_=args,
     )
-    return results[0]
 
 
 @impl(stub.mbarrier_try_wait_parity)
@@ -1637,13 +1637,12 @@ def mbarrier_try_wait_parity_impl(
     if ordering is MemoryOrder.RELAXED:
         intrinsic += ".relaxed"
     intrinsic += _mbar_space_scope_suffix(scope, MemorySpace.SHARED)
-    results = add_operation(
+    return add_operation(
         RawNVVMIntrinsic,
-        (TileTy(datatype.bool_),),
+        TileTy(datatype.bool_),
         intrinsic=intrinsic,
         operands_=args,
     )
-    return results[0]
 
 
 @impl(stub.map_shared_to_cluster)
@@ -1660,13 +1659,12 @@ def map_shared_to_cluster_impl(ptr: Var, rank: Var):
     else:
         result_scalar_ty = pointer_dtype(info.pointee_dtype, MemorySpace.SHARED_CLUSTER)
     result_ty = TileTy(result_scalar_ty)
-    results = add_operation(
+    return add_operation(
         RawNVVMIntrinsic,
-        (result_ty,),
+        result_ty,
         intrinsic="llvm.nvvm.mapa.shared.cluster",
         operands_=(ptr, rank),
     )
-    return results[0]
 
 
 __all__ = (
