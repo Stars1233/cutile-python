@@ -36,9 +36,9 @@ def dtype(request):
     return request.param
 
 
-@pytest.mark.parametrize("use_gather", [False, True])
+@pytest.mark.parametrize("use_gather", [False, True], ids=["load", "gather"])
 @pytest.mark.benchmark(group='vec_add')
-def bench_vec_add(shape, dtype, backend, use_gather, benchmark):
+def bench_vec_add(shape, dtype, use_gather, backend, benchmark):
     if len(shape) == 1:
         n = shape[0]
         a = torch.randn((n,), dtype=dtype, device="cuda")

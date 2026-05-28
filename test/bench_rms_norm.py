@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import benchmark_tuning
 from conftest import dtype_id, shape_id, get_tileiras_version
 
 import pytest
@@ -12,15 +13,13 @@ from cuda.tile._bytecode import BytecodeVersion
 import itertools
 from math import ceil
 from util import estimate_bench_iter
-import platform
 from kernels.rms_norm import (
     rms_norm_kernel, rms_norm_kernel_gather, rms_norm_kernel_static_persistent
 )
-from functools import partial
-from types import SimpleNamespace
+from functools import cache
 
 
-timeout = 1  # sec
+timeout = 2  # sec
 
 
 def get_shape_params():
@@ -39,8 +38,12 @@ def dtype(request):
     return request.param
 
 
+@pytest.fixture(params=['persistent', 'gather', 'regular'])
+def algo(request):
+    return request.param
+
+
 @pytest.mark.benchmark(group='rms_norm')
-@pytest.mark.parametrize('algo', ['persistent', 'gather', 'regular'])
 def bench_rms_norm(shape, dtype, algo, backend, benchmark):
     x_shape = shape
     w_shape = (shape[1], )
@@ -50,36 +53,31 @@ def bench_rms_norm(shape, dtype, algo, backend, benchmark):
     eps = 1e-5
 
     if algo == 'persistent':
-        if platform.machine().lower().startswith(('arm', 'aarch64')):
-            pytest.xfail("autotune static persistent hangs on arm64")
-        if get_tileiras_version() == BytecodeVersion.V_13_2:
-            pytest.xfail("autotune static persistent hangs on tileiras 13.2")
-
-    if algo == 'persistent':
         static_persistent, gather = True, False
     elif algo == 'gather':
         static_persistent, gather = False, True
     else:
         static_persistent, gather = False, False
 
-    if algo == 'persistent' and shape[1] > 1024:
-        pytest.skip("No valid configuration")
+    if algo == 'persistent' and get_tileiras_version() < BytecodeVersion.V_13_3:
+        pytest.skip("earlier version of tileiras has bug compiling this kernel")
 
-    o = backend(x, weight, eps, static_persistent, gather)
-    ref = ref_rms_norm(x, weight, eps)
-    torch.testing.assert_close(o, ref, atol=1e-2, rtol=5e-2)
-    torch.cuda.synchronize()
+    with ct.compiler_timeout(5):
+        o = backend(x, weight, eps, static_persistent, gather)
+        ref = ref_rms_norm(x, weight, eps)
+        torch.testing.assert_close(o, ref, atol=1e-2, rtol=5e-2)
+        torch.cuda.synchronize()
 
-    warmup_rounds, iterations, rounds = estimate_bench_iter(
-        backend, (x, weight, eps, static_persistent, gather),
-        cudagraph=True
-    )
+        warmup_rounds, iterations, rounds = estimate_bench_iter(
+            backend, (x, weight, eps, static_persistent, gather),
+            cudagraph=True
+        )
 
-    benchmark.pedantic(
-        backend, (x, weight, eps, static_persistent, gather),
-        rounds=rounds, warmup_rounds=warmup_rounds, iterations=iterations,
-        cudagraph=True
-    )
+        benchmark.pedantic(
+            backend, (x, weight, eps, static_persistent, gather),
+            rounds=rounds, warmup_rounds=warmup_rounds, iterations=iterations,
+            cudagraph=True
+        )
 
     M, N = x.shape
     flop_count = M * (4 * N + 2)
@@ -93,139 +91,140 @@ def _static_persistent_autotune_grid(x, cfg):
     NUM_SMS = torch.cuda.get_device_properties(
         "cuda"
     ).multi_processor_count
-    M, N = x.shape[0], x.shape[1]
-    grid_size = min(
-        NUM_SMS,
-        ceil(M / cfg.TILE_SIZE_M) * ceil(N / cfg.TILE_SIZE_N),
-    )
+    M = x.shape[0]
+    grid_size = min(NUM_SMS, ceil(M / cfg["tile_size_m"]))
     return (grid_size,)
 
 
-def _static_persistent_autotune_configs():
+def _static_persistent_autotune_configs(x_shape):
     """Iterator of autotune configurations for RMS Norm kernel."""
     ts_m_vals = [2, 4, 8, 16]
     ts_n_vals = [2**9, 2**10, 2**11, 2**12, 2**13, 2**14]
-    num_ctas_vals = [1, 2]
-    occupancy_vals = [1, 2, 4, 8]
-
-    for ts_m, ts_n, s, w in itertools.product(ts_m_vals, ts_n_vals, num_ctas_vals, occupancy_vals):
-        yield SimpleNamespace(
-            TILE_SIZE_M=ts_m,
-            TILE_SIZE_N=ts_n,
-            num_ctas=s,
-            occupancy=w,
-        )
-
-
-def _static_persistent_autotune_predicate(x, cfg):
-    """Predicate function for static persistent RMS Norm autotuning"""
-    return x.shape[1] * 2 > cfg.TILE_SIZE_N >= x.shape[1]
+    for ts_m, ts_n, in itertools.product(
+        ts_m_vals, ts_n_vals,
+    ):
+        if ts_n <= x_shape[1] and x_shape[1] % ts_n == 0:
+            yield {
+                "tile_size_m": ts_m,
+                "tile_size_n": ts_n,
+            }
 
 
 def _standard_autotune_configs():
     """Get autotune configurations for RMS Norm kernel"""
     ts_vals = [2**7, 2**8, 2**9, 2**10, 2**11, 2**12]
-    num_ctas_vals = [1, 2]
-    occupancy_vals = [1, 2, 4, 8, 16, 32]
-    for ts, s, w in itertools.product(ts_vals, num_ctas_vals, occupancy_vals):
-        yield SimpleNamespace(
-            TILE_SIZE=ts,
-            num_ctas=s,
-            occupancy=w,
-        )
+    num_worker_warps = [4, 8]
+    for ts, w in itertools.product(ts_vals, num_worker_warps):
+        yield {
+            "tile_size": ts,
+            "num_worker_warps": w,
+        }
 
 
-# Autotuning cache
-_tuning_cache = {}
+@cache
+def _rms_norm_gather_kernel(num_worker_warps):
+    return rms_norm_kernel_gather.replace_hints(
+        num_worker_warps=num_worker_warps
+    )
 
 
-def _tuning_cache_key(kind, x: torch.Tensor):
-    return (kind, x.dtype, x.shape[0], x.shape[1])
+@cache
+def _rms_norm_regular_kernel(num_worker_warps):
+    return rms_norm_kernel.replace_hints(
+        num_worker_warps=num_worker_warps,
+    )
+
+
+def tune_rms_norm(algo, shape, dtype):
+    x = torch.rand(shape, dtype=dtype, device="cuda")
+    weight = torch.randn((shape[1],), dtype=dtype, device="cuda")
+    y = torch.empty_like(x)
+    eps = 1e-5
+
+    def hints_fn(cfg):
+        return {"num_worker_warps": cfg.get("num_worker_warps", None)}
+
+    with ct.compiler_timeout(timeout):
+        if algo == 'persistent':
+            search_space = list(_static_persistent_autotune_configs(shape))
+
+            def grid_fn(cfg):
+                return _static_persistent_autotune_grid(x, cfg)
+
+            def args_fn(cfg):
+                return (x, y.clone(), weight,
+                        cfg["tile_size_m"],
+                        cfg["tile_size_n"],
+                        shape[1], eps)
+
+            kernel = rms_norm_kernel_static_persistent
+        else:
+            rstd = torch.empty((shape[0],), dtype=torch.float32, device='cuda')
+            search_space = list(_standard_autotune_configs())
+            kernel = rms_norm_kernel_gather if algo == 'gather' else rms_norm_kernel
+
+            def grid_fn(_cfg):
+                return (shape[0], )
+
+            def args_fn(cfg):
+                return (x, weight, y.clone(),
+                        rstd.clone(),
+                        shape[1],
+                        eps, cfg["tile_size"])
+
+        return exhaustive_search(
+                search_space,
+                torch.cuda.current_stream(),
+                grid_fn=grid_fn,
+                kernel=kernel,
+                args_fn=args_fn,
+                hints_fn=hints_fn)
 
 
 def _rms_norm_static_persistent_base(stream, x, y, weight, eps):
-    key = _tuning_cache_key("static", x)
-    if (key not in _tuning_cache):
-        search_space = [
-            cfg for cfg in _static_persistent_autotune_configs()
-            if _static_persistent_autotune_predicate(x, cfg)
-        ]
-        result = exhaustive_search(
-            search_space,
-            torch.cuda.current_stream(),
-            grid_fn=partial(_static_persistent_autotune_grid, x),
-            kernel=rms_norm_kernel_static_persistent,
-            args_fn=lambda cfg: (x, y.clone(), weight, cfg.TILE_SIZE_M, cfg.TILE_SIZE_N, eps),
-            hints_fn=lambda cfg: {
-                "num_ctas": cfg.num_ctas,
-                "occupancy": cfg.occupancy,
-            },
-        )
-        cfg = result.best.config
-        kernel = rms_norm_kernel_static_persistent.replace_hints(num_ctas=cfg.num_ctas,
-                                                                 occupancy=cfg.occupancy)
-        _tuning_cache[key] = kernel, cfg
-
-    kernel, cfg = _tuning_cache[key]
+    cfg = benchmark_tuning.get_tuned_config(
+        tune_rms_norm,
+        algo='persistent',
+        shape=x.shape,
+        dtype=x.dtype
+    )
+    kernel = rms_norm_kernel_static_persistent
     grid = _static_persistent_autotune_grid(x, cfg)
     ct.launch(
         stream, grid,
         kernel,
-        (x, y, weight, cfg.TILE_SIZE_M, cfg.TILE_SIZE_N, eps),
+        (x, y, weight, cfg["tile_size_m"], cfg["tile_size_n"], x.shape[1], eps),
     )
     return y
 
 
 def _rms_norm_standard_gather_base(stream, x, weight, y, rstd, N, eps):
-    key = _tuning_cache_key("gather", x)
-    if (key not in _tuning_cache):
-        result = exhaustive_search(
-            list(_standard_autotune_configs()),
-            torch.cuda.current_stream(),
-            grid_fn=lambda cfg: (x.shape[0], ),
-            kernel=rms_norm_kernel_gather,
-            args_fn=lambda cfg: (x, weight, y.clone(), rstd.clone(), N, eps, cfg.TILE_SIZE),
-            hints_fn=lambda cfg: {
-                "num_ctas": cfg.num_ctas,
-                "occupancy": cfg.occupancy,
-            },
-        )
-        cfg = result.best.config
-        kernel = rms_norm_kernel_gather.replace_hints(num_ctas=cfg.num_ctas,
-                                                      occupancy=cfg.occupancy)
-        _tuning_cache[key] = (kernel, cfg)
-
-    kernel, cfg = _tuning_cache[key]
+    cfg = benchmark_tuning.get_tuned_config(
+        tune_rms_norm,
+        algo='gather',
+        shape=x.shape,
+        dtype=x.dtype
+    )
+    kernel = _rms_norm_gather_kernel(cfg['num_worker_warps'])
     ct.launch(
         stream, (x.shape[0],),
         kernel,
-        (x, weight, y, rstd, N, eps, cfg.TILE_SIZE),
+        (x, weight, y, rstd, N, eps, cfg["tile_size"]),
     )
     return y
 
 
 def _rms_norm_standard_tiled_base(stream, x, weight, y, rstd, N, eps):
-    key = _tuning_cache_key("standard", x)
-    if (key not in _tuning_cache):
-        result = exhaustive_search(
-            list(_standard_autotune_configs()),
-            torch.cuda.current_stream(),
-            grid_fn=lambda cfg: (x.shape[0], ),
-            kernel=rms_norm_kernel,
-            args_fn=lambda cfg: (x, weight, y.clone(), rstd.clone(), N, eps, cfg.TILE_SIZE),
-            hints_fn=lambda cfg: {
-                "num_ctas": cfg.num_ctas,
-                "occupancy": cfg.occupancy,
-            },
-        )
-        cfg = result.best.config
-        kernel = rms_norm_kernel.replace_hints(num_ctas=cfg.num_ctas, occupancy=cfg.occupancy)
-        _tuning_cache[key] = (kernel, cfg)
-
-    kernel, cfg = _tuning_cache[key]
+    cfg = benchmark_tuning.get_tuned_config(
+        tune_rms_norm,
+        algo='regular',
+        shape=x.shape,
+        dtype=x.dtype
+    )
+    kernel = _rms_norm_regular_kernel(cfg['num_worker_warps'])
     ct.launch(
         stream, (x.shape[0],), kernel,
-        (x, weight, y, rstd, N, eps, cfg.TILE_SIZE),
+        (x, weight, y, rstd, N, eps, cfg["tile_size"]),
     )
     return y
 
@@ -238,19 +237,18 @@ def cutile_rms_norm(x, weight, eps, static_persistent, gather):
     y = torch.empty_like(x)
     M, N = x.shape
 
-    with ct.compiler_timeout(timeout):
-        if static_persistent:
-            _rms_norm_static_persistent_base(torch.cuda.current_stream(), x, y, weight, eps)
+    if static_persistent:
+        _rms_norm_static_persistent_base(torch.cuda.current_stream(), x, y, weight, eps)
+    else:
+        rstd = torch.empty((M,), dtype=torch.float32, device='cuda')
+        if gather:
+            _rms_norm_standard_gather_base(torch.cuda.current_stream(),
+                                           x, weight, y, rstd, N, eps)
         else:
-            rstd = torch.empty((M,), dtype=torch.float32, device='cuda')
-            if gather:
-                _rms_norm_standard_gather_base(torch.cuda.current_stream(),
-                                               x, weight, y, rstd, N, eps)
-            else:
-                _rms_norm_standard_tiled_base(
-                    torch.cuda.current_stream(), x, weight, y, rstd, N, eps
-                )
-        return y.view(*x.shape)
+            _rms_norm_standard_tiled_base(
+                torch.cuda.current_stream(), x, weight, y, rstd, N, eps
+            )
+    return y.view(*x.shape)
 
 
 def torch_rms_norm(input, weight, eps, static_persistent=False, gather=False):

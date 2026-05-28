@@ -8,6 +8,7 @@ import sys
 skip_patterns = [
     "VERSION",
     ".svg",
+    ".json",
     "uv.lock",
     "LICENSES/",
     "changelog.d/",

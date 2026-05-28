@@ -167,7 +167,8 @@ def benchmark_cudagraph_runner(f, args, kwargs):
             g = torch.cuda.CUDAGraph()
             ev_start = torch.cuda.Event(enable_timing=True, external=True)
             ev_end = torch.cuda.Event(enable_timing=True, external=True)
-            l2_size = torch.cuda.get_device_properties(0).L2_cache_size
+            device = torch.cuda.current_device()
+            l2_size = torch.cuda.get_device_properties(device).L2_cache_size
             cache_flush_tensor = torch.empty(l2_size, dtype=torch.uint8, device="cuda")
 
             with torch.cuda.graph(g):

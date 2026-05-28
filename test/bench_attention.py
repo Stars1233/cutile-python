@@ -2,11 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from functools import cache
 from math import ceil, sqrt
+from itertools import product
+import benchmark_tuning
 from conftest import dtype_id, shape_id
 from torch.nn.functional import scaled_dot_product_attention
 from torch.nn.attention import sdpa_kernel, SDPBackend
 import cuda.tile as ct
+from cuda.tile.tune import exhaustive_search
 
 import pytest
 import torch
@@ -93,18 +97,67 @@ def cutile_fmha(q, k, v, o, is_causal, enable_gqa):
     b, qh, q_len, d = q.shape
     _, kh, k_len, _ = k.shape
     qk_scale = 1 / sqrt(d)
-    TILE_M, TILE_N = (256, 128) if is_causal else (64, 128)
+    cfg = benchmark_tuning.get_tuned_config(tune_fmha, is_causal=is_causal)
+    TILE_M, TILE_N = cfg["tile_m"], cfg["tile_n"]
     query_group_size = qh // kh
     grid = (ceil(q_len / TILE_M), b * qh, 1)
     input_pos = 0 if q_len == k_len else (k_len - 1)
     EVEN_K = (k_len % TILE_N) == 0
-    ct.launch(torch.cuda.current_stream(), grid, fmha_kernel,
+    kernel = _fmha_kernel(cfg["occupancy"])
+    ct.launch(torch.cuda.current_stream(), grid, kernel,
               (q, k, v, o,
                qk_scale,
                input_pos,
                d, qh,
                TILE_M, TILE_N,
                query_group_size, is_causal, EVEN_K))
+
+
+@cache
+def _fmha_kernel(occupancy):
+    return fmha_kernel.replace_hints(occupancy=occupancy)
+
+
+@pytest.mark.parametrize("is_causal", [False, True])
+def tune_fmha(is_causal):
+    if is_causal:
+        q_shape, kv_shape = (1, 32, 8192, 128), (1, 32, 8192, 128)
+    else:
+        q_shape, kv_shape = (1, 32, 1, 128), (1, 32, 1024, 128)
+    dtype = torch.float16
+    q = torch.randn(q_shape, dtype=dtype, device='cuda')
+    k = torch.randn(kv_shape, dtype=dtype, device='cuda')
+    v = torch.randn(kv_shape, dtype=dtype, device='cuda')
+    o = torch.empty_like(q)
+
+    b, qh, q_len, d = q.shape
+    _, kh, k_len, _ = k.shape
+    qk_scale = 1 / sqrt(d)
+    query_group_size = qh // kh
+    input_pos = 0 if q_len == k_len else (k_len - 1)
+    search_space = [
+        {"tile_m": tile_m, "tile_n": tile_n, "occupancy": occupancy}
+        for tile_m, tile_n, occupancy in product(
+            (64, 128, 256),
+            (64, 128, 256),
+            (1, 2, 4),
+        )
+    ]
+    return exhaustive_search(
+        search_space,
+        torch.cuda.current_stream(),
+        grid_fn=lambda cfg: (ceil(q_len / cfg["tile_m"]), b * qh, 1),
+        kernel=fmha_kernel,
+        args_fn=lambda cfg: (
+            q, k, v, o,
+            qk_scale,
+            input_pos,
+            d, qh,
+            cfg["tile_m"], cfg["tile_n"],
+            query_group_size, is_causal, (k_len % cfg["tile_n"]) == 0,
+        ),
+        hints_fn=lambda cfg: {"occupancy": cfg["occupancy"]},
+    )
 
 
 def torch_fmha(q, k, v, o, is_causal, enable_gqa):

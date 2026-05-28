@@ -4,12 +4,15 @@
 
 import torch
 import pytest
+import inspect
 import subprocess
 import sys
 import math
 import tempfile
 from functools import cache, partial
 
+import benchmark_tuning
+import gpu_clocks
 from cuda.tile._bytecode.version import BytecodeVersion
 from cuda.tile._compile import (
         _get_max_supported_bytecode_version,
@@ -27,9 +30,43 @@ def pytest_addoption(parser):
         default=False,
         help="Treat import-related skips as errors",
     )
+    parser.addoption(
+        "--tune",
+        action="store_true",
+        default=False,
+        help="Run benchmark tune_<name> functions instead of benchmark bodies",
+    )
+    parser.addoption(
+        "--save-tuning",
+        action="store_true",
+        default=False,
+        help="Write --tune results to test/benchmark_tuning.json",
+    )
+    parser.addoption(
+        "--lock-gpu-clock",
+        action="store",
+        default=None,
+        metavar="GPU",
+        help="Lock GPU graphics and memory clocks for a GPU index or 'all'",
+    )
 
 
 def pytest_configure(config):
+    if config.getoption("tune", default=False) and config.option.markexpr:
+        raise pytest.UsageError("--tune cannot be combined with `-m`")
+    if config.getoption("save_tuning", default=False) and not config.getoption(
+        "tune", default=False
+    ):
+        raise pytest.UsageError("--save-tuning requires --tune")
+
+    lock_gpu_clock = config.getoption("lock_gpu_clock", default=None)
+    if lock_gpu_clock is not None and not (
+        lock_gpu_clock == "all" or lock_gpu_clock.isdecimal()
+    ):
+        raise pytest.UsageError(
+            "--lock-gpu-clock must be a GPU index like 0 or 'all'"
+        )
+
     if config.getoption("error_on_import_skip", default=False):
         _original = pytest.importorskip
 
@@ -42,6 +79,64 @@ def pytest_configure(config):
         pytest.importorskip = strict_importorskip
 
 
+def pytest_pycollect_makeitem(collector, name, obj):
+    if not collector.config.getoption("tune", default=False):
+        return None
+
+    if not inspect.isfunction(obj):
+        return None
+    if not name.startswith("tune_"):
+        return []
+
+    items = list(collector._genfunctions(name, obj))
+    for item in items:
+        for marker in _matching_benchmark_skip_markers(name, obj):
+            item.add_marker(_clone_marker(marker))
+    return items
+
+
+def _matching_benchmark_skip_markers(tune_name, tune_fn):
+    module = inspect.getmodule(tune_fn)
+    if module is None:
+        return []
+
+    benchmark_name = f"bench_{tune_name[len('tune_'):]}"
+    benchmark_fn = getattr(module, benchmark_name, None)
+    if benchmark_fn is None:
+        return []
+
+    markers = getattr(benchmark_fn, "pytestmark", ())
+    if not isinstance(markers, (list, tuple)):
+        markers = (markers,)
+
+    return [
+        marker for marker in markers
+        if marker.name in ("skip", "skipif")
+    ]
+
+
+def _clone_marker(marker):
+    return getattr(pytest.mark, marker.name)(*marker.args, **marker.kwargs)
+
+
+def pytest_pyfunc_call(pyfuncitem):
+    if not pyfuncitem.config.getoption("tune", default=False):
+        return None
+    if not pyfuncitem.name.startswith("tune_"):
+        return None
+
+    tune_fn = pyfuncitem.obj
+    tune_kwargs = benchmark_tuning.tune_call_kwargs(tune_fn, pyfuncitem.funcargs)
+    result = tune_fn(**tune_kwargs)
+    if pyfuncitem.config.getoption("save_tuning", default=False):
+        benchmark_tuning.record_tuning_result(
+            tune_fn,
+            pyfuncitem.funcargs,
+            result
+        )
+    return True
+
+
 def pytest_sessionstart(session):
     """
     Called after the Session object has been created and
@@ -50,6 +145,14 @@ def pytest_sessionstart(session):
     print("Tile compiler path:", _find_compiler_bin().path)
     print("Dev features enabled:", dev_features_enabled())
     print("Bytecode version:", get_tileiras_version().as_string())
+
+    lock_gpu_clock = session.config.getoption("lock_gpu_clock", default=None)
+    if not session.config.option.collectonly and lock_gpu_clock is not None:
+        gpu_clocks.lock(session.config, lock_gpu_clock)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    gpu_clocks.reset(session.config)
 
 
 @cache
@@ -204,7 +307,10 @@ def backend(request):
 
 def pytest_benchmark_update_machine_info(config, machine_info):
     fields = ['name', 'compute_cap', 'driver_version',
-              'memory.total', 'clocks.max.sm', 'clocks.max.mem', 'persistence_mode', 'power.limit']
+              'memory.total',
+              'clocks.max.sm', 'clocks.max.mem',
+              'clocks.current.sm', 'clocks.current.memory',
+              'persistence_mode', 'power.limit']
     query_gpu = f"--query-gpu={','.join(fields)}"
     command = ["nvidia-smi", "-i", "0", query_gpu, "--format=csv,noheader"]
     result = subprocess.check_output(command)

@@ -61,7 +61,12 @@ def bench_fft(shape, dtype, fft_backend, benchmark):
     args = (x, decomp, *weights)
     y_test = fft_backend(*args)
     y_ref = torch_fft(*args)
-    l2error = (y_ref - y_test).norm() / (y_ref).norm()
+    y_test_f32 = y_test.to(torch.complex64)
+    y_ref_f32 = y_ref.to(torch.complex64)
+    assert torch.isfinite(y_test_f32).all().item()
+    assert torch.isfinite(y_ref_f32).all().item()
+    l2error = (y_ref_f32 - y_test_f32).norm() / y_ref_f32.norm()
+    assert torch.isfinite(l2error).item()
     assert l2error < tolerance_map[dtype]
     warmup_rounds, iterations, rounds = estimate_bench_iter(fft_backend, args, cudagraph=True)
     benchmark.pedantic(
