@@ -21,6 +21,7 @@ from cuda.tile._ir.op_impl import (
     require_constant_bool,
     require_constant_enum,
     require_constant_int,
+    require_tuple_type,
 )
 from cuda.tile._ir.ir import Var, add_operation_variadic
 from cuda.tile._ir.ops import (
@@ -189,9 +190,10 @@ def get_raw_mlir_parts(
             operand_segment_sizes.append(0)
 
         elif spec.variadic:
-            assert isinstance(arg, tuple)
-            operands.extend(cast_operand(spec, item) for item in arg)
-            operand_segment_sizes.append(len(arg))
+            require_tuple_type(arg)
+            aggregate = tuple(arg.flatten_aggregate())
+            operands.extend(cast_operand(spec, item) for item in aggregate)
+            operand_segment_sizes.append(len(aggregate))
         else:
             operands.append(cast_operand(spec, arg))
             operand_segment_sizes.append(1)

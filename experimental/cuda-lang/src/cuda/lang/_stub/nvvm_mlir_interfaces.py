@@ -211,7 +211,7 @@ def cp_async_bulk_tensor_reduce(*, tma_descriptor: PX, src_mem: P3, red_kind: TM
     attr_sized_operand_segments=True,
     args=(ArgSpec(type=(strip(P3), strip(P7),), name='dstMem'), ArgSpec(type=strip(P0), name='tmaDescriptor'), ArgSpec(type=strip(I32), name='coordinates', variadic=True), ArgSpec(type=strip(P3), name='mbar'), ArgSpec(type=strip(I16), name='im2colOffsets', variadic=True), ArgSpec(type=strip(I16), name='multicastMask', optional=True), ArgSpec(type=strip(I64), name='l2CacheHint', optional=True), ArgSpec(type=strip(TMALoadMode), name='mode', kind='attribute'), ArgSpec(type=strip(B), name='isCTAOnly', kind='attribute'), ArgSpec(type=strip(CTAGroupKind), name='group', kind='attribute', optional=True), ArgSpec(type=strip(B), name='predicate', optional=True),),
 )
-def cp_async_bulk_tensor_shared_cluster_global(*, dst_mem: P3 | P7, tma_descriptor: P0, coordinates: tuple[I32, ...], mbar: P3, im2col_offsets: tuple[I16, ...], multicast_mask: I16 | None = None, l2_cache_hint: I64 | None = None, mode: TMALoadMode = TMALoadMode.TILE, is_c_t_a_only: B = False, group: CTAGroupKind | None = None, predicate: B | None = None) -> None: ...
+def cp_async_bulk_tensor_shared_cluster_global(*, dst_mem: P3 | P7, tma_descriptor: P0, coordinates: tuple[I32, ...], mbar: P3, im2col_offsets: tuple[I16, ...], multicast_mask: I16 | None = None, l2_cache_hint: I64 | None = None, mode: TMALoadMode = TMALoadMode.TILE, is_cta_only: B = False, group: CTAGroupKind | None = None, predicate: B | None = None) -> None: ...
 
 @nvvm_mlir_interface_stub(
     op_name='nvvm.cp.async.bulk.wait_group',

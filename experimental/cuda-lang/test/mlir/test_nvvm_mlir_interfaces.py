@@ -39,6 +39,43 @@ def test_mlir_interface_results():
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, ())
 
 
+@require_hopper_or_newer()
+def test_cp_async_bulk_tensor_mlir_interface():
+    @cl.kernel
+    def kernel(src, dst):
+        tma_descriptor = cl.tensor_map_tiled(src, (8, 8)).as_opaque_ptr()
+        mbar = cl.shared_array(1, dtype=cl.mbarrier).get_base_pointer()
+        smem = cl.shared_array(64, dtype=cl.int32, alignment=512)
+
+        if cl.thread_idx(0) == 0:
+            cl.mbarrier_init(mbar, cl.block_dim(0))
+
+        cl.syncthreads()
+        if cl.elect_sync():
+            nvvm.cp_async_bulk_tensor_shared_cluster_global(
+                dst_mem=smem.get_base_pointer(),
+                tma_descriptor=tma_descriptor,
+                coordinates=(0, 0),
+                mbar=mbar,
+                im2col_offsets=(),
+                mode=nvvm.TMALoadMode.TILE,
+                is_cta_only=True,
+            )
+            token = cl.mbarrier_arrive_expect_tx(mbar, 64 * 4)
+        else:
+            token = cl.mbarrier_arrive(mbar)
+
+        while not cl.mbarrier_try_wait(mbar, token, time_hint=10_000):
+            pass
+
+        dst[cl.thread_idx(0)] = smem[cl.thread_idx(0)]
+
+    src = torch.arange(64, dtype=torch.int32).cuda().reshape((8, 8)).contiguous()
+    dst = torch.zeros(64, dtype=torch.int32, device="cuda")
+    cl.launch(torch.cuda.current_stream(), (1,), (64,), kernel, (src, dst))
+    torch.testing.assert_close(dst.reshape((8, 8)), src)
+
+
 def test_mlir_interface_error_on_non_constant_enum():
     @cl.kernel
     def kernel(cond):
