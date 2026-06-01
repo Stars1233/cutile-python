@@ -23,15 +23,6 @@ from .typing_support import dtype_of_constant_scalar
 from .._datatype import DType, _DTypePromotionImpl, NumericDTypeCategory
 
 
-class ComparisonPredicates(Enum):
-    EQUAL = "equal"
-    NOT_EQUAL = "not_equal"
-    LESS_THAN = "less_than"
-    LESS_THAN_OR_EQUAL = "less_than_or_equal"
-    GREATER_THAN = "greater_than"
-    GREATER_THAN_OR_EQUAL = "greater_than_or_equal"
-
-
 @dataclass
 class MathOpDef:
     impl: callable    # Python scalar fallback
