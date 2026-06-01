@@ -46,6 +46,7 @@ from cuda.lang._stub.nvvm import (
 from cuda.lang._mlir.nvvm import (
     CTAGroupKind,
     CacheEvictionPriority,
+    DotAccumulateType,
     FPRoundingMode,
     GridDepActionKind,
     LoadCacheModifierKind,
@@ -64,6 +65,7 @@ from cuda.lang._mlir.nvvm import (
     Tcgen05CpShape,
     Tcgen05CpSrcFormat,
     Tcgen05FenceKind,
+    Tcgen05LdStShape,
     Tcgen05MMABlockScale,
     Tcgen05MMACollectorBBuffer,
     Tcgen05MMACollectorOp,
@@ -118,11 +120,32 @@ def cluster_wait(*, aligned: B | None = None) -> None: ...
 def clusterlaunchcontrol_try_cancel(*, multicast: B | None = None, smem_address: P3, mbarrier: P3) -> None: ...
 
 @nvvm_mlir_interface_stub(
+    op_name='nvvm.convert.f32x2.to.bf16x2',
+    results=(ResultSpec(name='dst', type=strip(VX)),),
+    args=(ArgSpec(type=strip(F32), name='src_hi'), ArgSpec(type=strip(F32), name='src_lo'), ArgSpec(type=strip(I32), name='random_bits', optional=True), ArgSpec(type=strip(FPRoundingMode), name='rnd', kind='attribute'), ArgSpec(type=strip(SaturationMode), name='sat', kind='attribute'), ArgSpec(type=strip(B), name='relu', kind='attribute'),),
+)
+def convert_f32x2_to_bf16x2(*, src_hi: F32, src_lo: F32, random_bits: I32 | None = None, rnd: FPRoundingMode = FPRoundingMode.NONE, sat: SaturationMode = SaturationMode.NONE, relu: B = False) -> VX: ...
+
+@nvvm_mlir_interface_stub(
+    op_name='nvvm.convert.f32x2.to.f16x2',
+    results=(ResultSpec(name='dst', type=strip(VX)),),
+    args=(ArgSpec(type=strip(F32), name='src_hi'), ArgSpec(type=strip(F32), name='src_lo'), ArgSpec(type=strip(I32), name='random_bits', optional=True), ArgSpec(type=strip(FPRoundingMode), name='rnd', kind='attribute'), ArgSpec(type=strip(SaturationMode), name='sat', kind='attribute'), ArgSpec(type=strip(B), name='relu', kind='attribute'),),
+)
+def convert_f32x2_to_f16x2(*, src_hi: F32, src_lo: F32, random_bits: I32 | None = None, rnd: FPRoundingMode = FPRoundingMode.NONE, sat: SaturationMode = SaturationMode.NONE, relu: B = False) -> VX: ...
+
+@nvvm_mlir_interface_stub(
     op_name='nvvm.convert.float.to.tf32',
     results=(ResultSpec(name='res', type=strip(I32)),),
     args=(ArgSpec(type=strip(F32), name='src'), ArgSpec(type=strip(FPRoundingMode), name='rnd', kind='attribute'), ArgSpec(type=strip(SaturationMode), name='sat', kind='attribute'), ArgSpec(type=strip(B), name='relu', kind='attribute'),),
 )
 def convert_float_to_tf32(*, src: F32, rnd: FPRoundingMode = FPRoundingMode.NONE, sat: SaturationMode = SaturationMode.NONE, relu: B = False) -> I32: ...
+
+@nvvm_mlir_interface_stub(
+    op_name='nvvm.convert.s2f6x2.to.bf16x2',
+    results=(ResultSpec(name='dst', type=strip(VX)),),
+    args=(ArgSpec(type=strip(VX), name='src'), ArgSpec(type=strip(I16), name='scaleFactor', optional=True), ArgSpec(type=strip(SaturationMode), name='sat', kind='attribute'), ArgSpec(type=strip(B), name='relu', kind='attribute'),),
+)
+def convert_s2f6x2_to_bf16x2(*, src: VX, scale_factor: I16 | None = None, sat: SaturationMode = SaturationMode.NONE, relu: B = False) -> VX: ...
 
 @nvvm_mlir_interface_stub(
     op_name='nvvm.cos',
@@ -218,6 +241,20 @@ def cp_async_shared_global(*, dst: P3, src: P1, size: U32, modifier: LoadCacheMo
     args=(ArgSpec(type=strip(U32), name='n', kind='attribute'),),
 )
 def cp_async_wait_group(*, n: U32) -> None: ...
+
+@nvvm_mlir_interface_stub(
+    op_name='nvvm.dot.accumulate.2way',
+    results=(ResultSpec(name='res', type=strip(I32)),),
+    args=(ArgSpec(type=strip(VX), name='a'), ArgSpec(type=strip(DotAccumulateType), name='a_type', kind='attribute'), ArgSpec(type=strip(VX), name='b'), ArgSpec(type=strip(DotAccumulateType), name='b_type', kind='attribute'), ArgSpec(type=strip(I32), name='c'), ArgSpec(type=strip(B), name='b_hi', kind='attribute'),),
+)
+def dot_accumulate_2way(*, a: VX, a_type: DotAccumulateType, b: VX, b_type: DotAccumulateType, c: I32, b_hi: B) -> I32: ...
+
+@nvvm_mlir_interface_stub(
+    op_name='nvvm.dot.accumulate.4way',
+    results=(ResultSpec(name='res', type=strip(I32)),),
+    args=(ArgSpec(type=strip(VX), name='a'), ArgSpec(type=strip(DotAccumulateType), name='a_type', kind='attribute'), ArgSpec(type=strip(VX), name='b'), ArgSpec(type=strip(DotAccumulateType), name='b_type', kind='attribute'), ArgSpec(type=strip(I32), name='c'),),
+)
+def dot_accumulate_4way(*, a: VX, a_type: DotAccumulateType, b: VX, b_type: DotAccumulateType, c: I32) -> I32: ...
 
 @nvvm_mlir_interface_stub(
     op_name='nvvm.elect.sync',
@@ -695,10 +732,24 @@ def tcgen05_dealloc(*, taddr: P6, n_cols: I32, group: CTAGroupKind = CTAGroupKin
 def tcgen05_fence(*, kind: Tcgen05FenceKind) -> None: ...
 
 @nvvm_mlir_interface_stub(
+    op_name='nvvm.tcgen05.mma',
+    attr_sized_operand_segments=True,
+    args=(ArgSpec(type=strip(Tcgen05MMAKind), name='kind', kind='attribute'), ArgSpec(type=strip(CTAGroupKind), name='ctaGroup', kind='attribute'), ArgSpec(type=strip(Tcgen05MMACollectorOp), name='collectorOp', kind='attribute'), ArgSpec(type=strip(B), name='aShift', kind='attribute', optional=True, unit=True), ArgSpec(type=strip(P6), name='matrixD'), ArgSpec(type=(strip(P6), strip(I64),), name='matrixA'), ArgSpec(type=strip(I64), name='matrixB'), ArgSpec(type=strip(I32), name='idesc'), ArgSpec(type=strip(B), name='enableInputD'), ArgSpec(type=strip(I64), name='scaleInputD', optional=True), ArgSpec(type=strip(VX), name='disableOutputLane', optional=True),),
+)
+def tcgen05_mma(*, kind: Tcgen05MMAKind, cta_group: CTAGroupKind, collector_op: Tcgen05MMACollectorOp = Tcgen05MMACollectorOp.DISCARD, a_shift: B | None = None, matrix_d: P6, matrix_a: P6 | I64, matrix_b: I64, idesc: I32, enable_input_d: B, scale_input_d: I64 | None = None, disable_output_lane: VX | None = None) -> None: ...
+
+@nvvm_mlir_interface_stub(
     op_name='nvvm.tcgen05.mma.block_scale',
     args=(ArgSpec(type=strip(Tcgen05MMAKind), name='kind', kind='attribute'), ArgSpec(type=strip(CTAGroupKind), name='ctaGroup', kind='attribute'), ArgSpec(type=strip(Tcgen05MMABlockScale), name='blockScale', kind='attribute'), ArgSpec(type=strip(Tcgen05MMACollectorOp), name='collectorOp', kind='attribute'), ArgSpec(type=strip(P6), name='matrixD'), ArgSpec(type=(strip(P6), strip(I64),), name='matrixA'), ArgSpec(type=strip(I64), name='matrixB'), ArgSpec(type=strip(I32), name='idesc'), ArgSpec(type=strip(B), name='enableInputD'), ArgSpec(type=strip(P6), name='scaleA'), ArgSpec(type=strip(P6), name='scaleB'),),
 )
 def tcgen05_mma_block_scale(*, kind: Tcgen05MMAKind, cta_group: CTAGroupKind, block_scale: Tcgen05MMABlockScale = Tcgen05MMABlockScale.DEFAULT, collector_op: Tcgen05MMACollectorOp = Tcgen05MMACollectorOp.DISCARD, matrix_d: P6, matrix_a: P6 | I64, matrix_b: I64, idesc: I32, enable_input_d: B, scale_a: P6, scale_b: P6) -> None: ...
+
+@nvvm_mlir_interface_stub(
+    op_name='nvvm.tcgen05.mma.sp',
+    attr_sized_operand_segments=True,
+    args=(ArgSpec(type=strip(Tcgen05MMAKind), name='kind', kind='attribute'), ArgSpec(type=strip(CTAGroupKind), name='ctaGroup', kind='attribute'), ArgSpec(type=strip(Tcgen05MMACollectorOp), name='collectorOp', kind='attribute'), ArgSpec(type=strip(B), name='aShift', kind='attribute', optional=True, unit=True), ArgSpec(type=strip(P6), name='matrixD'), ArgSpec(type=(strip(P6), strip(I64),), name='matrixA'), ArgSpec(type=strip(I64), name='matrixB'), ArgSpec(type=strip(I32), name='idesc'), ArgSpec(type=strip(B), name='enableInputD'), ArgSpec(type=strip(P6), name='sparseMetadata'), ArgSpec(type=strip(I64), name='scaleInputD', optional=True), ArgSpec(type=strip(VX), name='disableOutputLane', optional=True),),
+)
+def tcgen05_mma_sp(*, kind: Tcgen05MMAKind, cta_group: CTAGroupKind, collector_op: Tcgen05MMACollectorOp = Tcgen05MMACollectorOp.DISCARD, a_shift: B | None = None, matrix_d: P6, matrix_a: P6 | I64, matrix_b: I64, idesc: I32, enable_input_d: B, sparse_metadata: P6, scale_input_d: I64 | None = None, disable_output_lane: VX | None = None) -> None: ...
 
 @nvvm_mlir_interface_stub(
     op_name='nvvm.tcgen05.mma.sp.block_scale',
@@ -738,6 +789,12 @@ def tcgen05_relinquish_alloc_permit(*, group: CTAGroupKind = CTAGroupKind.CTA_1)
 def tcgen05_shift(*, taddr: P6, group: CTAGroupKind = CTAGroupKind.CTA_1) -> None: ...
 
 @nvvm_mlir_interface_stub(
+    op_name='nvvm.tcgen05.st',
+    args=(ArgSpec(type=strip(B), name='unpack', kind='attribute', optional=True, unit=True), ArgSpec(type=strip(Tcgen05LdStShape), name='shape', kind='attribute'), ArgSpec(type=strip(P6), name='tmemAddr'), ArgSpec(type=(strip(I32), strip(VX),), name='val'), ArgSpec(type=strip(I64), name='offset', optional=True),),
+)
+def tcgen05_st(*, unpack: B | None = None, shape: Tcgen05LdStShape, tmem_addr: P6, val: I32 | VX, offset: I64 | None = None) -> None: ...
+
+@nvvm_mlir_interface_stub(
     op_name='nvvm.tcgen05.wait',
     args=(ArgSpec(type=strip(Tcgen05WaitKind), name='kind', kind='attribute'),),
 )
@@ -767,7 +824,10 @@ __all__ = (
     'cluster_arrive_relaxed',
     'cluster_wait',
     'clusterlaunchcontrol_try_cancel',
+    'convert_f32x2_to_bf16x2',
+    'convert_f32x2_to_f16x2',
     'convert_float_to_tf32',
+    'convert_s2f6x2_to_bf16x2',
     'cos',
     'cp_async_bulk_commit_group',
     'cp_async_bulk_global_shared_cta',
@@ -783,6 +843,8 @@ __all__ = (
     'cp_async_mbarrier_arrive',
     'cp_async_shared_global',
     'cp_async_wait_group',
+    'dot_accumulate_2way',
+    'dot_accumulate_4way',
     'elect_sync',
     'ex2',
     'exit',
@@ -861,13 +923,16 @@ __all__ = (
     'tcgen05_cp',
     'tcgen05_dealloc',
     'tcgen05_fence',
+    'tcgen05_mma',
     'tcgen05_mma_block_scale',
+    'tcgen05_mma_sp',
     'tcgen05_mma_sp_block_scale',
     'tcgen05_mma_ws',
     'tcgen05_mma_ws_sp',
     'tcgen05_mma_smem_desc',
     'tcgen05_relinquish_alloc_permit',
     'tcgen05_shift',
+    'tcgen05_st',
     'tcgen05_wait',
     'wgmma_commit_group_sync_aligned',
     'wgmma_fence_aligned',
