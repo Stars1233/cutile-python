@@ -8,12 +8,15 @@ requires = ["setuptools", "wheel"]
 
 [project]
 name = "cuda-lang"
-version = "0.0.1"
+dynamic = ["version"]
 description = "Experimental SIMT programming model."
 requires-python = ">=3.10, <3.15"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.dynamic]
+version = {file = "src/cuda/lang/VERSION"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
