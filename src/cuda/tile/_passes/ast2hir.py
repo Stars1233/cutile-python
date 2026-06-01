@@ -1000,7 +1000,8 @@ def _ast2hir(func_def: ast.FunctionDef | ast.Lambda, ctx: _Context) -> hir.Block
             _stmt_list(func_def.body, ctx)
             # Add a Return jump to the root block if it doesn't have one
             if root_block.jump is None:
-                ctx.set_block_jump(hir.Jump.RETURN)
+                with ctx.change_loc(Loc.unknown()):
+                    ctx.set_block_jump(hir.Jump.RETURN)
         elif isinstance(func_def, ast.FunctionDef):
             # To enable early returns in a helper function, wrap the body in a loop.
             # Thus, we can use "break" to implement the return statement.

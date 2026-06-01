@@ -330,7 +330,7 @@ class DebugAttrMap:
         return ret
 
     def get_debugattr(self, loc: Loc) -> bc.DebugAttrId:
-        if self._anonymize:
+        if self._anonymize or loc.is_unknown():
             return bc.MISSING_DEBUG_ATTR_ID
 
         subprogram = self.get_subprogram(loc.function)

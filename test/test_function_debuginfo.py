@@ -7,11 +7,13 @@ import re
 import pytest
 
 import cuda.tile as ct
+import cuda.tile._bytecode as bc
 from cuda.tile._bytecode.basic import StringTable
 from cuda.tile._bytecode.debug_info import DebugAttrTable
 from cuda.tile._cext import CallingConvention
 from cuda.tile._compile import compile_tile
-from cuda.tile._exception import FunctionDesc
+from cuda.tile._exception import FunctionDesc, Loc
+from cuda.tile._ir.ops import Return
 from cuda.tile._ir2bytecode import DebugAttrMap, create_synthetic_linkage_name
 from cuda.tile.compilation import ArrayConstraint, KernelSignature
 
@@ -202,6 +204,34 @@ def test_op_locs_resolve_to_correct_inlining_frame():
     assert entry.line == kernel_line and entry.line != body_line
 
 
+def test_dummy_return_sets_unknown_loc():
+    def kernel(x):
+        t = ct.load(x, (0,), (1,))
+        ct.store(x, (1,), t)
+
+    body = _compile(kernel)
+    return_ops = [op for op in body.traverse() if isinstance(op, Return)]
+    assert len(return_ops) == 1, "expected one Return op"
+    assert return_ops[0].loc.is_unknown()
+
+
+def test_explicit_return_keeps_loc():
+    def kernel(x):
+        t = ct.load(x, (0,), (1,))
+        ct.store(x, (1,), t)
+        return None
+
+    body = _compile(kernel)
+    return_line, _ = _line_col(kernel, "return None")
+    return_ops = [op for op in body.traverse() if isinstance(op, Return)]
+    assert len(return_ops) == 1, "expected one Return op"
+    return_op = return_ops[0]
+    assert return_op, "expected a Return op"
+    assert return_op.loc.line == return_line, (return_op.loc.line, return_line)
+    assert return_op.loc.function is not None
+    assert return_op.loc.function.name == "kernel"
+
+
 def test_linkage_names_appear_in_emitted_bytecode():
     # End-to-end smoke check: every linkage name we compute should also be
     # serialized into the bytecode's string table. This catches regressions
@@ -258,3 +288,8 @@ def test_simple_function_desc_specialization_ids_are_deterministic_across_compil
         )
 
     assert compile_once() == compile_once()
+
+
+def test_unknown_loc_maps_to_missing_debug_attr():
+    m = DebugAttrMap(DebugAttrTable(StringTable()), entry_symbol="kern", anonymize=False)
+    assert m.get_debugattr(Loc.unknown()) == bc.MISSING_DEBUG_ATTR_ID

@@ -75,6 +75,9 @@ def _concretize_func_desc(func_hir: hir.Function, ir_ctx: IRContext) -> Function
 
 
 def retarget_loc(loc: Loc, scope: Scope) -> Loc:
+    if loc.is_unknown():
+        return loc
+
     # Splice in the scope's call site and, if this loc belongs to the function
     # currently being inlined, swap in the per-specialization FunctionDesc so
     # emitted ops carry the right debug info.
