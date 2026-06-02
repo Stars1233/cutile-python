@@ -270,12 +270,12 @@ class _IrKeeper:
                                   tileiras_version=self.bytecode_version,
                                   typing_hooks=_TileTypingHooks())
             with ir.Builder(ir_ctx, self._func_hir.body.loc) as ir_builder:
-                params = _create_kernel_parameters(sig.parameters,
-                                                   self.ann_func.constant_parameter_mask,
-                                                   param_names,
-                                                   self._func_hir.param_locs,
-                                                   ir_ctx)
                 with tile_impl_registry.as_current():
+                    params = _create_kernel_parameters(sig.parameters,
+                                                       self.ann_func.constant_parameter_mask,
+                                                       param_names,
+                                                       self._func_hir.param_locs,
+                                                       ir_ctx)
                     hir2ir(self._func_hir, params.aggregate_vars, ir_ctx)
 
             func_body = ir.Block(ir_ctx, self._func_hir.body.loc)

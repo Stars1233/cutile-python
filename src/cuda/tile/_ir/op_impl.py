@@ -59,6 +59,7 @@ class ImplRegistry:
     def __init__(self):
         self.op_implementations = dict()
         self._overloaded_implementations = defaultdict(dict)
+        self.unflatten_aggregate_implementations = dict()
 
     @staticmethod
     def get_current() -> "ImplRegistry":
@@ -79,6 +80,7 @@ class ImplRegistry:
         self.op_implementations.update(source.op_implementations)
         for stub, overloads in source._overloaded_implementations.items():
             self._overloaded_implementations[stub].update(overloads)
+        self.unflatten_aggregate_implementations.update(source.unflatten_aggregate_implementations)
 
     def overload_dispatcher(self, stub, *, fixed_args: Sequence[Any] = ()):
         """
@@ -214,6 +216,12 @@ class ImplRegistry:
         candidates = self._overloaded_implementations[stub]
         return any(predicates[0](first_param)
                    for _priority, predicates, _impl in candidates.values())
+
+    def unflatten_aggregate_impl(self, aggregate_type_class: type[Type]):
+        def decorate(func):
+            self.unflatten_aggregate_implementations[aggregate_type_class] = func
+            return func
+        return decorate
 
 
 def _predicate_from_overload_pattern(pattern):

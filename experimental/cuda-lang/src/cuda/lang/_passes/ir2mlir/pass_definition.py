@@ -282,7 +282,6 @@ def _get_mlir_comparison_op(
 # These operations have aggregate results. The RHS's elements are stored to
 # the LHS's when lowering Assign operations and are no-ops at the MLIR level.
 _NOOP_LOWERINGS = frozenset([
-    ops.MakeTensorView,
     ops.ReinterpretPointerAsArray,
 ])
 

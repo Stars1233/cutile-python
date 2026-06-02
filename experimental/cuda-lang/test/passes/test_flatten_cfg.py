@@ -22,7 +22,6 @@ def test_flatten_ifelse():
         else:
             A[0] = 0
 
-    # BEFORE: A{{.+}}: Array[int32,(?):(?)] = make_tensor_view
     # BEFORE: $[[ITEM:[0-9]+]]: Tile[int32,()] = load_pointer
     # BEFORE: $[[ITEM_CASTED:[0-9]+]]: Tile[bool_,()] = tile_astype(x=$[[ITEM]])
     # BEFORE: if(cond=$[[ITEM_CASTED]])
@@ -37,7 +36,6 @@ def test_flatten_ifelse():
     filecheck(str(body), get_source(), ("BEFORE",))
 
     # AFTER: ^entry({{.+}}):
-    # AFTER:   A{{.+}}: Array[int32,(?):(?)] = make_tensor_view
     # AFTER:   $[[ITEM:[0-9]+]]: Tile[int32,()] = load_pointer
     # AFTER:   $[[ITEM_CASTED:[0-9]+]]: Tile[bool_,()] = tile_astype(x=$[[ITEM]])
     # AFTER:   cond_br $[[ITEM_CASTED]]: Tile[bool_,()] ^then() ^else()

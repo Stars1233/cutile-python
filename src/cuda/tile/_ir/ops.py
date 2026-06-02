@@ -6,7 +6,7 @@ import math
 import operator
 from dataclasses import dataclass
 from typing import (
-    Literal, Sequence, Tuple, Optional, Any, List, Callable, Iterator, Iterable,
+    Literal, Sequence, Tuple, Optional, Any, List, Callable, Iterable,
 )
 
 from typing_extensions import override
@@ -21,6 +21,8 @@ from cuda.tile._ir.ir import (
     PhiState, LoopVarState, make_aggregate, ConstantState, MemoryEffect, attribute, operand,
     BlockRestriction, add_operation_variadic,
 )
+from .aggregate_support import flatten_block_parameters, expand_aggregate_var, \
+    flatten_aggregate_types, flatten_aggregates, unflatten_aggregates
 from .arithmetic_ops import reshape, broadcast_to, astype, compare_tensorlike, \
     binary_bitwise_tensorlike, bitwise_shift_tensorlike, binary_arithmetic_tensorlike, \
     compare_tensorlike_raw, where, binary_bitwise_tensorlike_raw, where_raw, TileReshape, \
@@ -1216,113 +1218,6 @@ class MakeListView(Operation, opcode="make_list_view"):
         length = ctx.get_value(self.length)
         tv = bc.encode_MakeTensorViewOp(ctx.builder, tv_ty, ptr, [length], [])
         return bc.encode_MakePartitionViewOp(ctx.builder, pv_ty, tv)
-
-
-def flatten_aggregates(vars: Sequence[Var], types: Sequence[Type]) -> tuple[Var, ...]:
-    ret = []
-    for x, ty in zip(vars, types, strict=True):
-        item_types = tuple(ty.flatten_aggregate())
-        x_ty = x.get_type_allow_invalid()
-        if isinstance(x_ty, InvalidType):
-            for _ in item_types:
-                t = x.ctx.make_temp(x.loc)
-                t.set_type(x_ty)
-                ret.append(t)
-        else:
-            items = tuple(x.flatten_aggregate())
-            assert len(items) == len(item_types)
-            ret.extend(items)
-    return tuple(ret)
-
-
-def flatten_aggregate_types(types: Sequence[Type]) -> tuple[Type, ...]:
-    ret = []
-    for ty in types:
-        ret.extend(ty.flatten_aggregate())
-    return tuple(ret)
-
-
-def unflatten_aggregates(flattened: Tuple[Var, ...],
-                         nominal: Sequence[Type], actual: Sequence[Type]) -> tuple[Var, ...]:
-    it = iter(flattened)
-    ret = tuple(_maybe_unflatten_aggregate(it, n, a) for n, a in zip(nominal, actual, strict=True))
-    assert next(it, None) is None
-    return ret
-
-
-def _maybe_unflatten_aggregate(flattened_iter: Iterator[Var], nominal: Type, actual: Type) -> Var:
-    if not nominal.is_aggregate():
-        return next(flattened_iter)
-    return _unflatten_proper_aggregate(flattened_iter, nominal, actual, result_var=None)
-
-
-def expand_aggregate_var(var: Var) -> Tuple[Var, ...]:
-    item_types = tuple(var.get_type().flatten_aggregate())
-    ret = tuple(var.ctx.make_var(f"{var.get_original_name()}_{i}", var.loc)
-                for i in range(len(item_types)))
-    for item, item_ty in zip(ret, item_types, strict=True):
-        item.set_type(item_ty)
-    return ret
-
-
-def flatten_block_parameters(vars: Sequence[Var]) -> list[tuple[Var, ...]]:
-    ret = []
-    for v in vars:
-        ty = v.get_type_allow_invalid()
-        if ty.is_aggregate():
-            flattened_vars = expand_aggregate_var(v)
-            ret.append(flattened_vars)
-            it = iter(flattened_vars)
-            _unflatten_proper_aggregate(it, ty, ty, v)
-            assert next(it, None) is None
-        else:
-            ret.append((v,))
-    return ret
-
-
-def _unflatten_proper_aggregate(flattened_iter: Iterator[Var], nominal: Type, actual: Type,
-                                result_var: Var | None) -> Var:
-    nominal_item_types = nominal.aggregate_item_types()
-    if isinstance(actual, InvalidType):
-        # Pop values from the iterator and throw them out
-        for _ in nominal_item_types:
-            next(flattened_iter)
-        builder = Builder.get_current()
-        t = builder.ir_ctx.make_temp(builder.loc)
-        t.set_type(actual)
-        return t
-
-    items = tuple(_maybe_unflatten_aggregate(flattened_iter, item_nominal, item_actual)
-                  for item_nominal, item_actual
-                  in zip(nominal_item_types, actual.aggregate_item_types(), strict=True))
-    val = nominal.make_aggregate_value(items)
-
-    builder = Builder.get_current()
-    if isinstance(nominal, ArrayTy):
-        assert isinstance(val, ArrayValue)
-        base_ptr = val.base_ptr
-        shape = tuple(assume_bounded(x, 0, None) for x in val.shape)
-
-        all_strides = []
-        dynamic_strides = []
-        for x, s in zip(val.strides, nominal.strides, strict=True):
-            if s is None:
-                x = assume_bounded(x, 0, None)
-                dynamic_strides.append(x)
-            all_strides.append(x)
-
-        operands = dict(base_ptr=base_ptr, shape=shape, dynamic_strides=tuple(dynamic_strides))
-        ret = builder.add_operation(MakeTensorView, nominal, operands, result_var)
-        ret.set_aggregate(ArrayValue(base_ptr, shape, tuple(all_strides)))
-        return ret
-    elif isinstance(nominal, ListTy):
-        assert isinstance(val, ListValue)
-        operands = dict(base_ptr=val.base_ptr, length=val.length)
-        ret = builder.add_operation(MakeListView, nominal, operands, result_var)
-        ret.set_aggregate(val)
-        return ret
-    else:
-        return builder.make_aggregate(val, nominal, result_var=result_var)
 
 
 @dataclass(eq=False)
@@ -3919,6 +3814,35 @@ def store_advanced_impl(array: Var, indices: Var, tile: Var,
     add_operation(TileStore, TokenTy(),
                   view=view, index=gs_index, tile=tile,
                   latency=latency_val, allow_tma=allow_tma_val)
+
+
+@tile_impl_registry.unflatten_aggregate_impl(ArrayTy)
+def _unflatten_aggregate_array_impl(val: ArrayValue, ty: ArrayTy, result_var: Var):
+    assert isinstance(val, ArrayValue)
+    base_ptr = val.base_ptr
+    shape = tuple(assume_bounded(x, 0, None) for x in val.shape)
+
+    all_strides = []
+    dynamic_strides = []
+    for x, s in zip(val.strides, ty.strides, strict=True):
+        if s is None:
+            x = assume_bounded(x, 0, None)
+            dynamic_strides.append(x)
+        all_strides.append(x)
+
+    operands = dict(base_ptr=base_ptr, shape=shape, dynamic_strides=tuple(dynamic_strides))
+    ret = Builder.get_current().add_operation(MakeTensorView, ty, operands, result_var)
+    ret.set_aggregate(ArrayValue(base_ptr, shape, tuple(all_strides)))
+    return ret
+
+
+@tile_impl_registry.unflatten_aggregate_impl(ListTy)
+def _unflatten_aggregate_list_impl(val: ListValue, ty: ListTy, result_var: Var):
+    assert isinstance(val, ListValue)
+    operands = dict(base_ptr=val.base_ptr, length=val.length)
+    ret = Builder.get_current().add_operation(MakeListView, ty, operands, result_var)
+    ret.set_aggregate(val)
+    return ret
 
 
 def _add_dummy_op_to_invalid_vars(vars: Sequence[Var],

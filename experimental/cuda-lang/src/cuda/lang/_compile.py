@@ -129,7 +129,7 @@ def get_function_ir(
     if constant_mask is None:
         constant_mask = [False] * len(signature.parameters)
     parameter_names = function.signature.parameters.keys()
-    with ir.TileBuilder(ctx, function.body.loc) as builder:
+    with ir.TileBuilder(ctx, function.body.loc) as builder, cuda_lang_impl_registry.as_current():
         params = _create_kernel_parameters(
             signature.parameters,
             constant_mask,
@@ -138,8 +138,7 @@ def get_function_ir(
             ctx
         )
         canonicalize_parameters(params, builder)
-        with cuda_lang_impl_registry.as_current():
-            hir2ir(function, params.aggregate_vars, ctx)
+        hir2ir(function, params.aggregate_vars, ctx)
     func_body = ctx.make_block("entry", function.body.loc)
     func_body.params = sum((vars for vars, _ in params.nonconstant_flat_vars), ())
     func_body.extend(builder.ops)
