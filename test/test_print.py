@@ -229,6 +229,16 @@ def kernel_print_tuple_tile_shape(x, TILE: ct.Constant[int]):
     ct.print(tx.shape)
 
 
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_print_dtype(x, TILE: ct.Constant[int]):
+    bid = ct.bid(0)
+    tx = ct.load(x, index=(bid,), shape=(TILE,))
+    ct.print(x.dtype)
+    print(x.dtype)
+    ct.print(f"dtype = {tx.dtype}")
+    print(f"dtype = {tx.dtype}")
+
+
 _KERNELS_MAP_ = {
     "kernel_printf": kernel_printf,
     "kernel_print": kernel_print,
@@ -246,6 +256,7 @@ _KERNELS_MAP_ = {
     "kernel_print_single_tuple": kernel_print_single_tuple,
     "kernel_print_tuple_w_tile": kernel_print_tuple_w_tile,
     "kernel_print_tuple_tile_shape": kernel_print_tuple_tile_shape,
+    "kernel_print_dtype": kernel_print_dtype,
 }
 
 
@@ -450,6 +461,14 @@ def test_ct_print_tuple_format_spec_error():
     x = torch.zeros(8, device='cuda', dtype=torch.int32)
     with pytest.raises(TileTypeError, match="cannot apply format spec to a tuple value"):
         ct.launch(torch.cuda.current_stream(), (1, 1, 1), bad_kernel, (x, 8))
+
+
+def test_ct_print_dtype():
+    actual_outs = _run_kernel(kernel_print_dtype, (8,), "float32", 8)
+    assert actual_outs[0] == "float32"          # ct.print(tx.dtype)
+    assert actual_outs[1] == "float32"          # print(tx.dtype)
+    assert actual_outs[2] == "dtype = float32"  # ct.print(f"dtype = {tx.dtype}")
+    assert actual_outs[3] == "dtype = float32"  # print(f"dtype = {tx.dtype}")
 
 
 if __name__ == "__main__":

@@ -712,6 +712,8 @@ def print_impl(args: tuple[Var, ...], sep: Var, end: Var) -> None:
             else:
                 format_parts.append(PrintfValidator.infer_format(ty.tensor_dtype()))
             leaf_vars.append(var)
+        elif isinstance(ty, DTypeSpec):
+            format_parts.append(str(ty.dtype))
         else:
             raise TileTypeError(f"Can't print value of type {ty}")
 
