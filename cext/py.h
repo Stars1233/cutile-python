@@ -202,6 +202,10 @@ ErrorRaised_t raise(PyObject* exctype, const char* fmt, Args&&... args) {
 struct SavedException {
     PyPtr type, value, traceback;
 
+    operator bool() const {
+        return bool(type);
+    }
+
     void normalize() {
         PyObject* tmp_type = type.release();
         PyObject* tmp_value = value.release();
@@ -210,6 +214,15 @@ struct SavedException {
         type = steal(tmp_type);
         value = steal(tmp_value);
         traceback = steal(tmp_traceback);
+        if (traceback)
+            PyException_SetTraceback(value.get(), traceback.get());
+    }
+
+    void restore() {
+        PyObject* tmp_type = type.release();
+        PyObject* tmp_value = value.release();
+        PyObject* tmp_traceback = traceback.release();
+        PyErr_Restore(tmp_type, tmp_value, tmp_traceback);
     }
 };
 
@@ -250,10 +263,7 @@ struct ErrorGuard {
     void operator=(const ErrorGuard&) = delete;
 
     ~ErrorGuard() {
-        PyObject* tmp_type = exc.type.release();
-        PyObject* tmp_value = exc.value.release();
-        PyObject* tmp_traceback = exc.traceback.release();
-        PyErr_Restore(tmp_type, tmp_value, tmp_traceback);
+        exc.restore();
     }
 };
 

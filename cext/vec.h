@@ -158,6 +158,19 @@ public:
         return data_[i];
     }
 
+    T& back() {
+        return data_[size_ - 1];
+    }
+
+    const T& back() const {
+        return data_[size_ - 1];
+    }
+
+    void pop_back() {
+        back().~T();
+        --size_;
+    }
+
     bool operator== (const Vec& other) const {
         size_t n = size_;
         if (n != other.size_) return false;

@@ -105,6 +105,13 @@ def _benchmark(stream: int,
                /) -> float: ...
 
 
+def run_coroutine(coro):
+    """
+    Run a coroutine using a software stack to bypass the Python's recursion limit.
+    Use resume_after() to break the call chain and push a new frame to the software stack.
+    """
+
+
 CU_TENSOR_MAP_DATA_TYPE_UINT8: int
 CU_TENSOR_MAP_DATA_TYPE_UINT16: int
 CU_TENSOR_MAP_DATA_TYPE_UINT32: int

@@ -45,6 +45,7 @@ set(cext_include_dirs
 # Build a static library first, so that we could reuse it for several build targets
 
 add_library(_cext_static STATIC
+    coroutine_util.cpp
     cuda_loader.cpp
     cuda_helper.cpp
     memory.cpp

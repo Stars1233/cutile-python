@@ -6,6 +6,7 @@
 
 #include "tile_kernel.h"
 #include "cuda_helper.h"
+#include "coroutine_util.h"
 #include "xla_ffi_py.h"
 
 #ifdef _WIN32
@@ -46,6 +47,9 @@ PyMODINIT_FUNC PyInit__cext() {
         return nullptr;
 
     if (!cuda_helper_init(m.get()))
+        return nullptr;
+
+    if (!coroutine_util_init(m.get()))
         return nullptr;
 
     if (!xla_ffi_init(m.get()))
