@@ -78,9 +78,11 @@ from cuda.tile._datatype import (
     PointerInfo,
     opaque_pointer_dtype,
 )
+from cuda.tile._exception import TileValueError
 import cuda.lang._mlir as mlir
 
 from .. import _stub as stub
+from .._stub import CTAGroup, Tcgen05LdStShape
 
 from .type import (
     LocalArrayContextManagerTy, ContextManagerState, TensorMapTy,
@@ -1148,6 +1150,158 @@ class RawMLIROperation(Operation, opcode="mlir.operation",
     mlir_attributes: tuple[tuple[str, mlir.Attribute], ...] = attribute(default=())
 
 
+def _is_none(var: Var):
+    return var.is_constant() and var.get_constant() is None
+
+
+_TCGEN05_LD_VALID_COUNTS_BY_SHAPE = {
+    Tcgen05LdStShape.SHAPE_16X64B: (1, 2, 4, 8, 16, 32, 64, 128),
+    Tcgen05LdStShape.SHAPE_16X128B: (1, 2, 4, 8, 16, 32, 64),
+    Tcgen05LdStShape.SHAPE_16X256B: (1, 2, 4, 8, 16, 32),
+    Tcgen05LdStShape.SHAPE_32X32B: (1, 2, 4, 8, 16, 32, 64, 128),
+    Tcgen05LdStShape.SHAPE_16X32BX2: (1, 2, 4, 8, 16, 32, 64, 128),
+}
+
+_TCGEN05_LD_REGISTERS_PER_COUNT = {
+    Tcgen05LdStShape.SHAPE_16X64B: 1,
+    Tcgen05LdStShape.SHAPE_16X128B: 2,
+    Tcgen05LdStShape.SHAPE_16X256B: 4,
+    Tcgen05LdStShape.SHAPE_32X32B: 1,
+    Tcgen05LdStShape.SHAPE_16X32BX2: 1,
+}
+
+
+@impl(stub.tcgen05_alloc)
+def tcgen05_alloc_impl(
+    addr: Var,
+    ncols: Var,
+    cta_group: Var,
+) -> None:
+    addr_info = PointerInfo(require_scalar_pointer_type(addr).dtype)
+    if addr_info.memory_space not in (MemorySpace.SHARED_CLUSTER, MemorySpace.SHARED):
+        raise TileTypeError(
+            "Expected pointer to be in shared or shared-cluster address space"
+        )
+    ncols = implicit_cast(ncols, datatype.int32, "cast ncols to int32")
+    cta_group = require_constant_enum(cta_group, CTAGroup)
+    intrinsic = "llvm.nvvm.tcgen05.alloc.shared." + cta_group.value
+    add_operation_variadic(
+        RawNVVMIntrinsic,
+        (),
+        intrinsic=intrinsic,
+        operands_=(addr, ncols),
+    )
+
+
+@impl(stub.tcgen05_dealloc)
+def tcgen05_dealloc_impl(
+    addr: Var,
+    ncols: Var,
+    cta_group: Var,
+) -> None:
+    addr_info = PointerInfo(require_scalar_pointer_type(addr).dtype)
+    if addr_info.memory_space != MemorySpace.TENSOR:
+        raise TileTypeError(
+            "Expected pointer to be in tensor address space"
+        )
+    ncols = implicit_cast(ncols, datatype.int32, "cast ncols to int32")
+    cta_group = require_constant_enum(cta_group, CTAGroup)
+    intrinsic = "llvm.nvvm.tcgen05.dealloc." + cta_group.value
+    add_operation_variadic(
+        RawNVVMIntrinsic,
+        (),
+        intrinsic=intrinsic,
+        operands_=(addr, ncols),
+    )
+
+
+@impl(stub.tcgen05_commit)
+def tcgen05_commit_impl(
+    mbar: Var,
+    multicast_mask: Var,
+    cta_group: Var,
+):
+    require_mbarrier_ptr(mbar)
+    operands = [mbar]
+    cta_group = require_constant_enum(cta_group, CTAGroup)
+    intrinsic = "llvm.nvvm.tcgen05.commit"
+    if not _is_none(multicast_mask):
+        intrinsic += '.mc'
+        mask = implicit_cast(multicast_mask, datatype.int16, "multicast mask")
+        operands.append(mask)
+    intrinsic += '.shared.' + cta_group.value
+    add_operation_variadic(
+        RawNVVMIntrinsic,
+        (),
+        intrinsic=intrinsic,
+        operands_=tuple(operands),
+    )
+
+
+@impl(stub.tcgen05_ld)
+def tcgen05_ld_impl(
+    shape: Var,
+    tmem_addr: Var,
+    count: Var,
+    pack: Var,
+    offset: Var,
+) -> Var:
+    shape_value = require_constant_enum(shape, Tcgen05LdStShape)
+    count_value = require_constant_int(count)
+    valid_counts = _TCGEN05_LD_VALID_COUNTS_BY_SHAPE[shape_value]
+    if count_value not in valid_counts:
+        valid = ", ".join(str(value) for value in valid_counts)
+        raise TileValueError(
+            f"Expected count for {shape_value.name} to be one of {valid}, got {count_value}"
+        )
+
+    has_offset = not _is_none(offset)
+    uses_offset = shape_value is Tcgen05LdStShape.SHAPE_16X32BX2
+    if uses_offset and not has_offset:
+        raise TileTypeError("tcgen05_ld with SHAPE_16X32BX2 requires offset")
+    if has_offset and not uses_offset:
+        raise TileTypeError("tcgen05_ld offset is only valid with SHAPE_16X32BX2")
+
+    operands = [
+        implicit_cast(
+            tmem_addr,
+            opaque_pointer_dtype(MemorySpace.TENSOR),
+            "cast tcgen05_ld tmem_addr to a tensor-memory pointer",
+        ),
+    ]
+    if has_offset:
+        operands.append(
+            implicit_cast(
+                offset,
+                datatype.int64,
+                "cast tcgen05_ld offset to int64",
+            )
+        )
+
+    if _is_none(pack):
+        operands.append(strictly_typed_const(False, BOOL_TY))
+    else:
+        operands.append(
+            implicit_cast(pack, datatype.bool_, "cast tcgen05_ld pack to bool")
+        )
+
+    count = require_constant_int(count)
+    shape = require_constant_enum(shape, Tcgen05LdStShape)
+    intrinsic = f"llvm.nvvm.tcgen05.ld.{shape.value}.x{count}"
+
+    total_registers = count * _TCGEN05_LD_REGISTERS_PER_COUNT[shape]
+    shape = () if total_registers == 1 else (total_registers,)
+    result_type = TileTy(datatype.int32, shape)
+
+    [result] = add_operation_variadic(
+        RawNVVMIntrinsic,
+        (result_type,),
+        intrinsic=intrinsic,
+        operands_=tuple(operands),
+    )
+    return result
+
+
 def require_scalar_tile_type(value: Var, valid_dtypes: tuple[datatype.DType, ...] = ()) -> TileTy:
     value_ty = require_tile_type(value)
     if value_ty.ndim != 0:
@@ -1592,10 +1746,6 @@ def mbarrier_test_wait_parity_impl(
         intrinsic=intrinsic,
         operands_=(mbar, parity),
     )
-
-
-def _is_none(var: Var):
-    return var.is_constant() and var.get_constant() is None
 
 
 @impl(stub.mbarrier_try_wait)

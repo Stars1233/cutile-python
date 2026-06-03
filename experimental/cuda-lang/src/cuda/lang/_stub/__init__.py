@@ -74,6 +74,15 @@ from .tensor_map import (
     tensor_map_tiled,
 )
 
+from .tcgen05 import (
+    CTAGroup,
+    Tcgen05LdStShape,
+    tcgen05_alloc,
+    tcgen05_dealloc,
+    tcgen05_commit,
+    tcgen05_ld,
+)
+
 from cuda.lang._enums import MbarrierScope
 
 from .mbarrier import (
@@ -153,6 +162,12 @@ __all__ = (
     "TensorMapSwizzle",
     "TensorMap",
     "tensor_map_tiled",
+    "CTAGroup",
+    "Tcgen05LdStShape",
+    "tcgen05_alloc",
+    "tcgen05_dealloc",
+    "tcgen05_commit",
+    "tcgen05_ld",
     "nanosleep",
     "MbarrierScope",
     "mbarrier_init",

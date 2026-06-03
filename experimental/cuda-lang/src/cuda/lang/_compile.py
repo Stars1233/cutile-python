@@ -40,7 +40,7 @@ from cuda.lang._ir.ops import cuda_lang_impl_registry
 from ._ir._host_program import HostProgram, get_host_programs_by_var
 
 
-def mlir2cubin(mlir_text: str, gpu_name: str, arch: str) -> bytes:
+def mlir2cubin(mlir_text: str, gpu_name: str, arch: str) -> tuple[bytes, bytes]:
     executable = get_compiler_binary_path()
     argv = [executable, "-", "-o", "-", f"--gpu-name={gpu_name}", f"--arch={arch}"]
     custom_flags = os.environ.get("CUDA_LANG_MLIR2CUBIN_FLAGS", None)
@@ -68,7 +68,7 @@ def mlir2cubin(mlir_text: str, gpu_name: str, arch: str) -> bytes:
             print("==== mlir2cubin stderr: ====", file=sys.stderr)
             print(compiler_stderr, file=sys.stderr)
             print("^^^^ End of mlir2cubin stderr ^^^^", file=sys.stderr)
-    return completed.stdout
+    return completed.stdout, completed.stderr
 
 
 def get_compiler_binary_path() -> str:
@@ -116,6 +116,7 @@ class CompilationResult:
     hoisted_tensor_maps: list[HoistedTensorMap]
     final_ir: ir.Region | None = None
     mlir: str | None = None
+    compiler_stderr: bytes | None = None
     cubin: bytes | None = None
 
 
@@ -216,7 +217,7 @@ def compile_simt(
         gpu_name = gpu_name or cc.gpu_name + suffix
         arch = arch or cc.arch + suffix
 
-    cubin = mlir2cubin(str(mlir_module), gpu_name=gpu_name, arch=arch)
+    cubin, err = mlir2cubin(str(mlir_module), gpu_name=gpu_name, arch=arch)
 
     return CompilationResult(
         kernel_signatures=[signature],
@@ -224,6 +225,7 @@ def compile_simt(
         hoisted_tensor_maps=hoisted_tensor_maps,
         final_ir=flattened_ir,
         mlir=str(mlir_module),
+        compiler_stderr=err,
         cubin=cubin,
     )
 

@@ -82,7 +82,7 @@ def construct_1d_memref_from(
 
 def mlir_launch(mlir_module: mlir.Operation, entrypoint: str, args: tuple):
     cc = get_compute_capability()
-    cubin = mlir2cubin(str(mlir_module), gpu_name=cc.gpu_name, arch=cc.arch)
+    cubin, _ = mlir2cubin(str(mlir_module), gpu_name=cc.gpu_name, arch=cc.arch)
     kernel = _HackKernel(cubin, entrypoint, len(args))
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, args)
 
