@@ -4,6 +4,7 @@
 Release Notes
 =============
 
+{#release-1-4-0}
 1.4.0 (2026-05-26)
 ------------------
 
@@ -73,6 +74,7 @@ star "\*" expression, and frozen dataclasses, as well as integration with JAX.
 ### Ecosystem
 - Add support for JAX via {py:func}`ct.jax.cutile_call() <cuda.tile.jax.cutile_call>`.
 
+{#release-1-3-0}
 1.3.0 (2026-04-20)
 ------------------
 ### Features
@@ -99,6 +101,7 @@ star "\*" expression, and frozen dataclasses, as well as integration with JAX.
 ### ABI Changes
 - Change kernel ABI convention to omit parameters annotated with `cuda.tile.Constant`.
 
+{#release-1-2-0}
 1.2.0 (2026-03-05)
 ------------------
 ### CTK 13.2 features
@@ -145,6 +148,7 @@ star "\*" expression, and frozen dataclasses, as well as integration with JAX.
 - Add `TileUnsupportedFeatureError` to the public API.
 
 
+{#release-1-1-0}
 1.1.0 (2026-01-30)
 ------------------
 ### Features
@@ -178,6 +182,7 @@ star "\*" expression, and frozen dataclasses, as well as integration with JAX.
 - Add `ct.abs()` for completeness.
 
 
+{#release-1-0-1}
 1.0.1 (2025-12-18)
 ------------------
 ### Bug Fixes
@@ -191,6 +196,7 @@ star "\*" expression, and frozen dataclasses, as well as integration with JAX.
 - Support `is not None` comparison.
 
 
+{#release-1-0-0}
 1.0.0 (2025-12-02)
 ------------------
 Initial release.

@@ -30,6 +30,10 @@ extensions = [
     'myst_parser',  # for markdown support
 ]
 
+myst_enable_extensions = [
+    'attrs_block',
+]
+
 templates_path = ['_templates']
 exclude_patterns = ['references.rst', 'stubs', 'generated/includes']
 
