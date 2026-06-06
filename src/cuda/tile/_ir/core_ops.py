@@ -27,7 +27,7 @@ from cuda.tile._ir.type import Type, DTypeSpec, TensorLikeTy, TupleTy, TupleValu
     DataclassInfo, DataclassTy, DataclassValue, BoundMethodValue, BoundMethodTy, InvalidType, \
     ContextManagerTy, ContextManagerLifecycle, LiveCapturedScope, ClosureTy, ClosureValue, \
     RangeIterType, RangeValue, TypeTy, ModuleTy, NONE, SliceType, StringTy, FormattedStringTy, \
-    StringFormat, FormattedStringValue, FormattedPiece, DictTy, DictValue
+    StringFormat, FormattedStringValue, FormattedPiece, DictTy, DictValue, EnumTy
 from cuda.tile._ir.typing_support import type_of_constant_python_value, \
     loose_type_of_constant_python_value, get_dataclass_info, as_third_party_dtype_spec
 from cuda.tile._ir2bytecode import BytecodeContext
@@ -648,6 +648,16 @@ async def getattr_dataclass_impl(object: Var, name: Var):
     else:
         return sym2var(cls_attr, constant_only=True)
 
+
+@impl(getattr, overload=(EnumTy, "name"))
+def getattr_enum_name_impl(object: Var, name: Var):
+    return sym2var(object.get_constant().name)
+
+
+@impl(getattr, overload=(EnumTy, "value"))
+def getattr_enum_value_impl(object: Var, name: Var):
+    return sym2var(object.get_constant().value)
+
 # ===========================================================================================
 
 
@@ -705,6 +715,12 @@ def comparison_dtype_spec_impl(fn: str, x: Var, y: Var):
 def comparison_string_impl(fn: str, x: Var, y: Var):
     from cuda.tile._ir.arithmetic_ops import binop_propagate_constant
     return binop_propagate_constant(fn, x.get_type().value, y.get_type().value, None)
+
+
+@comparison_operator_impl(_registry, EnumTy, EnumTy)
+def comparison_enum_impl(fn: str, x: Var, y: Var):
+    from cuda.tile._ir.arithmetic_ops import binop_propagate_constant
+    return binop_propagate_constant(fn, x.get_constant(), y.get_constant(), None)
 
 
 # ===========================================================================================
@@ -787,6 +803,9 @@ def print_impl(args: tuple[Var, ...], sep: Var, end: Var) -> None:
             leaf_vars.append(var)
         elif isinstance(ty, DTypeSpec):
             format_parts.append(str(ty.dtype))
+        elif isinstance(ty, EnumTy):
+            member = var.get_constant()
+            format_parts.append(f"{ty.enum_ty.__name__}.{member.name}")
         else:
             raise TileTypeError(f"Can't print value of type {ty}")
 

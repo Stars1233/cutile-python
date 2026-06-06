@@ -6,6 +6,7 @@ import math
 import ctypes
 import sys
 import traceback
+from enum import Enum
 import torch
 import numpy as np
 import pytest
@@ -239,6 +240,19 @@ def kernel_print_dtype(x, TILE: ct.Constant[int]):
     print(f"dtype = {tx.dtype}")
 
 
+class _PrintColor(Enum):
+    RED = 0
+    GREEN = 1
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_print_enum(x, TILE: ct.Constant[int]):
+    ct.print(_PrintColor.GREEN)
+    print(_PrintColor.GREEN)
+    ct.print(f"color = {_PrintColor.RED}")
+    print(f"color = {_PrintColor.RED}")
+
+
 _KERNELS_MAP_ = {
     "kernel_printf": kernel_printf,
     "kernel_print": kernel_print,
@@ -257,6 +271,7 @@ _KERNELS_MAP_ = {
     "kernel_print_tuple_w_tile": kernel_print_tuple_w_tile,
     "kernel_print_tuple_tile_shape": kernel_print_tuple_tile_shape,
     "kernel_print_dtype": kernel_print_dtype,
+    "kernel_print_enum": kernel_print_enum,
 }
 
 
@@ -469,6 +484,14 @@ def test_ct_print_dtype():
     assert actual_outs[1] == "float32"          # print(tx.dtype)
     assert actual_outs[2] == "dtype = float32"  # ct.print(f"dtype = {tx.dtype}")
     assert actual_outs[3] == "dtype = float32"  # print(f"dtype = {tx.dtype}")
+
+
+def test_ct_print_enum():
+    actual_outs = _run_kernel(kernel_print_enum, (8,), "float32", 8)
+    assert actual_outs[0] == "_PrintColor.GREEN"          # ct.print(_PrintColor.GREEN)
+    assert actual_outs[1] == "_PrintColor.GREEN"          # print(_PrintColor.GREEN)
+    assert actual_outs[2] == "color = _PrintColor.RED"   # ct.print(f"color = {_PrintColor.RED}")
+    assert actual_outs[3] == "color = _PrintColor.RED"   # print(f"color = {_PrintColor.RED}")
 
 
 if __name__ == "__main__":

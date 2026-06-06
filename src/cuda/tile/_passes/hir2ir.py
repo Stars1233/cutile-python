@@ -5,13 +5,16 @@ import inspect
 import sys
 from contextlib import contextmanager
 import dataclasses
+
+from enum import Enum
 from typing import Sequence, Mapping, Callable
 
 from .ast2hir import get_function_hir
 from .. import TileTypeError
 from .._coroutine_util import resume_after, run_coroutine
 from .._datatype import PointerInfo
-from .._exception import Loc, FunctionDesc, TileInternalError, TileError, TileRecursionError
+from .._exception import Loc, FunctionDesc, TileInternalError, TileError, TileRecursionError, \
+    TileValueError
 from .._execution import is_stub
 from .._ir import hir, ir
 from .._ir.ir import Var, IRContext
@@ -302,6 +305,17 @@ async def call(callee_var: Var, args, kwargs) -> Var | None:
     elif isinstance(callee_ty, TypeTy) and callee_ty.ty is PointerInfo:
         arg_list = _bind_args(_POINTER_INFO_SIGNATURE, "PointerInfo", args, kwargs)
         return await _call_builtin(PointerInfo, arg_list, builder)
+    elif isinstance(callee_ty, TypeTy) and issubclass(callee_ty.ty, Enum):
+        if len(args) != 1 or kwargs:
+            raise TileTypeError("Enum constructor takes exactly one positional argument")
+        arg = args[0]
+        if not arg.is_constant():
+            raise TileTypeError("Enum constructor argument must be a constant")
+        val = arg.get_constant()
+        try:
+            return loosely_typed_const(callee_ty.ty(val))
+        except ValueError:
+            raise TileValueError(f"{val!r} is not a valid {callee_ty.ty.__name__}")
     else:
         raise TileTypeError(f"Cannot call an object of type {callee_ty}")
 

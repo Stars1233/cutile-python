@@ -338,7 +338,7 @@ def wmma_gemm_kernel(cfg: WmmaConfig) -> cl.kernel:
         if tid >= 32:
             return
 
-        if static_eval(config.acc_layout == wmma.Layout.COL_MAJOR):
+        if config.acc_layout == wmma.Layout.COL_MAJOR:
             c_ptr = c.get_element_pointer((tile_col, tile_row))
             acc_ldm = global_m
         else:
@@ -353,14 +353,14 @@ def wmma_gemm_kernel(cfg: WmmaConfig) -> cl.kernel:
         )
 
         for kk in range(0, global_k, wmma_k):
-            if static_eval(config.a_layout == wmma.Layout.COL_MAJOR):
+            if config.a_layout == wmma.Layout.COL_MAJOR:
                 a_ptr = a.get_element_pointer((kk, tile_row))
                 a_ldm = global_m
             else:
                 a_ptr = a.get_element_pointer((tile_row, kk))
                 a_ldm = global_k
 
-            if static_eval(config.b_layout == wmma.Layout.ROW_MAJOR):
+            if config.b_layout == wmma.Layout.ROW_MAJOR:
                 b_ptr = b.get_element_pointer((kk, tile_col))
                 b_ldm = global_n
             else:
@@ -374,7 +374,7 @@ def wmma_gemm_kernel(cfg: WmmaConfig) -> cl.kernel:
                 config.satf,
             )
 
-        if static_eval(config.acc_layout == wmma.Layout.COL_MAJOR):
+        if config.acc_layout == wmma.Layout.COL_MAJOR:
             d_ptr = d.get_element_pointer((tile_col, tile_row))
         else:
             d_ptr = d.get_element_pointer((tile_row, tile_col))
