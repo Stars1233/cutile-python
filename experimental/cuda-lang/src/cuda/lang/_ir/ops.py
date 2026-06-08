@@ -84,9 +84,15 @@ from cuda.tile._datatype import (
 )
 from cuda.tile._exception import TileValueError
 import cuda.lang._mlir as mlir
-from .type_checking_helpers import require_array_indices, require_scalar_type, \
-    require_pointer_type, require_signed_int_scalar_or_tuple, \
-    require_clusterlaunchcontrol_token_type
+from .type_checking_helpers import (
+    require_array_indices,
+    require_scalar_or_vector_float_type,
+    require_scalar_or_vector_type,
+    require_scalar_type,
+    require_pointer_type,
+    require_signed_int_scalar_or_tuple,
+    require_clusterlaunchcontrol_token_type,
+)
 
 from .type import (
     LocalArrayContextManagerTy, ContextManagerState, TensorMapTy,
@@ -111,6 +117,7 @@ from .ir import (
     format_var,
     LocalArrayContextManagerValue,
 )
+from .._stub import math as cl_math
 from .._stub.cluster_launch_control import clusterlaunchcontrol_try_cancel, \
     clusterlaunchcontrol_is_canceled, clusterlaunchcontrol_get_first_block_idx
 from .._stub.tensor_map import TensorMapSwizzle
@@ -1161,6 +1168,58 @@ class RawMLIROperation(Operation, opcode="mlir.operation",
     op_name: str = attribute()
     operands_: tuple[Var, ...] = operand()
     mlir_attributes: tuple[tuple[str, mlir.Attribute], ...] = attribute(default=())
+
+
+def _get_dtype(ty: ScalarTy | VectorTy):
+    match ty:
+        case ScalarTy() as st:
+            return st.dtype
+        case VectorTy() as vt:
+            return vt.element_dtype
+        case _:
+            assert False, "Match should have been exhaustive"
+
+
+@impl(cl_math.ceil, fixed_args=["math.ceil"])
+@impl(cl_math.sin, fixed_args=["math.sin"])
+@impl(cl_math.cos, fixed_args=["math.cos"])
+@impl(cl_math.tan, fixed_args=["math.tan"])
+@impl(cl_math.sinh, fixed_args=["math.sinh"])
+@impl(cl_math.cosh, fixed_args=["math.cosh"])
+@impl(cl_math.tanh, fixed_args=["math.tanh"])
+@impl(cl_math.sqrt, fixed_args=["math.sqrt"])
+@impl(cl_math.floor, fixed_args=["math.floor"])
+@impl(cl_math.log, fixed_args=["math.log"])
+@impl(cl_math.log2, fixed_args=["math.log2"])
+def math_float_unary_impl(op_name: str, x: Var):
+    x_ty = require_scalar_or_vector_float_type(x)
+    return add_operation(
+        RawMLIROperation,
+        x_ty,
+        op_name=op_name,
+        operands_=(x,),
+    )
+
+
+@impl(cl_math.abs)
+def abs_impl(x: Var) -> Var:
+    x_ty = require_scalar_or_vector_type(x)
+    x_dtype = _get_dtype(x_ty)
+    if datatype.is_float(x_dtype):
+        op_name = "math.absf"
+    elif datatype.is_integral(x_dtype):
+        # If it's unsigned, then the absolute value is the identity
+        if not datatype.is_signed(x_dtype):
+            return x
+        op_name = "math.absi"
+    else:
+        raise TileTypeError(f"abs() expects an arithmetic scalar, got {x_ty}")
+    return add_operation(
+        RawMLIROperation,
+        x_ty,
+        op_name=op_name,
+        operands_=(x,),
+    )
 
 
 def _is_none(var: Var):

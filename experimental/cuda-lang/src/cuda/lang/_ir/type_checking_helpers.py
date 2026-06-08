@@ -9,7 +9,7 @@ from cuda.tile._ir.op_impl import require_array_type
 from cuda.tile._ir.ops import implicit_cast
 from cuda.tile._ir.type import TupleTy, TupleValue
 from cuda.tile._datatype import is_integral, is_signed
-from cuda.lang._datatype import clusterlaunchcontrol_token
+from cuda.lang._datatype import clusterlaunchcontrol_token, is_float
 
 
 def require_array_indices(array: Var, indices: Var) -> tuple[Var, ...]:
@@ -82,6 +82,35 @@ def require_vector_type(var: Var, length: int | None = None) -> VectorTy:
         raise make_type_checking_error(f"Expected a vector, got {ty}", var)
     if length is not None and ty.length != length:
         raise make_type_checking_error(f"Expected a vector of length {length}, got {ty}", var)
+    return ty
+
+
+def require_scalar_or_vector_float_type(var: Var) -> VectorTy | ScalarTy:
+    ty = var.get_type()
+
+    def err():
+        return make_type_checking_error(
+            f"Expected a scalar or vector float type, but got {ty}", var
+        )
+
+    match ty:
+        case ScalarTy() as st:
+            dtype = st.dtype
+        case VectorTy() as vt:
+            dtype = vt.element_dtype
+        case _:
+            raise err()
+
+    if not is_float(dtype):
+        raise err()
+
+    return ty
+
+
+def require_scalar_or_vector_type(var: Var) -> VectorTy | ScalarTy:
+    ty = var.get_type()
+    if not isinstance(ty, ScalarTy | VectorTy):
+        raise make_type_checking_error(f"Expected scalar or vector type but got {ty}", var)
     return ty
 
 
