@@ -13,12 +13,12 @@ from cuda.tile.compilation import (
 )
 from cuda.tile._cext import CallingConvention
 from cuda.tile._exception import TileTypeError
-from typing import Sequence
+from typing import Annotated, Sequence
 import torch
 
 
 def get_ir(func, args: Sequence[ParameterConstraint]) -> Block:
-    sig = KernelSignature(args, CallingConvention.cutile_python_v1())
+    sig = KernelSignature(args, CallingConvention.cutile_python_v2())
     [body] = compile_tile(func, [sig], return_final_ir=True, return_cubin=False).final_ir
     return body
 
@@ -56,6 +56,7 @@ def array_arg(dtype: ct.DType = ct.float32,
               stride_div: Sequence[int] | None = None,
               shape_div: Sequence[int] | None = None,
               stride_const: Sequence[int | None] | None = None,
+              shape_const: Sequence[int | None] | None = None,
               ) -> ArrayConstraint:
     if stride_div is None:
         stride_div = (1,) * ndim
@@ -66,6 +67,7 @@ def array_arg(dtype: ct.DType = ct.float32,
                            base_addr_divisible_by=base_div,
                            stride_lower_bound_incl=0,
                            stride_constant=stride_const,
+                           shape_constant=shape_const,
                            stride_divisible_by=stride_div,
                            shape_divisible_by=shape_div,
                            alias_groups=[],
@@ -96,6 +98,28 @@ def test_seed_from_array_arg():
 
     body = get_ir(kernel, (array_arg(ndim=2, base_div=16, stride_div=(8, 1), shape_div=(4, 1)),))
     assert get_op_divby(body, MakeTensorView) == [{'base_ptr': 16, 'shape[0]': 4, 'stride[0]': 8}]
+
+
+def test_static_shape_seed_from_array_arg():
+    def kernel(x: Annotated[ct.Array, ct.ArrayAnnotation(static_shape_dims=(0,))]):
+        ct.store(x, (0, 0), 0)
+
+    body = get_ir(kernel, (array_arg(ndim=2, shape_const=(16, None), stride_const=(None, 1)),))
+    [view] = [op for op in body.traverse() if isinstance(op, MakeTensorView)]
+    static_dim = view.result_var.get_aggregate().shape[0]
+    assert len(view.shape) == 1
+    assert static_dim.is_constant()
+    assert static_dim.get_constant() == 16
+
+
+def test_shape_constant_without_annotation_is_dynamic():
+    def kernel(x):
+        ct.store(x, (0, 0), 0)
+
+    body = get_ir(kernel, (array_arg(ndim=2, shape_const=(16, None), stride_const=(None, 1)),))
+    [view] = [op for op in body.traverse() if isinstance(op, MakeTensorView)]
+    assert len(view.shape) == 2
+    assert not view.result_var.get_aggregate().shape[0].is_constant()
 
 
 def test_unconstarined_array():
@@ -207,6 +231,25 @@ def test_assume_divisible_by_error_on_nonpositive_divisor():
         get_ir(kernel, (
             array_arg(ndim=1, stride_const=(1,)),
             ScalarConstraint(ct.int32),
+        ))
+
+
+def test_assume_divisible_by_error_on_contradicting_constant():
+    def kernel(n: ct.Constant[int]):
+        n = ct.assume_divisible_by(n, 4)
+
+    with pytest.raises(TileTypeError, match="not divisible"):
+        get_ir(kernel, (ConstantConstraint(7),))
+
+
+def test_assume_divisible_by_error_on_contradicting_constant_shape():
+    def kernel(x: Annotated[ct.Array, ct.ArrayAnnotation(static_shape_dims=(0,))]):
+        n = ct.assume_divisible_by(x.shape[0], 4)
+        ct.store(x, (n,), 0)
+
+    with pytest.raises(TileTypeError, match="not divisible"):
+        get_ir(kernel, (
+            array_arg(ndim=1, shape_const=(7,), stride_const=(1,)),
         ))
 
 

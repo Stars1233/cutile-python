@@ -1,0 +1,1 @@
+- Added support for specializing array shape dimensions to their launch-time values, making them compile-time constants inside the kernel. Annotate the parameter with `Annotated[ct.Array, ct.ArrayAnnotation(static_shape_dims=(...))]`, listing the dimensions to specialize. Negative indices are supported (e.g. `static_shape_dims=(0, -1)`).

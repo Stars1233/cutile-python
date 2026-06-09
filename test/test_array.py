@@ -2,7 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 import pytest
+from typing import Annotated
+from unittest.mock import patch
 
+import cuda.tile
 import cuda.tile as ct
 import torch
 import math
@@ -109,3 +112,28 @@ def test_int64_index_overflow_without_annotation():
         ct.launch(torch.cuda.current_stream(),
                   (1,),
                   kernel, (x, out))
+
+
+@ct.kernel
+def load_static_shaped(
+        x: Annotated[ct.Array, ct.ArrayAnnotation(static_shape_dims=(0, 1))], out):
+    t = ct.load(x, (0, 0), (16, 16))
+    ct.store(out, (0, 0), t)
+
+
+def test_static_shape_standalone_recompile():
+    k = cuda.tile.kernel(load_static_shaped._pyfunc)
+    shapes = [(16, 16), (32, 32), (16, 16)]
+    with patch('cuda.tile._compile.compile_tile',
+               side_effect=cuda.tile._compile.compile_tile) as mock_compile:
+        for shape in shapes:
+            x = torch.randint(0, 100, shape, dtype=torch.int32, device='cuda')
+            out = torch.zeros((16, 16), dtype=torch.int32, device='cuda')
+            ct.launch(torch.cuda.current_stream(), (1,), k, (x, out))
+            assert_equal(out, x[:16, :16])
+    assert mock_compile.call_count == 2
+
+
+def test_static_shape_annotation_validation():
+    with pytest.raises(TypeError, match="must be int"):
+        ct.ArrayAnnotation(static_shape_dims=(False,))

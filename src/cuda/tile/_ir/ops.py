@@ -624,6 +624,13 @@ class AssumeDivBy(Operation, opcode="assume_div_by"):
 def assume_div_by(x: Var, divisor: int | None) -> Var:
     if divisor is None or divisor == 1 or CUDA_TILE_TESTING_DISABLE_DIV:
         return x
+    if x.is_constant():
+        val = x.get_constant()
+        if val % divisor != 0:
+            raise TileTypeError(
+                f"Value {val} is not divisible by {divisor}: "
+                f"`assume_divisible_by` contradicts a known constant")
+        return x
     return add_operation(AssumeDivBy, x.get_type(), x=x, divisor=divisor)
 
 
@@ -3321,7 +3328,15 @@ def store_advanced_impl(array: Var, indices: Var, tile: Var,
 def _unflatten_aggregate_array_impl(val: ArrayValue, ty: ArrayTy, result_var: Var):
     assert isinstance(val, ArrayValue)
     base_ptr = val.base_ptr
-    shape = tuple(assume_bounded(x, 0, None) for x in val.shape)
+    all_shape = []
+    dynamic_shape = []
+    for x, s in zip(val.shape, ty.shape, strict=True):
+        if s is None:
+            x = assume_bounded(x, 0, None)
+            dynamic_shape.append(x)
+        else:
+            x = strictly_typed_const(s, TileTy(ty.index_dtype))
+        all_shape.append(x)
 
     all_strides = []
     dynamic_strides = []
@@ -3331,9 +3346,10 @@ def _unflatten_aggregate_array_impl(val: ArrayValue, ty: ArrayTy, result_var: Va
             dynamic_strides.append(x)
         all_strides.append(x)
 
-    operands = dict(base_ptr=base_ptr, shape=shape, dynamic_strides=tuple(dynamic_strides))
+    operands = dict(base_ptr=base_ptr, shape=tuple(dynamic_shape),
+                    dynamic_strides=tuple(dynamic_strides))
     ret = Builder.get_current().add_operation(MakeTensorView, ty, operands, result_var)
-    ret.set_aggregate(ArrayValue(base_ptr, shape, tuple(all_strides)))
+    ret.set_aggregate(ArrayValue(base_ptr, tuple(all_shape), tuple(all_strides)))
     return ret
 
 

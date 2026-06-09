@@ -516,6 +516,7 @@ struct LeafFlags {
     bool constant    = false;
     bool int64_index = false;
     bool int64_param = false;
+    Vec<int64_t> static_shape;  // array shape dims specialized to launch-time values.
 };
 
 struct PythonArgProfile {
@@ -592,6 +593,8 @@ struct ArrayType {
     DLDataType dtype;
     size_t ndim;
     unsigned index_bitwidth;
+    // Bitmask of static dimensions.
+    uint64_t static_dims_mask = 0;
 };
 
 struct ArrayRepr {
@@ -675,7 +678,7 @@ static ArrayType unpack_array_type(int64_t c) {
     uint32_t dtype = u & 0xffffffff;
     uint32_t ndim = (u >> 32) & 0x7fffffff;
     unsigned ibw = ((u >> 63) & 1) ? 64 : 32;
-    return {dtype_from_uint(dtype), ndim, ibw};
+    return {dtype_from_uint(dtype), ndim, ibw, 0};
 }
 
 static Status fill_row_major_strides(unsigned index_bitwidth, Word* repr, size_t ndim) {
@@ -773,20 +776,71 @@ struct ConstantCursor {
 };
 
 
+static Result<uint64_t> normalize_static_dims(const Vec<int64_t>& dims, size_t ndim) {
+    uint64_t mask = 0;
+    for (int64_t dim : dims) {
+        int64_t nd = dim < 0 ? dim + static_cast<int64_t>(ndim) : dim;
+        if (nd < 0 || static_cast<size_t>(nd) >= ndim)
+            return raise(PyExc_ValueError,
+                         "static_shape_dims contains axis %lld, but array rank is %zu",
+                         static_cast<long long>(dim), ndim);
+        if (nd >= 64)
+            return raise(PyExc_ValueError,
+                         "static_shape_dims axis %lld is out of range",
+                         static_cast<long long>(dim));
+        uint64_t bit = 1ULL << static_cast<size_t>(nd);
+        if (mask & bit)
+            return raise(PyExc_ValueError,
+                         "static_shape_dims contains duplicate axis %lld",
+                         static_cast<long long>(dim));
+        mask |= bit;
+    }
+    return mask;
+}
+
 struct ArrayTypeConstantBuilder {
     void* device_ptr = nullptr;
     uint64_t bits = -1;
+    const Word* static_shape_words = nullptr;
 
-    void update(const Arena& arena, const ArrayRepr& ar) {
+    Status update(const Arena& arena, const ArrayRepr& ar) {
         const Word* repr = arena.data() + ar.repr;
         device_ptr = repr[0].device_ptr;
         bits &= compute_array_specialization_bits(
                     repr, ar.arrty.ndim, ar.arrty.dtype.bits * ar.arrty.dtype.lanes,
                     ar.arrty.index_bitwidth).u64;
+
+        const Word* shape_words = repr + 1;
+        if (!static_shape_words) {
+            static_shape_words = shape_words;
+        } else {
+            // When several arrays share one constraint (e.g. the items of a
+            // list), the kernel is specialized to a single set of compile-time
+            // shape values, so every array must agree on those dims.
+            uint64_t mask = ar.arrty.static_dims_mask;
+            for (size_t d = 0; mask; ++d, mask >>= 1) {
+                if (!(mask & 1)) continue;
+                int64_t expected = static_shape_words[d].i64;
+                int64_t actual = shape_words[d].i64;
+                if (expected != actual)
+                    return raise(PyExc_ValueError,
+                                 "Arrays in list vary in static shape at axis %zu (%lld vs %lld)",
+                                 d,
+                                 static_cast<long long>(expected),
+                                 static_cast<long long>(actual));
+            }
+        }
+        return OK;
     }
 
     void finalize(const DriverApi* driver, const ArrayType& arrty, LaunchHelper& helper) {
         helper.constants.push_back(pack_array_type(arrty));
+        helper.constants.push_back(static_cast<int64_t>(arrty.static_dims_mask));
+        uint64_t mask = arrty.static_dims_mask;
+        for (size_t d = 0; mask; ++d, mask >>= 1) {
+            if (mask & 1)
+                helper.constants.push_back(static_shape_words[d].i64);
+        }
         if (!helper.cuda_context) {
             driver->cuPointerGetAttribute(&helper.cuda_context, CU_POINTER_ATTRIBUTE_CONTEXT,
                     reinterpret_cast<CUdeviceptr>(device_ptr));
@@ -800,6 +854,7 @@ struct ArrayTypeConstantBuilder {
 // into an ArrayConstraint object.
 static PyPtr parse_array_constraint(ConstantCursor& cursor) {
     ArrayType arrty = unpack_array_type(cursor.next());
+    arrty.static_dims_mask = static_cast<uint64_t>(cursor.next());
     ArraySpecializationBits special_bits;
     special_bits.u64 = cursor.next();
     unsigned index_bitwidth = arrty.index_bitwidth;
@@ -824,6 +879,9 @@ static PyPtr parse_array_constraint(ConstantCursor& cursor) {
 
     PyPtr constant_strides = steal(PyTuple_New(arrty.ndim));
     if (!constant_strides) return {};
+
+    PyPtr constant_shape = steal(PyTuple_New(arrty.ndim));
+    if (!constant_shape) return {};
 
     PyPtr stride_divisible_by = steal(PyTuple_New(arrty.ndim));
     if (!stride_divisible_by) return {};
@@ -856,14 +914,19 @@ static PyPtr parse_array_constraint(ConstantCursor& cursor) {
 
         obj = special_bits.is_shape_divisible_by_16(i) ? sixteen.get() : one.get();
         PyTuple_SET_ITEM(shape_divisible_by.get(), i, Py_NewRef(obj));
+
+        bool is_static = (arrty.static_dims_mask >> i) & 1;
+        obj = is_static ? PyLong_FromLongLong(cursor.next()) : Py_None;
+        PyTuple_SET_ITEM(constant_shape.get(), i, Py_NewRef(obj));
     }
 
     PyPtr kwargs = steal(Py_BuildValue(
-            "{sO sI sO sO sO s() sO sO sO sO}",
+            "{sO sI sO sO sO sO s() sO sO sO sO}",
             "dtype", dtype.get(),
             "ndim", static_cast<unsigned>(arrty.ndim),
             "index_dtype", index_dtype.get(),
             "stride_constant", constant_strides.get(),
+            "shape_constant", constant_shape.get(),
             "stride_lower_bound_incl", zero.get(),
             "alias_groups",
             "may_alias_internally", special_bits.disjoint_elements ? Py_False : Py_True,
@@ -893,6 +956,7 @@ static PyPtr parse_array_constraint(ConstantCursor& cursor) {
 
 
 static Result<ArrayRepr> arrayrepr_cuda_array_iface(PyObject* pyobj, unsigned index_bitwidth,
+                                                    const Vec<int64_t>& static_shape_dims,
                                                     Arena& arena) {
     PyPtr dict = steal(PyObject_GetAttr(pyobj, g___cuda_array_interface___pyunicode));
     if (!PyDict_Check(dict.get())) {
@@ -961,17 +1025,23 @@ static Result<ArrayRepr> arrayrepr_cuda_array_iface(PyObject* pyobj, unsigned in
                                       " absent, None, or a tuple");
     }
 
+    Result<uint64_t> norm_dims =
+        normalize_static_dims(static_shape_dims, static_cast<size_t>(ndim));
+    if (!norm_dims.is_ok()) return ErrorRaised;
+
     return ArrayRepr {
         .arrty = {
             .dtype = *dtype,
             .ndim = static_cast<size_t>(ndim),
-            .index_bitwidth = index_bitwidth
+            .index_bitwidth = index_bitwidth,
+            .static_dims_mask = *norm_dims,
         },
         .repr = repr_offset
     };
 }
 
 static Result<ArrayRepr> arrayrepr_dlpack_common(PyObject* dlpack_capsule, unsigned index_bitwidth,
+                                                 const Vec<int64_t>& static_shape_dims,
                                                  Arena& arena) {
     void* ptr = PyCapsule_GetPointer(dlpack_capsule, "dltensor");
     if (!ptr) return ErrorRaised;
@@ -1009,11 +1079,15 @@ static Result<ArrayRepr> arrayrepr_dlpack_common(PyObject* dlpack_capsule, unsig
         }
     }
 
+    Result<uint64_t> norm_dims = normalize_static_dims(static_shape_dims, ndim);
+    if (!norm_dims.is_ok()) return ErrorRaised;
+
     ArrayRepr ret = {
         .arrty = {
             .dtype = tensor->dl_tensor.dtype,
             .ndim = ndim,
-            .index_bitwidth = index_bitwidth
+            .index_bitwidth = index_bitwidth,
+            .static_dims_mask = *norm_dims,
         },
         .repr = repr_offset
     };
@@ -1044,6 +1118,7 @@ static Result<DLDataType> dtype_from_torch_dtype(PyObject* torch_dtype) {
 }
 
 static Result<ArrayRepr> arrayrepr_torch_tensor_pymethod(PyObject* tensor, unsigned index_bitwidth,
+                                                         const Vec<int64_t>& static_shape_dims,
                                                          Arena& arena) {
     PyPtr data_ptr = steal(PyObject_CallMethod(tensor, "data_ptr", nullptr));
     if (!data_ptr) return ErrorRaised;
@@ -1113,17 +1188,22 @@ static Result<ArrayRepr> arrayrepr_torch_tensor_pymethod(PyObject* tensor, unsig
     if (!dtype_res.is_ok())
         return ErrorRaised;
 
+    Result<uint64_t> norm_dims = normalize_static_dims(static_shape_dims, ndim);
+    if (!norm_dims.is_ok()) return ErrorRaised;
+
     return ArrayRepr{
         .arrty = {
             .dtype = *dtype_res,
             .ndim = ndim,
             .index_bitwidth = index_bitwidth,
+            .static_dims_mask = *norm_dims,
         },
         .repr = repr_offset,
     };
 }
 
 static Result<ArrayRepr> arrayrepr_torch_tensor_dlpack(PyObject* pyobj, unsigned index_bitwidth,
+                                                       const Vec<int64_t>& static_shape_dims,
                                                        Arena& arena) {
     PyPtr dlpack_capsule = steal(PyObject_CallFunctionObjArgs(
                 g_torch_to_dlpack_func, pyobj, nullptr));
@@ -1131,13 +1211,14 @@ static Result<ArrayRepr> arrayrepr_torch_tensor_dlpack(PyObject* pyobj, unsigned
     if (!dlpack_capsule) {
         SavedException exc = save_raised_exception();
         LOG_PYTHON_ERROR("debug", exc, "Fail to convert to dlpack, use fallback path");
-        return arrayrepr_torch_tensor_pymethod(pyobj, index_bitwidth, arena);
+        return arrayrepr_torch_tensor_pymethod(pyobj, index_bitwidth, static_shape_dims, arena);
     }
 
-    return arrayrepr_dlpack_common(dlpack_capsule.get(), index_bitwidth, arena);
+    return arrayrepr_dlpack_common(dlpack_capsule.get(), index_bitwidth, static_shape_dims, arena);
 }
 
 static Result<ArrayRepr> arrayrepr_dlpack(PyObject* pyobj, unsigned index_bitwidth,
+                                          const Vec<int64_t>& static_shape_dims,
                                           Arena& arena) {
     PyPtr dlpack_method = steal(PyObject_GetAttr(pyobj, g___dlpack___pyunicode));
     if (!dlpack_method) return ErrorRaised;
@@ -1157,17 +1238,17 @@ static Result<ArrayRepr> arrayrepr_dlpack(PyObject* pyobj, unsigned index_bitwid
                 dlpack_method.get(), empty_args.get(), kwargs.get()));
     if (!dlpack_capsule) return ErrorRaised;
 
-    return arrayrepr_dlpack_common(dlpack_capsule.get(), index_bitwidth, arena);
+    return arrayrepr_dlpack_common(dlpack_capsule.get(), index_bitwidth, static_shape_dims, arena);
 }
 
 
-typedef Result<ArrayRepr> (*ArrayReprFunc)(PyObject*, unsigned, Arena&);
+typedef Result<ArrayRepr> (*ArrayReprFunc)(PyObject*, unsigned, const Vec<int64_t>&, Arena&);
 
 
 template <ArrayReprFunc F>
 static Status extract_array(const DriverApi* driver, PyObject* pyobj, unsigned index_bitwidth,
-                             LaunchHelper& helper) {
-    Result<ArrayRepr> ar = F(pyobj, index_bitwidth, helper.arena);
+                            const Vec<int64_t>& static_shape_dims, LaunchHelper& helper) {
+    Result<ArrayRepr> ar = F(pyobj, index_bitwidth, static_shape_dims, helper.arena);
     if (!ar.is_ok()) return ErrorRaised;
 
     size_t num_words = 1 + 2 * ar->arrty.ndim;
@@ -1176,7 +1257,7 @@ static Status extract_array(const DriverApi* driver, PyObject* pyobj, unsigned i
         helper.cuarg_offsets.push_back(ar->repr + i);
 
     ArrayTypeConstantBuilder builder;
-    builder.update(helper.arena, *ar);
+    if (!builder.update(helper.arena, *ar)) return ErrorRaised;
     builder.finalize(driver, ar->arrty, helper);
     return OK;
 }
@@ -1298,14 +1379,16 @@ static PyPtr parse_pyfloat_constraint(ConstantCursor& cursor, bool is_constant) 
 }
 
 static Result<ArrayRepr> get_array_repr(PythonArgKind kind, PyObject* pyobj,
-                                        unsigned index_bitwidth, Arena& arena) {
+                                        unsigned index_bitwidth,
+                                        const Vec<int64_t>& static_shape_dims,
+                                        Arena& arena) {
     switch (kind) {
         case PythonArgKind::TorchTensorDlpack:
-            return arrayrepr_torch_tensor_dlpack(pyobj, index_bitwidth, arena);
+            return arrayrepr_torch_tensor_dlpack(pyobj, index_bitwidth, static_shape_dims, arena);
         case PythonArgKind::DlpackArray:
-            return arrayrepr_dlpack(pyobj, index_bitwidth, arena);
+            return arrayrepr_dlpack(pyobj, index_bitwidth, static_shape_dims, arena);
         case PythonArgKind::CudaArray:
-            return arrayrepr_cuda_array_iface(pyobj, index_bitwidth, arena);
+            return arrayrepr_cuda_array_iface(pyobj, index_bitwidth, static_shape_dims, arena);
         default:
             return raise(PyExc_AssertionError, "Unexpected argument kind for array: %d",
                          static_cast<int>(kind));
@@ -1313,7 +1396,7 @@ static Result<ArrayRepr> get_array_repr(PythonArgKind kind, PyObject* pyobj,
 }
 
 static Status extract_py_list(const DriverApi* driver, PyObject* pyobj, unsigned index_bitwidth,
-                              LaunchHelper& helper) {
+                              const Vec<int64_t>& static_shape_dims, LaunchHelper& helper) {
     size_t len = PyList_GET_SIZE(pyobj);
     if (len > INT32_MAX)
         return raise(PyExc_TypeError, "List is too long");
@@ -1337,7 +1420,7 @@ static Status extract_py_list(const DriverApi* driver, PyObject* pyobj, unsigned
     PyTypeObject* first_item_type = first_item->ob_type;
 
     Result<ArrayRepr> first_repr_res = get_array_repr(first_arg_kind, first_item, index_bitwidth,
-                                                      helper.arena);
+                                                      static_shape_dims, helper.arena);
     if (!first_repr_res.is_ok()) return ErrorRaised;
 
     helper.array_ptr_arena_offsets.push_back(first_repr_res->repr);
@@ -1358,7 +1441,7 @@ static Status extract_py_list(const DriverApi* driver, PyObject* pyobj, unsigned
     helper.arena[item_offsets].arena_offset = first_repr_res->repr;
 
     ArrayTypeConstantBuilder builder;
-    builder.update(helper.arena, *first_repr_res);
+    if (!builder.update(helper.arena, *first_repr_res)) return ErrorRaised;
 
     // Handle the rest of the list
     for (size_t i = 1; i < len; ++i) {
@@ -1372,7 +1455,8 @@ static Status extract_py_list(const DriverApi* driver, PyObject* pyobj, unsigned
              kind = *res;
         }
 
-        Result<ArrayRepr> repr_res = get_array_repr(kind, item, index_bitwidth, helper.arena);
+        Result<ArrayRepr> repr_res = get_array_repr(kind, item, index_bitwidth,
+                                                   static_shape_dims, helper.arena);
         if (!repr_res.is_ok()) return ErrorRaised;
         helper.array_ptr_arena_offsets.push_back(repr_res->repr);
         helper.arena[item_offsets + i].arena_offset = repr_res->repr;
@@ -1383,7 +1467,7 @@ static Status extract_py_list(const DriverApi* driver, PyObject* pyobj, unsigned
         if (first_repr_res->arrty.ndim != repr_res->arrty.ndim)
             return raise(PyExc_TypeError, "Arrays in list vary in rank");
 
-        builder.update(helper.arena, *repr_res);
+        if (!builder.update(helper.arena, *repr_res)) return ErrorRaised;
     }
 
     // TODO: If we accept lists of things other than arrays, then to disambiguate,
@@ -1421,6 +1505,7 @@ struct FlagNode {
     bool int64_index = false;
     bool int64_param = false;
     bool wildcard    = false;
+    Vec<int64_t> static_shape;  // array shape dims specialized to launch-time values.
     Vec<FlagNode> children;
 
     const FlagNode& child_at(size_t idx) const {
@@ -1456,7 +1541,7 @@ static Status flatten_flag_node(const FlagNode& node, const Vec<PythonArgKind>& 
     }
     if (!node.wildcard || !node.children.empty())
         return raise(PyExc_TypeError, "annotation expects a tuple argument but got a leaf");
-    out.push_back({node.constant, node.int64_index, node.int64_param});
+    out.push_back({node.constant, node.int64_index, node.int64_param, node.static_shape});
     return OK;
 }
 
@@ -1484,10 +1569,13 @@ static Status extract_leaf(const DriverApi* driver, PyObject* obj, PythonArgKind
             return raise(PyExc_TypeError,
                          "ct.Constant[tuple] does not support array elements");
         if (kind == PythonArgKind::TorchTensorDlpack)
-            return extract_array<arrayrepr_torch_tensor_dlpack>(driver, obj, idx_bits, helper);
+            return extract_array<arrayrepr_torch_tensor_dlpack>(
+                    driver, obj, idx_bits, flags.static_shape, helper);
         if (kind == PythonArgKind::DlpackArray)
-            return extract_array<arrayrepr_dlpack>(driver, obj, idx_bits, helper);
-        return extract_array<arrayrepr_cuda_array_iface>(driver, obj, idx_bits, helper);
+            return extract_array<arrayrepr_dlpack>(
+                    driver, obj, idx_bits, flags.static_shape, helper);
+        return extract_array<arrayrepr_cuda_array_iface>(
+                driver, obj, idx_bits, flags.static_shape, helper);
     case PythonArgKind::PyBool:
         return extract_py_bool(obj, flags.constant, helper);
     case PythonArgKind::PyLong:
@@ -1496,7 +1584,7 @@ static Status extract_leaf(const DriverApi* driver, PyObject* obj, PythonArgKind
         extract_py_float(obj, flags.constant, helper);
         return OK;
     case PythonArgKind::PyList:
-        return extract_py_list(driver, obj, idx_bits, helper);
+        return extract_py_list(driver, obj, idx_bits, flags.static_shape, helper);
     case PythonArgKind::PyTupleBegin:  // structure markers carry no data (filtered by caller)
     case PythonArgKind::PyTupleEnd:
         break;
@@ -1601,9 +1689,14 @@ static PyPtr parse_parameter_constraints(const Vec<int64_t>& constants,
     return param_constraints;
 }
 
-static CallConvVersion minimum_calling_convention(const Vec<ParameterKind>& param_kinds) {
+static CallConvVersion minimum_calling_convention(const Vec<ParameterKind>& param_kinds,
+                                                  const Vec<LeafFlags>& flat_flags) {
     for (ParameterKind pk : param_kinds) {
         if (pk == ParameterKind::TupleBegin)
+            return CallConvVersion::CutilePython_V2;
+    }
+    for (const LeafFlags& f : flat_flags) {
+        if (!f.static_shape.empty())
             return CallConvVersion::CutilePython_V2;
     }
     return CallConvVersion::CutilePython_V1;
@@ -2384,7 +2477,8 @@ static Result<PreparedLaunch> prepare_launch(
         for (PythonArgKind k : profile_item->value.arg_kinds)
             param_kinds.push_back(param_kind_from_pyarg_kind(k));
 
-        PyPtr cconv = get_cconv(minimum_calling_convention(param_kinds));
+        PyPtr cconv = get_cconv(
+                minimum_calling_convention(param_kinds, profile_item->value.flat_flags));
         if (!cconv) return ErrorRaised;
 
         PyPtr signature = make_signature(
@@ -2615,10 +2709,19 @@ static Result<FlagNode> parse_flag_node(PyObject* obj) {
         PyPtr constant     = getattr(obj, "constant");
         PyPtr int64_index  = getattr(obj, "int64_index");
         PyPtr int64_scalar = getattr(obj, "int64_scalar");
-        if (!constant || !int64_index || !int64_scalar) return ErrorRaised;
+        PyPtr static_shape = getattr(obj, "static_shape");
+        if (!constant || !int64_index || !int64_scalar || !static_shape) return ErrorRaised;
         node.constant    = (constant.get() == Py_True);
         node.int64_index = (int64_index.get() == Py_True);
         node.int64_param = (int64_scalar.get() == Py_True);
+        if (!PyTuple_Check(static_shape.get()))
+            return raise(PyExc_TypeError, "leaf `static_shape` must be a tuple, got %s",
+                         Py_TYPE(static_shape.get())->tp_name);
+        Py_ssize_t nd = PyTuple_GET_SIZE(static_shape.get());
+        node.static_shape.reserve(nd);
+        for (Py_ssize_t i = 0; i < nd; ++i)
+            node.static_shape.push_back(
+                    pylong_as<int64_t>(PyTuple_GET_ITEM(static_shape.get(), i)));
         node.wildcard    = true;
         return node;
     }

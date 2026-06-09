@@ -1003,12 +1003,37 @@ class ArrayAnnotation:
         index_dtype: Data type for shape and stride values. Must be ``int32`` or
             ``int64``. Use ``int64`` to enable support for tensors whose shape or
             stride values exceed the range of a 32-bit integer.
+        static_shape_dims: Shape dimensions to specialize to their launch-time values,
+            making them compile-time constants inside the kernel.
+
+    Example::
+
+        @ct.kernel
+        def my_kernel(
+            x: Annotated[ct.Array, ct.ArrayAnnotation(static_shape_dims=(0,))],
+            y: Annotated[ct.Array, ct.ArrayAnnotation(static_shape_dims=(0, -1))],
+        ):
+            # x.shape[0] is a compile-time constant
+            # y.shape[0] and y.shape[-1] are compile-time constants
+            ...
+
+        # Reusable alias combining int64 indexing with a static dimension:
+        BigStaticDim0 = Annotated[
+            ct.Array, ct.ArrayAnnotation(index_dtype=ct.int64, static_shape_dims=(0,))
+        ]
     """
-    index_dtype: DType
+    index_dtype: DType = int32
+    static_shape_dims: tuple[int, ...] = ()
 
     def __post_init__(self):
         if self.index_dtype not in (int32, int64):
             raise ValueError(f"`index_dtype` must be int32 or int64, got {self.index_dtype}")
+        if not isinstance(self.static_shape_dims, tuple):
+            raise TypeError("`static_shape_dims` must be a tuple of integers")
+        for i, dim in enumerate(self.static_shape_dims):
+            if isinstance(dim, bool) or not isinstance(dim, int):
+                raise TypeError(
+                    f"Element #{i} of `static_shape_dims` must be int, got {dim}")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1066,6 +1091,7 @@ Example::
         # big.shape[i] is i64, small.shape[i] is i32
         ...
 """
+
 
 ScalarInt64 = Annotated[T, ScalarAnnotation(dtype=int64)]
 ScalarInt64.__doc__ = """A type hint indicating that a scalar integer parameter uses int64.

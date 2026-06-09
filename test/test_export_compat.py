@@ -142,6 +142,39 @@ def test_export_compat_cutile_python_v1():
 
 
 @ct.kernel
+def kernel_static_shape(a, out):
+    t = ct.load(a, (0,), (8,))
+    ct.store(out, (0,), t + 1)
+
+
+def test_export_compat_static_shape():
+    sig = ct.compilation.KernelSignature(
+        parameters=[
+            ct.compilation.ArrayConstraint(ct.float32, 1, index_dtype=ct.int32,
+                                           shape_constant=(8,),
+                                           stride_lower_bound_incl=0,
+                                           alias_groups=(), may_alias_internally=False),
+            ct.compilation.ArrayConstraint(ct.float32, 1, index_dtype=ct.int32,
+                                           shape_constant=(8,),
+                                           stride_constant=(1,),
+                                           stride_lower_bound_incl=0,
+                                           alias_groups=(), may_alias_internally=False),
+        ],
+        calling_convention=ct.compilation.CallingConvention.cutile_python_v2(),
+    )
+
+    io = BytesIO()
+    ct.compilation.export_kernel(kernel_static_shape, [sig], gpu_code=get_sm_arch(),
+                                 output_file=io, output_format="cubin")
+    a = torch.zeros(8, dtype=torch.float32, device="cuda")
+    out = torch.zeros(8, dtype=torch.float32, device="cuda")
+    # shape_constant=(8,): shape is still a runtime CUDA parameter — pass it as usual.
+    # stride_lower_bound_incl for out is dropped (stride_constant=(1,) makes it redundant).
+    _call_kernel(io.getvalue(), "kernel_static_shape_Kt2_A1f32_1s8l0_A1f32_1s8t1", (a, out))
+    assert torch.all(out == 1.0).item()
+
+
+@ct.kernel
 def kernel_2(pair, addend: ct.Constant[tuple], out):
     ct.scatter(out, (), pair[0] + pair[1] + addend[0])
 

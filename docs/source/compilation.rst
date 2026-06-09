@@ -75,7 +75,8 @@ Both pass binary kernel arguments in the same order as the kernel parameters are
 in the Python kernel function, except that parameters annotated with
 :py:class:`ct.Constant <cuda.tile.Constant>` are omitted.
 ``cutile_python_v2`` extends ``cutile_python_v1`` with support for tuple parameters
-(:py:class:`TupleConstraint`). New code should use ``cutile_python_v2``.
+(:py:class:`TupleConstraint`) and static shapes (the ``shape_constant`` field of
+:py:class:`ArrayConstraint`). New code should use ``cutile_python_v2``.
 
 The following table lists the supported parameter constraints and their binary formats.
 Constraints marked |v2only| require ``cutile_python_v2``.
@@ -100,6 +101,8 @@ Constraints marked |v2only| require ``cutile_python_v2``.
         represent the strides of the array.
         The type of shape and stride arguments is determined by the ``index_dtype`` field of the
         constraint:
+
+        The ``shape_constant`` field |v2only| requires ``cutile_python_v2``.
 
         .. list-table::
             :header-rows: 1

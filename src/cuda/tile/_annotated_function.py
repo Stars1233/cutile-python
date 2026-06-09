@@ -16,9 +16,10 @@ from cuda.tile._datatype import int64
 class LeafAnnotationNode:
     KIND = "leaf"
 
-    constant: bool      # ct.Constant: compile-time constant parameter.
-    int64_index: bool   # 64-bit array index dtype.
-    int64_scalar: bool  # int64 scalar parameter.
+    constant: bool                 # ct.Constant: compile-time constant parameter.
+    int64_index: bool              # 64-bit array index dtype.
+    int64_scalar: bool             # int64 scalar parameter.
+    static_shape: tuple[int, ...]  # array shape dims specialized to launch-time values.
 
 
 @dataclass(frozen=True)
@@ -73,10 +74,12 @@ def _build_annotation_node(annotation: Any,
             return _build_tuple_node(inner, is_constant)
         return LeafAnnotationNode(constant=is_constant,
                                   int64_index=_has_int64_index_annotation(metadata),
-                                  int64_scalar=_has_int64_scalar_annotation(metadata))
+                                  int64_scalar=_has_int64_scalar_annotation(metadata),
+                                  static_shape=_get_static_shape_annotation(metadata))
     if get_origin(annotation) is tuple:
         return _build_tuple_node(annotation, outer_constant)
-    return LeafAnnotationNode(constant=outer_constant, int64_index=False, int64_scalar=False)
+    return LeafAnnotationNode(constant=outer_constant, int64_index=False,
+                              int64_scalar=False, static_shape=())
 
 
 def _has_int64_index_annotation(metadata: Sequence[Any]) -> bool:
@@ -92,3 +95,14 @@ def _has_int64_index_annotation(metadata: Sequence[Any]) -> bool:
 
 def _has_int64_scalar_annotation(metadata: Sequence[Any]) -> bool:
     return any(isinstance(m, ScalarAnnotation) and m.dtype is int64 for m in metadata)
+
+
+def _get_static_shape_annotation(metadata: Sequence[Any]) -> tuple[int, ...]:
+    for m in metadata:
+        if isinstance(m, ArrayAnnotation) and m.static_shape_dims:
+            return m.static_shape_dims
+        if (isinstance(m, ListAnnotation)
+                and isinstance(m.element, ArrayAnnotation)
+                and m.element.static_shape_dims):
+            return m.element.static_shape_dims
+    return ()

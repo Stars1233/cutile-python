@@ -130,8 +130,12 @@ def _get_array_predicates(constraint: ArrayConstraint, alias_set_mapper: "_Alias
                          div_by=constraint.base_addr_divisible_by,
                          may_alias_internally=constraint.may_alias_internally)]
 
-    # Shape predicates
-    for div_by in constraint.shape_divisible_by:
+    # Shape predicates. A static shape value is folded into a divisibility fact so the optimizer
+    # benefits from it.
+    for static, div_by in zip(constraint.shape_constant, constraint.shape_divisible_by,
+                              strict=True):
+        if static is not None:
+            div_by = static
         ret.append(DataPredicate(alias_set=ALIAS_UNIVERSE, div_by=div_by,
                                  may_alias_internally=True))
 

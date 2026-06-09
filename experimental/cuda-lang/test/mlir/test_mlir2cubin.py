@@ -19,7 +19,8 @@ class _HackKernel(_cext.TileDispatcher):
         self._cubin = cubin
         self._func_name = func_name
         annotations = tuple(
-            LeafAnnotationNode(constant=False, int64_index=False, int64_scalar=False)
+            LeafAnnotationNode(constant=False, int64_index=False, int64_scalar=False,
+                               static_shape=())
             for _ in range(arity)
         )
         super().__init__(annotations)

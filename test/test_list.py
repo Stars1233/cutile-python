@@ -5,7 +5,9 @@
 import torch
 import pytest
 import math
+from unittest.mock import patch
 
+import cuda.tile
 import cuda.tile as ct
 from cuda.tile._bytecode import BytecodeVersion
 from typing import Annotated
@@ -59,6 +61,10 @@ ListOfArrayIndexedWithInt64 = Annotated[
     list, ct.ListAnnotation(element=ct.IndexedWithInt64)
 ]
 
+ListWithStaticShape = Annotated[
+    list, ct.ListAnnotation(element=ct.ArrayAnnotation(static_shape_dims=(0, 1)))
+]
+
 
 @ct.kernel
 def add_int64_index_arrays(
@@ -72,6 +78,44 @@ def add_int64_index_arrays(
         t = ct.load(arrays[i], (bid, 0), (TILE, 1))
         res += t
     ct.store(out, (bid, 0), res)
+
+
+@ct.kernel
+def add_static_shape_arrays(arrays: ListWithStaticShape, out):
+    res = ct.zeros((16, 16), dtype=out.dtype)
+    for i in range(len(arrays)):
+        t = ct.load(arrays[i], (0, 0), (16, 16))
+        res += t
+    ct.store(out, (0, 0), res)
+
+
+def test_add_list_static_shape():
+    k = cuda.tile.kernel(add_static_shape_arrays._pyfunc)
+
+    # (16,16) → 1st compile; (32,32) → 2nd compile; (16,16) again → cache hit.
+    shapes = [(16, 16), (32, 32), (16, 16)]
+    with patch('cuda.tile._compile.compile_tile',
+               side_effect=cuda.tile._compile.compile_tile) as mock_compile:
+        for shape in shapes:
+            arrays = [torch.randint(0, 100, shape, dtype=torch.int32, device="cuda")
+                      for _ in range(3)]
+            out = torch.zeros((16, 16), dtype=torch.int32, device="cuda")
+            ct.launch(torch.cuda.current_stream(), (1,), k, (arrays, out))
+            assert_equal(out, sum(a[:16, :16] for a in arrays))
+
+    assert mock_compile.call_count == 2
+
+
+def test_add_list_static_shape_mismatch():
+    k = cuda.tile.kernel(add_static_shape_arrays._pyfunc)
+
+    arrays = [
+        torch.zeros((16, 16), dtype=torch.int32, device="cuda"),
+        torch.zeros((32, 16), dtype=torch.int32, device="cuda"),
+    ]
+    out = torch.zeros((16, 16), dtype=torch.int32, device="cuda")
+    with pytest.raises(ValueError, match="vary in static shape at axis 0"):
+        ct.launch(torch.cuda.current_stream(), (1,), k, (arrays, out))
 
 
 @requires_tileiras(BytecodeVersion.V_13_3)

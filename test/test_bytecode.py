@@ -116,7 +116,8 @@ class _HackKernel(_cext.TileDispatcher):
     def __init__(self, cubin: bytes, func_name: str):
         self._cubin = cubin
         self._func_name = func_name
-        leaf = LeafAnnotationNode(constant=False, int64_index=False, int64_scalar=False)
+        leaf = LeafAnnotationNode(
+            constant=False, int64_index=False, int64_scalar=False, static_shape=())
         super().__init__((leaf, leaf, leaf))
 
     def _compile(self, signature, ctx):
