@@ -305,6 +305,9 @@ class DictTy(Type):
 class DictValue(AggregateValue):
     values: tuple["Var", ...]
 
+    def as_tuple(self) -> tuple["Var", ...]:
+        return self.values
+
 
 # ============== Dataclass ===============
 
