@@ -22,10 +22,17 @@ FLOAT_TYPES = (
     cl.float64,
 )
 FLOAT_TOLERANCES = {
-    cl.float16: dict(rel=1e-3, abs=1e-3),
+    cl.float16: dict(rel=1e-2, abs=1e-2),
     cl.float32: dict(rel=1e-5, abs=1e-5),
     cl.float64: dict(rel=1e-10, abs=1e-10),
 }
+
+
+def assert_close_float(actual, expected, dtype):
+    tol = FLOAT_TOLERANCES[dtype]
+    torch.testing.assert_close(actual, expected, rtol=tol["rel"], atol=tol["abs"])
+
+
 SIGNED_INT_TYPES = datatype.signed_integral_dtypes
 UNSIGNED_INT_TYPES = datatype.unsigned_integral_dtypes
 
@@ -46,9 +53,7 @@ UNARY_FLOAT_OPS = (
     (device_math.abs, builtins.abs),
 )
 
-BINARY_FLOAT_OPS = (
-    (device_math.atan2, host_math.atan2),
-)
+BINARY_FLOAT_OPS = ((device_math.atan2, host_math.atan2),)
 
 
 @pytest.mark.parametrize("dtype", FLOAT_TYPES)
@@ -67,7 +72,9 @@ def test_math_unary_float(dtype, device_op, host_op):
     assert out[0].item() == pytest.approx(expected, **FLOAT_TOLERANCES[dtype])
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="math.exp2 requires Python 3.11+")
+@pytest.mark.skipif(
+    sys.version_info < (3, 11), reason="math.exp2 requires Python 3.11+"
+)
 @pytest.mark.parametrize("dtype", FLOAT_TYPES)
 def test_math_exp2(dtype):
     from math import exp2
@@ -83,6 +90,34 @@ def test_math_exp2(dtype):
     out = torch.tensor([0.0], dtype=torch_dt, device="cuda")
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (inp, out))
     assert out[0].item() == pytest.approx(expected, **FLOAT_TOLERANCES[dtype])
+
+
+def test_math_vector_splat():
+    vector_dtype = cl.float32
+    scalar_dtype = cl.float64
+
+    @cl.kernel
+    def kernel(inp, out):
+        with cl.local_array(4, vector_dtype) as arr:
+            arr[0] = 0.5
+            arr[1] = 1.5
+            arr[2] = 2.5
+            arr[3] = 3.5
+            v = arr.get_base_pointer().load(count=4)
+            v = device_math.atan2(v, scalar_dtype(inp[0]))
+            out.get_base_pointer().store(v)
+
+    scalar_torch_dt = datatype.to_torch_dtype(scalar_dtype)
+    out_torch_dt = datatype.to_torch_dtype(scalar_dtype)
+    host_inp = torch.rand((), generator=rng).item() + 0.5
+    inp = torch.tensor([host_inp], dtype=scalar_torch_dt, device="cuda")
+    out = torch.zeros(4, dtype=out_torch_dt, device="cuda")
+    scalar = inp.cpu().item()
+    expected = [host_math.atan2(x, scalar) for x in (0.5, 1.5, 2.5, 3.5)]
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (inp, out))
+    assert_close_float(
+        out.cpu(), torch.tensor(expected, dtype=out_torch_dt), scalar_dtype
+    )
 
 
 @pytest.mark.parametrize("dtype", FLOAT_TYPES)

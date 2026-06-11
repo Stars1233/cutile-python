@@ -18,17 +18,12 @@ import cuda.lang._ir.type as ir_type
 from cuda.lang.compilation import KernelSignature
 import cuda.lang._datatype as datatype
 from cuda.tile._datatype import PointerInfo
-from cuda.lang._exception import TileTypeError
+from cuda.lang._exception import TileCompilerError, TileTypeError
 from .type_conversion import (
     ir_type_to_mlir_type,
     mlir_constant_of_type,
     convert_dtype, dtype_to_mlir_type,
 )
-
-
-def _expect_scalar_type(ty: ir_type.Type) -> ir_type.ScalarTy:
-    assert isinstance(ty, ir_type.ScalarTy)
-    return ty
 
 
 def _expect_arith_type(ty: ir_type.Type) -> ir_type.TensorLikeTy:
@@ -1044,6 +1039,61 @@ class IR2MLIR:
         result_type = ir_type_to_mlir_type(operation.result_var.get_type())
         dummy = mlir_constant_of_type(result_type, 0)
         return [dummy]
+
+    @lower_operation.register
+    def lower_tile_broadcast(
+        self, operation: ops.TileBroadcast
+    ) -> Sequence[mlir.Value]:
+        res_ty = operation.result_var.get_type()
+        x = operation.x
+        x_ty = x.get_type()
+        if (
+            not isinstance(x_ty, ir_type.VectorTy)
+            or not isinstance(res_ty, ir_type.VectorTy)
+            or x_ty.length != 1
+        ):
+            raise TileCompilerError(
+                "Expected length-1 vector but got result "
+                f"type {res_ty} and operand type {x_ty}"
+            )
+        if x_ty.element_dtype != res_ty.element_dtype:
+            raise TileCompilerError(
+                "Expected broadcast operand and result type to have same "
+                f"dtype but got result type {res_ty} and operand type {x_ty}"
+            )
+
+        mask = [0 for _ in range(res_ty.length)]
+        res_ty = ir_type_to_mlir_type(res_ty)
+        x = self.get_var(x)
+        res = mlir.llvm.add_ShuffleVectorOp(res_type=res_ty, v1=x, v2=x, mask=mask)
+        return [res]
+
+    @lower_operation.register
+    def lower_tile_reshape(
+        self, operation: ops.TileReshape
+    ) -> Sequence[mlir.Value]:
+        res_ty = operation.result_var.get_type()
+        x = operation.x
+        x_ty = x.get_type()
+        match x_ty, res_ty:
+            case ir_type.ScalarTy(), ir_type.VectorTy():
+                res_ty = ir_type_to_mlir_type(res_ty)
+                res = mlir.llvm.add_PoisonOp(res_type=res_ty)
+                if len(res_ty.shape) != 1:
+                    raise TileCompilerError(
+                        f"Expected vector to have 1d shape but got {res_ty}"
+                    )
+                for i in range(res_ty.shape[0]):
+                    position = mlir_constant_of_type(T.i32(), i)
+                    res = mlir.llvm.add_InsertElementOp(
+                        vector=res,
+                        value=self.get_var(x),
+                        position=position,
+                    )
+                return [res]
+        raise NotImplementedError(
+            f"Could not broadcast value of type {x_ty} to type {res_ty}"
+        )
 
     @lower_operation.register
     def lower_foreign_function(
