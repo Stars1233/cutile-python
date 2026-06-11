@@ -13,6 +13,7 @@ from cuda.lang import compile_simt
 from cuda.lang._stub import math as device_math
 from cuda.lang.compilation import KernelSignature
 from cuda.lang._exception import TileTypeError
+from cuda.lang._fp_utils import _FLOAT_SMALLEST_NORMAL, isnormal
 
 
 rng = torch.Generator().manual_seed(0)
@@ -54,6 +55,63 @@ UNARY_FLOAT_OPS = (
 )
 
 BINARY_FLOAT_OPS = ((device_math.atan2, host_math.atan2),)
+
+FPCLASS_OPS = (
+    (device_math.isinf, host_math.isinf),
+    (device_math.isnan, host_math.isnan),
+    (device_math.isfinite, host_math.isfinite),
+    (device_math.isnormal, isnormal),
+)
+
+
+@pytest.mark.parametrize("dtype", FLOAT_TYPES)
+@pytest.mark.parametrize("device_op, host_op", FPCLASS_OPS)
+@pytest.mark.parametrize(
+    "input",
+    (
+        float("-0.0"),
+        float("0.0"),
+        float("inf"),
+        float("-inf"),
+        float("nan"),
+        "subnormal",
+    ),
+)
+@pytest.mark.parametrize("vector", (True, False))
+def test_math_fpclass(dtype, device_op, host_op, input, vector):
+    subnormal = input == "subnormal"
+    if subnormal:
+        smallest = _FLOAT_SMALLEST_NORMAL[dtype.bitwidth]
+        input = smallest / 2
+
+    @cl.kernel
+    def kernel(out, inp):
+        if vector:
+            v = device_op(inp.get_base_pointer().load(count=2))
+            out[0] = v[0]
+        else:
+            out[0] = device_op(inp[0])
+
+    out = torch.zeros(1, dtype=torch.bool).cuda()
+    inp = torch.tensor([input, input], dtype=datatype.to_torch_dtype(dtype)).cuda()
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (out, inp))
+    if host_op == isnormal:
+        expect = host_op(input, dtype.bitwidth)
+    else:
+        expect = host_op(input)
+    got = out.cpu().item()
+    assert got == expect, f"{host_op}({input}) {expect=} {got=}"
+
+
+def test_isnormal_non_arithmetic_float():
+    @cl.kernel
+    def kernel():
+        device_math.isnormal(cl.float8_e4m3fn(float("inf")))
+
+    with pytest.raises(
+        TileTypeError, match="Expected scalar or vector satisfying constraint"
+    ):
+        cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, ())
 
 
 @pytest.mark.parametrize("dtype", FLOAT_TYPES)

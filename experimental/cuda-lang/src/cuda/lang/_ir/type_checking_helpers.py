@@ -107,10 +107,24 @@ def require_scalar_or_vector_float_type(var: Var) -> VectorTy | ScalarTy:
     return ty
 
 
-def require_scalar_or_vector_type(var: Var) -> VectorTy | ScalarTy:
+def require_scalar_or_vector_type(var: Var, dtype_predicate=None) -> VectorTy | ScalarTy:
     ty = var.get_type()
-    if not isinstance(ty, ScalarTy | VectorTy):
-        raise make_type_checking_error(f"Expected scalar or vector type but got {ty}", var)
+
+    match ty:
+        case ScalarTy() as st:
+            dtype = st.dtype
+        case VectorTy() as vt:
+            dtype = vt.element_dtype
+        case _:
+            raise make_type_checking_error(
+                f"Expected a scalar or vector type but got {ty}", var
+            )
+
+    if dtype_predicate is not None and not dtype_predicate(dtype):
+        return make_type_checking_error(
+            f"Expected scalar or vector satisfying constraint {dtype_predicate} but got {ty}"
+        )
+
     return ty
 
 

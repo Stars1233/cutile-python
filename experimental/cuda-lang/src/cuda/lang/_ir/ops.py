@@ -1231,6 +1231,46 @@ def math_float_unary_impl(op_name: str, x: Var):
     )
 
 
+@impl(cl_math.isnormal)
+def math_isnormal_impl(x: Var):
+    x_ty = require_scalar_or_vector_type(x, datatype.is_unrestricted_float)
+    match x_ty:
+        case ScalarTy():
+            res_ty = ScalarTy(datatype.bool_)
+        case VectorTy(length=length):
+            res_ty = VectorTy(datatype.bool_, length=length)
+        case _:
+            assert False
+    # see https://llvm.org/docs/LangRef.html#llvm-is-fpclass-intrinsic
+    mask = strictly_typed_const((1 << 3) | (1 << 8), ScalarTy(datatype.int32))
+    return add_operation(
+        RawNVVMIntrinsic,
+        res_ty,
+        intrinsic="llvm.is.fpclass",
+        operands_=(x, mask),
+    )
+
+
+@impl(cl_math.isnan, fixed_args=["math.isnan"])
+@impl(cl_math.isinf, fixed_args=["math.isinf"])
+@impl(cl_math.isfinite, fixed_args=["math.isfinite"])
+def math_float_fpclass_impl(op_name: str, x: Var):
+    x_ty = require_scalar_or_vector_type(x, datatype.is_float)
+    match x_ty:
+        case ScalarTy():
+            res_ty = ScalarTy(datatype.bool_)
+        case VectorTy(length=length):
+            res_ty = VectorTy(datatype.bool_, length=length)
+        case _:
+            assert False
+    return add_operation(
+        RawMLIROperation,
+        res_ty,
+        op_name=op_name,
+        operands_=(x,),
+    )
+
+
 def common_type(x: Var, y: Var):
     x_ty = x.get_loose_type()
     y_ty = y.get_loose_type()

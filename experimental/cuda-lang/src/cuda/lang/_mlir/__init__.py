@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import math
+
 from ._builtins import APFloat
 from ._builtins import APInt
 from ._builtins import AffineMap
@@ -22,6 +24,7 @@ from typing import Optional
 from typing import Sequence
 import dataclasses
 import struct
+from .._fp_utils import isnormal
 
 
 # ========= 'builtin' dialect of MLIR ==========
@@ -547,28 +550,34 @@ class FloatAttr(Attribute, TypedAttr):
         return self.type
 
     def _print_mlir_unqualified(self, p):
-        import math
         import struct
 
         value = float(self.value)
-        if math.isfinite(value):
-            p(self.value)
-            return
-
-        if isinstance(self.type, Float16Type):
-            bits = struct.unpack(">H", struct.pack(">e", value))[0]
-            p(f"0x{bits:04X}")
-        elif isinstance(self.type, BFloat16Type):
-            bits = struct.unpack(">I", struct.pack(">f", value))[0] >> 16
-            p(f"0x{bits:04X}")
-        elif isinstance(self.type, Float32Type):
-            bits = struct.unpack(">I", struct.pack(">f", value))[0]
-            p(f"0x{bits:08X}")
-        elif isinstance(self.type, Float64Type):
-            bits = struct.unpack(">Q", struct.pack(">d", value))[0]
-            p(f"0x{bits:016X}")
-        else:
-            raise TypeError(f"Cannot print non-finite FloatAttr {value} for type {self.type}")
+        match self.type:
+            case Float16Type():
+                if isnormal(value, 16):
+                    return p(self.value)
+                bits = struct.unpack(">H", struct.pack(">e", value))[0]
+                p(f"0x{bits:04X}")
+            case BFloat16Type():
+                if isnormal(value, 16):
+                    return p(self.value)
+                bits = struct.unpack(">I", struct.pack(">f", value))[0] >> 16
+                p(f"0x{bits:04X}")
+            case Float32Type():
+                if isnormal(value, 32):
+                    return p(self.value)
+                bits = struct.unpack(">I", struct.pack(">f", value))[0]
+                p(f"0x{bits:08X}")
+            case Float64Type():
+                if isnormal(value, 64):
+                    return p(self.value)
+                bits = struct.unpack(">Q", struct.pack(">d", value))[0]
+                p(f"0x{bits:016X}")
+            case _:
+                if math.isfinite(value):
+                    return p(self.value)
+                raise TypeError(f"Cannot print abnormal FloatAttr {value} for type {self.type}")
 
 
 @dataclass(kw_only=True)

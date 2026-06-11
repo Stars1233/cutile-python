@@ -109,7 +109,7 @@ def scalar_to_vector_constant(mlir_type: mlir.VectorType, value) -> mlir.Value:
 @mlir_constant_of_type.register
 def float_to_mlir_constant(mlir_type: mlir.FloatType, value) -> mlir.Value:
     return mlir.arith.add_ConstantOp(
-        value=mlir.FloatAttr(type=mlir_type, value=mlir.APFloat(float(value))),
+        value=mlir.FloatAttr(type=mlir_type, value=mlir.APFloat(value)),
     )
 
 

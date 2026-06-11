@@ -883,14 +883,22 @@ class IR2MLIR:
         return tuple(results)
 
     def _lower_intrinsic_operand(self, operand: ir.Var) -> mlir.Value:
+        """
+        Bool operands need to be truncated from their cutile storage type
+        to their MLIR storage type
+        """
         operand_value = self.get_var(operand)
         operand_type = operand.get_type()
-        if ir_type.is_vector_ty(operand_type):
-            return operand_value
-        if operand_type == ir_type.ScalarTy(datatype.bool_):
-            return mlir.arith.add_TruncIOp(out_type=T.i1(), in_=operand_value)
-        else:
-            return operand_value
+        match operand_type:
+            case ir_type.VectorTy() as vt if vt.element_dtype == datatype.bool_:
+                res_ty = mlir.VectorType(
+                    shape=[vt.length], elementType=T.i1(), scalableDims=[False]
+                )
+                return mlir.arith.add_TruncIOp(out_type=res_ty, in_=operand_value)
+            case ir_type.ScalarTy() as st if st.dtype == datatype.bool_:
+                return mlir.arith.add_TruncIOp(out_type=T.i1(), in_=operand_value)
+            case _:
+                return operand_value
 
     def _lower_intrinsic_result(
         self, results: Sequence[mlir.Value]
@@ -898,6 +906,14 @@ class IR2MLIR:
         for result in results:
             if result.type == T.i1():
                 yield mlir.arith.add_ExtUIOp(out_type=T.i8(), in_=result)
+            elif (
+                isinstance(result.type, mlir.VectorType)
+                and result.type.elementType == T.i1()
+            ):
+                out_type = mlir.VectorType(
+                    shape=result.type.shape, elementType=T.i8(), scalableDims=[False]
+                )
+                yield mlir.arith.add_ExtUIOp(out_type=out_type, in_=result)
             else:
                 yield result
 
@@ -907,6 +923,13 @@ class IR2MLIR:
         for result_type in result_types:
             if result_type == ir_type.ScalarTy(datatype.bool_):
                 yield T.i1()
+            elif (
+                isinstance(result_type, ir_type.VectorTy)
+                and result_type.element_dtype == datatype.bool_
+            ):
+                yield mlir.VectorType(
+                    shape=[result_type.length], elementType=T.i1(), scalableDims=[False]
+                )
             else:
                 yield ir_type_to_mlir_type(result_type)
 
@@ -965,10 +988,13 @@ class IR2MLIR:
     def lower_raw_mlir_operation(
         self, operation: ops.RawMLIROperation
     ) -> Sequence[mlir.Value]:
-        operands = tuple(self.get_var(operand) for operand in operation.operands_)
+        operands = tuple(
+            self._lower_intrinsic_operand(operand) for operand in operation.operands_
+        )
         result_types = tuple(
-            ir_type_to_mlir_type(result_var.get_type())
-            for result_var in operation.result_vars
+            self._lower_intrinsic_result_type(
+                result_var.get_type() for result_var in operation.result_vars
+            )
         )
         results = mlir.add_operation(
             name=operation.op_name,
@@ -977,7 +1003,7 @@ class IR2MLIR:
             properties=(),
             attributes=operation.mlir_attributes,
         )
-        return tuple(results)
+        return tuple(self._lower_intrinsic_result(results))
 
     @lower_operation.register
     def lower_raw_where(self, operation: ops.RawWhereOperation) -> Sequence[mlir.Value]:
