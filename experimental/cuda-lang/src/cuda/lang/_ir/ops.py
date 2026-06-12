@@ -92,7 +92,6 @@ from cuda.tile._datatype import (
     bool_,
     uint64,
 )
-from cuda.tile._exception import TileValueError
 import cuda.lang._mlir as mlir
 from .atomics_support import (
     ATOMIC_CAS_DTYPES,
@@ -103,14 +102,18 @@ from .atomics_support import (
     require_atomic_memory_order_and_scope,
     require_atomic_rmw_value,
 )
+from .op_defs import RawNVVMIntrinsic
 from .type_checking_helpers import (
     require_array_indices,
     require_scalar_or_vector_float_type,
     require_scalar_or_vector_type,
     require_scalar_type,
     require_pointer_type,
+    require_pointer_in_memory_space,
+    require_mbarrier_ptr,
     require_signed_int_scalar_or_tuple,
     require_clusterlaunchcontrol_token_type,
+    is_none,
 )
 
 from .type import (
@@ -143,10 +146,10 @@ from .._stub.tensor_map import TensorMapSwizzle
 from .._stub.mbarrier import MbarrierScope
 from .._stub import foreign_function, core_api, mbarrier as mbarrier_stub, tensor_map
 from .._stub.types import Pointer
-from .._stub.tcgen05 import CTAGroup, Tcgen05LdStShape
-from .._stub import tcgen05 as tcgen05_stub
 from .._stub.core_api import Array
 from cuda.tile._ir import hir_stubs
+
+from .op_impl.tcgen05_impl import tcgen05_impl_registry  # noqa: E402
 
 cuda_lang_impl_registry = ImplRegistry()
 cuda_lang_impl_registry.update(core_impl_registry())
@@ -154,6 +157,7 @@ cuda_lang_impl_registry.update(static_eval_impl_registry())
 cuda_lang_impl_registry.update(arithmetic_impl_registry())
 cuda_lang_impl_registry.update(control_flow_impl_registry())
 cuda_lang_impl_registry.update(array_impl_registry)
+cuda_lang_impl_registry.update(tcgen05_impl_registry())
 impl = cuda_lang_impl_registry.impl
 
 
@@ -271,17 +275,6 @@ class VectorGetItem(Operation, opcode="vector_getitem", memory_effect=MemoryEffe
 @dataclass(eq=False)
 class ReinterpretPointerAsArray(Operation, opcode="reinterpret_ptr_as_array"):
     pointer: Var = operand()
-
-
-def require_pointer_in_memory_space(ptr_value, spaces: tuple[MemorySpace, ...]) -> PointerTy:
-    ptr_type = require_pointer_type(ptr_value)
-    if ptr_type.memory_space not in spaces:
-        expected = ' or '.join(map(str, spaces))
-        raise TileTypeError(
-            f"Expected pointer memory space to be {expected} "
-            f"but got {ptr_type.memory_space}"
-        )
-    return ptr_type
 
 
 def require_pointer_memory_order(
@@ -1189,13 +1182,6 @@ def inline_ptx_impl(ptx_code: Var, constraint_pairs: tuple) -> Var[TupleTy]:
 
 
 @dataclass(eq=False)
-class RawNVVMIntrinsic(Operation, opcode="nvvm.call_intrinsic",
-                       memory_effect=MemoryEffect.STORE):
-    intrinsic: str = attribute()
-    operands_: tuple[Var, ...] = operand()
-
-
-@dataclass(eq=False)
 class RawMLIROperation(Operation, opcode="mlir.operation",
                        memory_effect=MemoryEffect.STORE):
     op_name: str = attribute()
@@ -1366,138 +1352,6 @@ def abs_impl(x: Var) -> Var:
         op_name=op_name,
         operands_=(x,),
     )
-
-
-def _is_none(var: Var):
-    return var.is_constant() and var.get_constant() is None
-
-
-_TCGEN05_LD_VALID_COUNTS_BY_SHAPE = {
-    Tcgen05LdStShape.SHAPE_16X64B: (1, 2, 4, 8, 16, 32, 64, 128),
-    Tcgen05LdStShape.SHAPE_16X128B: (1, 2, 4, 8, 16, 32, 64),
-    Tcgen05LdStShape.SHAPE_16X256B: (1, 2, 4, 8, 16, 32),
-    Tcgen05LdStShape.SHAPE_32X32B: (1, 2, 4, 8, 16, 32, 64, 128),
-    Tcgen05LdStShape.SHAPE_16X32BX2: (1, 2, 4, 8, 16, 32, 64, 128),
-}
-
-_TCGEN05_LD_REGISTERS_PER_COUNT = {
-    Tcgen05LdStShape.SHAPE_16X64B: 1,
-    Tcgen05LdStShape.SHAPE_16X128B: 2,
-    Tcgen05LdStShape.SHAPE_16X256B: 4,
-    Tcgen05LdStShape.SHAPE_32X32B: 1,
-    Tcgen05LdStShape.SHAPE_16X32BX2: 1,
-}
-
-
-@impl(tcgen05_stub.tcgen05_alloc)
-def tcgen05_alloc_impl(
-    addr: Var,
-    ncols: Var,
-    cta_group: Var,
-) -> None:
-    require_pointer_in_memory_space(
-        addr, (MemorySpace.SHARED_CLUSTER, MemorySpace.SHARED)
-    )
-    ncols = implicit_cast(ncols, datatype.int32, "cast num columns to int32")
-    cta_group = require_constant_enum(cta_group, CTAGroup)
-    intrinsic = "llvm.nvvm.tcgen05.alloc.shared." + cta_group.value
-    add_operation_variadic(
-        RawNVVMIntrinsic,
-        (),
-        intrinsic=intrinsic,
-        operands_=(addr, ncols),
-    )
-
-
-@impl(tcgen05_stub.tcgen05_dealloc)
-def tcgen05_dealloc_impl(
-    addr: Var,
-    ncols: Var,
-    cta_group: Var,
-) -> None:
-    require_pointer_in_memory_space(addr, (MemorySpace.TENSOR,))
-    ncols = implicit_cast(ncols, datatype.int32, "cast num columns to int32")
-    cta_group = require_constant_enum(cta_group, CTAGroup)
-    intrinsic = "llvm.nvvm.tcgen05.dealloc." + cta_group.value
-    add_operation_variadic(
-        RawNVVMIntrinsic,
-        (),
-        intrinsic=intrinsic,
-        operands_=(addr, ncols),
-    )
-
-
-@impl(tcgen05_stub.tcgen05_commit)
-def tcgen05_commit_impl(
-    mbar: Var,
-    multicast_mask: Var,
-    cta_group: Var,
-):
-    require_mbarrier_ptr(mbar)
-    operands = [mbar]
-    cta_group = require_constant_enum(cta_group, CTAGroup)
-    intrinsic = "llvm.nvvm.tcgen05.commit"
-    if not _is_none(multicast_mask):
-        intrinsic += '.mc'
-        mask = implicit_cast(multicast_mask, datatype.int16, "multicast mask")
-        operands.append(mask)
-    intrinsic += '.shared.' + cta_group.value
-    add_operation_variadic(
-        RawNVVMIntrinsic,
-        (),
-        intrinsic=intrinsic,
-        operands_=tuple(operands),
-    )
-
-
-@impl(tcgen05_stub.tcgen05_ld)
-def tcgen05_ld_impl(
-    shape: Var,
-    tmem_addr: Var,
-    count: Var,
-    pack: Var,
-    offset: Var,
-) -> Var:
-    require_pointer_in_memory_space(tmem_addr, (MemorySpace.TENSOR,))
-    shape = require_constant_enum(shape, Tcgen05LdStShape)
-    count = require_constant_int(count)
-    valid_counts = _TCGEN05_LD_VALID_COUNTS_BY_SHAPE[shape]
-    if count not in valid_counts:
-        valid = ", ".join(str(value) for value in valid_counts)
-        raise TileValueError(
-            f"Expected count for {shape.name} to be one of {valid}, got {count}"
-        )
-
-    has_offset = not _is_none(offset)
-    uses_offset = shape is Tcgen05LdStShape.SHAPE_16X32BX2
-    if uses_offset and not has_offset:
-        raise TileTypeError("tcgen05_ld with SHAPE_16X32BX2 requires offset")
-    if has_offset and not uses_offset:
-        raise TileTypeError("tcgen05_ld offset is only valid with SHAPE_16X32BX2")
-
-    operands = [tmem_addr]
-    if has_offset:
-        require_scalar_type(offset)
-        operands.append(astype(offset, datatype.int64))
-
-    if _is_none(pack):
-        operands.append(strictly_typed_const(False, ScalarTy(datatype.bool_)))
-    else:
-        require_scalar_type(pack, (datatype.bool_,))
-        operands.append(pack)
-
-    intrinsic = f"llvm.nvvm.tcgen05.ld.{shape.value}.x{count}"
-    total_registers = count * _TCGEN05_LD_REGISTERS_PER_COUNT[shape]
-    result_type = (ScalarTy(datatype.int32)
-                   if total_registers == 1 else VectorTy(datatype.int32, total_registers))
-
-    [result] = add_operation_variadic(
-        RawNVVMIntrinsic,
-        (result_type,),
-        intrinsic=intrinsic,
-        operands_=tuple(operands),
-    )
-    return result
 
 
 def shfl_sync_impl(mode: str, mask: Var, value: Var, lane_mask: Var, width: Var) -> Var:
@@ -1726,19 +1580,6 @@ def _call_foreign_function_impl(func: Var, return_type: Var, parameters: Var):
         )
 
 
-def require_mbarrier_ptr(
-    mbar: Var,
-    spaces: tuple[MemorySpace, ...] = (
-        MemorySpace.SHARED,
-        MemorySpace.SHARED_CLUSTER,
-    ),
-) -> PointerTy:
-    mbar_ptr_type = require_pointer_in_memory_space(mbar, spaces)
-    if mbar_ptr_type.opaque or mbar_ptr_type.pointee_dtype is not datatype.mbarrier:
-        raise TileTypeError(f"Expected a pointer to an mbarrier, got {mbar}")
-    return mbar_ptr_type
-
-
 @impl(mbarrier_stub.mbarrier_init)
 def mbarrier_init_impl(mbar: Var, participants: Var) -> Var:
     require_mbarrier_ptr(mbar)
@@ -1940,7 +1781,7 @@ def mbarrier_try_wait_impl(
     ordering = require_mbarrier_ordering(ordering, WAIT_ORDERINGS)
     intrinsic = "llvm.nvvm.mbarrier.try.wait"
     args = (mbar, state)
-    if not _is_none(time_hint):
+    if not is_none(time_hint):
         intrinsic += ".tl"
         time_hint = astype(time_hint, datatype.int32)
         args = (*args, time_hint)
@@ -1969,7 +1810,7 @@ def mbarrier_try_wait_parity_impl(
     ordering = require_mbarrier_ordering(ordering, WAIT_ORDERINGS)
     intrinsic = "llvm.nvvm.mbarrier.try.wait.parity"
     args = (mbar, parity)
-    if not _is_none(time_hint):
+    if not is_none(time_hint):
         time_hint = astype(time_hint, datatype.int32)
         args = (*args, time_hint)
         intrinsic += ".tl"

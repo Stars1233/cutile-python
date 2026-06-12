@@ -2,14 +2,18 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from cuda.lang._ir.type import ScalarTy, VectorTy, PointerTy
+from cuda.lang._ir.type import MemorySpace, ScalarTy, VectorTy, PointerTy
 from cuda.tile import TileTypeError, DType
 from cuda.tile._ir.ir import Var
 from cuda.tile._ir.op_impl import require_array_type
 from cuda.tile._ir.ops import implicit_cast
 from cuda.tile._ir.type import TupleTy, TupleValue
 from cuda.tile._datatype import is_integral, is_signed
-from cuda.lang._datatype import clusterlaunchcontrol_token, is_float
+from cuda.lang._datatype import clusterlaunchcontrol_token, is_float, mbarrier
+
+
+def is_none(var: Var):
+    return var.is_constant() and var.get_constant() is None
 
 
 def require_array_indices(array: Var, indices: Var) -> tuple[Var, ...]:
@@ -74,6 +78,30 @@ def require_pointer_type(var: Var) -> PointerTy:
     if not isinstance(ty, PointerTy):
         raise make_type_checking_error(f"Expected a pointer, got {ty}", var)
     return ty
+
+
+def require_pointer_in_memory_space(ptr_value, spaces: tuple[MemorySpace, ...]) -> PointerTy:
+    ptr_type = require_pointer_type(ptr_value)
+    if ptr_type.memory_space not in spaces:
+        expected = ' or '.join(map(str, spaces))
+        raise TileTypeError(
+            f"Expected pointer memory space to be {expected} "
+            f"but got {ptr_type.memory_space}"
+        )
+    return ptr_type
+
+
+def require_mbarrier_ptr(
+    mbar: Var,
+    spaces: tuple[MemorySpace, ...] = (
+        MemorySpace.SHARED,
+        MemorySpace.SHARED_CLUSTER,
+    ),
+) -> PointerTy:
+    mbar_ptr_type = require_pointer_in_memory_space(mbar, spaces)
+    if mbar_ptr_type.opaque or mbar_ptr_type.pointee_dtype is not mbarrier:
+        raise TileTypeError(f"Expected a pointer to an mbarrier, got {mbar}")
+    return mbar_ptr_type
 
 
 def require_vector_type(var: Var, length: int | None = None) -> VectorTy:
