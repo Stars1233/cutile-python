@@ -29,11 +29,6 @@ FLOAT_TOLERANCES = {
 }
 
 
-def assert_close_float(actual, expected, dtype):
-    tol = FLOAT_TOLERANCES[dtype]
-    torch.testing.assert_close(actual, expected, rtol=tol["rel"], atol=tol["abs"])
-
-
 SIGNED_INT_TYPES = datatype.signed_integral_dtypes
 UNSIGNED_INT_TYPES = datatype.unsigned_integral_dtypes
 
@@ -62,6 +57,16 @@ FPCLASS_OPS = (
     (device_math.isfinite, host_math.isfinite),
     (device_math.isnormal, isnormal),
 )
+
+
+def assert_close_float(actual, expected, dtype):
+    tol = FLOAT_TOLERANCES[dtype]
+    torch.testing.assert_close(actual, expected, rtol=tol["rel"], atol=tol["abs"])
+
+
+def approx_float(expected, dtype):
+    tol = FLOAT_TOLERANCES[dtype]
+    return pytest.approx(expected, rel=tol["rel"], abs=tol["abs"])
 
 
 @pytest.mark.parametrize("dtype", FLOAT_TYPES)
@@ -109,7 +114,8 @@ def test_isnormal_non_arithmetic_float():
         device_math.isnormal(cl.float8_e4m3fn(float("inf")))
 
     with pytest.raises(
-        TileTypeError, match="Expected scalar or vector satisfying constraint"
+        TileTypeError,
+        match="Expected scalar or vector to satisfy constraint is_unrestricted_float",
     ):
         cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, ())
 
@@ -127,7 +133,63 @@ def test_math_unary_float(dtype, device_op, host_op):
     inp = torch.tensor([host_inp], dtype=torch_dt, device="cuda")
     out = torch.tensor([0.0], dtype=torch_dt, device="cuda")
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (inp, out))
-    assert out[0].item() == pytest.approx(expected, **FLOAT_TOLERANCES[dtype])
+    assert out[0].item() == approx_float(expected, dtype)
+
+
+def _pow_test_values(dtype):
+    if datatype.is_integral(dtype):
+        return (2, 3, 4, 5)
+    return (1.25, 1.5, 1.75, 2.0)
+
+
+@pytest.mark.parametrize(
+    "lhs_dt, rhs_dt, result_dt",
+    (
+        (cl.int32, cl.int32, cl.float32),
+        (cl.uint32, cl.uint32, cl.float32),
+        (cl.float16, cl.int32, cl.float16),
+        (cl.float32, cl.int32, cl.float32),
+        (cl.float64, cl.int32, cl.float64),
+        (cl.int32, cl.float32, cl.float32),
+        (cl.int32, cl.float64, cl.float64),
+        (cl.float16, cl.float16, cl.float16),
+        (cl.float32, cl.float32, cl.float32),
+        (cl.float64, cl.float64, cl.float64),
+        (cl.float16, cl.float32, cl.float32),
+        (cl.float16, cl.float64, cl.float64),
+        (cl.float32, cl.float64, cl.float64),
+        (cl.float64, cl.float32, cl.float64),
+    ),
+)
+@pytest.mark.parametrize("vector", (False, True))
+def test_pow(lhs_dt, rhs_dt, result_dt, vector):
+    @cl.kernel
+    def kernel(lhs, rhs, out):
+        if vector:
+            lhs_v = lhs.get_base_pointer().load(count=4)
+            rhs_v = rhs.get_base_pointer().load(count=4)
+            out.get_base_pointer().store(device_math.pow(lhs_v, rhs_v))
+        else:
+            out[0] = device_math.pow(lhs[0], rhs[0])
+
+    lhs_torch_dt = datatype.to_torch_dtype(lhs_dt)
+    rhs_torch_dt = datatype.to_torch_dtype(rhs_dt)
+    result_torch_dt = datatype.to_torch_dtype(result_dt)
+    count = 4 if vector else 1
+    lhs = torch.tensor(_pow_test_values(lhs_dt)[:count], dtype=lhs_torch_dt).cuda()
+    rhs = torch.tensor(_pow_test_values(rhs_dt)[:count], dtype=rhs_torch_dt).cuda()
+    out = torch.zeros(count, dtype=result_torch_dt).cuda()
+
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (lhs, rhs, out))
+
+    lhs_values = lhs.cpu().tolist()
+    rhs_values = rhs.cpu().tolist()
+    expected_values = [x**y for x, y in zip(lhs_values, rhs_values, strict=True)]
+    expected = torch.tensor(expected_values, dtype=result_torch_dt)
+    if datatype.is_float(result_dt):
+        assert_close_float(out.cpu(), expected, result_dt)
+    else:
+        torch.testing.assert_close(out.cpu(), expected, rtol=0, atol=0)
 
 
 @pytest.mark.skipif(
@@ -147,7 +209,7 @@ def test_math_exp2(dtype):
     inp = torch.tensor([host_inp], dtype=torch_dt, device="cuda")
     out = torch.tensor([0.0], dtype=torch_dt, device="cuda")
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (inp, out))
-    assert out[0].item() == pytest.approx(expected, **FLOAT_TOLERANCES[dtype])
+    assert out[0].item() == approx_float(expected, dtype)
 
 
 def test_math_vector_splat():
@@ -194,7 +256,7 @@ def test_math_binary_float(dtype, device_op, host_op):
     rhs = torch.tensor([host_rhs], dtype=torch_dt, device="cuda")
     out = torch.tensor([0.0], dtype=torch_dt, device="cuda")
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (lhs, rhs, out))
-    assert out[0].item() == pytest.approx(expected, **FLOAT_TOLERANCES[dtype])
+    assert out[0].item() == approx_float(expected, dtype)
 
 
 def test_math_binary_float_promotion():
@@ -213,7 +275,7 @@ def test_math_binary_float_promotion():
     out = torch.tensor([0.0], dtype=tdt2, device="cuda")
     expected = host_math.atan2(lhs.cpu().item(), rhs.cpu().item())
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (lhs, rhs, out))
-    assert out[0].item() == pytest.approx(expected, **FLOAT_TOLERANCES[dt2])
+    assert out[0].item() == approx_float(expected, dt2)
 
 
 @pytest.mark.parametrize("dtype", SIGNED_INT_TYPES)
@@ -265,6 +327,7 @@ def test_type_error():
         device_math.sin(cl.int32(5.0))
 
     with pytest.raises(
-        TileTypeError, match="Expected a scalar or vector float type, but got int32"
+        TileTypeError,
+        match="Expected scalar or vector to satisfy constraint is_float but got int32",
     ):
         cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, ())

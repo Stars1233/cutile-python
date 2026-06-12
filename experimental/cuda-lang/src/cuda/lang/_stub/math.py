@@ -126,6 +126,12 @@ def isnormal(x, /):
     ...
 
 
+@stub
+def pow(x, y, /):
+    """Calculate the value of ``x`` to the power of ``y``."""
+    ...
+
+
 __all__ = (
     "ceil",
     "exp",
@@ -147,4 +153,9 @@ __all__ = (
     "isinf",
     "isfinite",
     "isnormal",
+    "isnan",
+    "isinf",
+    "isfinite",
+    "isnormal",
+    "pow",
 )
