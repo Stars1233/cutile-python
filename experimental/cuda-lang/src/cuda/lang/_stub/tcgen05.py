@@ -8,15 +8,9 @@ from typing import Any, Literal
 
 from .._datatype import uint32, uint64
 from cuda.lang._execution import stub
+from .._enums import CTAGroup
 from .bits import set_bit32, set_bit64, set_bits32, set_bits64
 from .nvvm import P3, P6
-
-
-class CTAGroup(Enum):
-    """CTA group selection for tcgen05 tensor memory operations."""
-
-    CTA_1 = "cg1"
-    CTA_2 = "cg2"
 
 
 class Tcgen05LdStShape(Enum):

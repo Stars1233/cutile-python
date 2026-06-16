@@ -40,7 +40,9 @@ from cuda.tile._datatype import (
     is_pointer_dtype,
     pointer_dtype,
     opaque_pointer_dtype,
-    _define_dtype, _DTypeDefinition,
+    _define_dtype,
+    _DTypeDefinition,
+    PointerInfo,
 )
 
 
@@ -127,4 +129,5 @@ __all__ = [
     "DType",
     "to_torch_dtype",
     "default_int_type",
+    "PointerInfo",
 ]

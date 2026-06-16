@@ -2,11 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Callable
+from typing import Any, Callable
 
 import cuda.lang._datatype as datatype
-from cuda.lang._ir.op_defs import LoadPointer, StorePointer
-from cuda.lang._ir.type import MemorySpace, ScalarTy, VectorTy, PointerTy
+from cuda.lang._ir.ir import add_operation
+from cuda.lang._ir.op_defs import LoadPointer, StorePointer, TensorMapAsOpaquePtr
+from cuda.lang._ir.type import MemorySpace, ScalarTy, TensorMapTy, VectorTy, PointerTy
 from cuda.tile import TileTypeError, DType
 from cuda.tile._memory_model import MemoryOrder
 from cuda.tile._ir.ir import Var
@@ -19,11 +20,16 @@ from cuda.tile._ir.ops import broadcast_to, implicit_cast
 from cuda.tile._ir.ops_utils import promote_types
 from cuda.tile._ir.type import PointerInfo, TupleTy, TupleValue
 from cuda.tile._datatype import is_integral, is_signed
-from cuda.lang._datatype import clusterlaunchcontrol_token, is_float, mbarrier
+from cuda.lang._datatype import clusterlaunchcontrol_token, is_float, mbarrier, opaque_pointer_dtype
 
 
 def is_none(var: Var):
     return var.is_constant() and var.get_constant() is None
+
+
+def require_none(var: Var, message: str | None):
+    if not is_none(var):
+        raise make_type_checking_error(message, var)
 
 
 def require_array_indices(array: Var, indices: Var) -> tuple[Var, ...]:
@@ -63,6 +69,24 @@ def require_signed_int_scalar_or_tuple(var: Var) -> tuple[Var, ...]:
     return (var,)
 
 
+def require_uniform_tuple_type(var: Var, predicate=None):
+    items = var.get_aggregate().items
+    if items == ():
+        return ()
+
+    first = items[0]
+    if predicate is not None:
+        predicate(first)
+
+    for item in items[1:]:
+        if predicate is not None:
+            predicate(item)
+        if item.get_type() != first.get_type():
+            raise make_type_checking_error("Expected tuple elements to have the same type, but ")
+
+    return items
+
+
 def require_scalar_type(var: Var,
                         predicate: Callable[[DType], bool] | None = None,
                         message: str | None = None) -> ScalarTy:
@@ -76,6 +100,12 @@ def require_scalar_type(var: Var,
         raise make_type_checking_error(message, var)
 
     return ty
+
+
+def require_integral_scalar_type(var: Var):
+    ty = require_scalar_type(var)
+    if not is_integral(ty.dtype):
+        raise make_type_checking_error(f"Expected scalar integral but got {ty}", var)
 
 
 def require_clusterlaunchcontrol_token_type(var: Var) -> ScalarTy:
@@ -114,6 +144,48 @@ def require_pointer_in_memory_space(ptr_value, spaces: tuple[MemorySpace, ...]) 
             f"but got {ptr_type.memory_space}"
         )
     return ptr_type
+
+
+def require_uniform_int_tuple_type(var: Var):
+    return tuple(
+        require_uniform_tuple_type(
+            var, lambda element: require_scalar_type(element, is_integral)
+        )
+    )
+
+
+def tensor_map_descriptor_like(var: Var):
+    ty = var.get_type()
+    match ty:
+        case TensorMapTy():
+            result_ty = PointerTy(opaque_pointer_dtype())
+            return add_operation(TensorMapAsOpaquePtr, result_ty, tensor_map=var)
+        case PointerTy(pointer_dtype=dtype):
+            info = PointerInfo(dtype)
+            if not info.opaque or info.memory_space is not MemorySpace.GENERIC:
+                raise make_type_checking_error(
+                    "Expected tensor map or opaque tensor map pointer in generic "
+                    f"memory space but got {ty}",
+                    var,
+                )
+            return var
+
+    raise make_type_checking_error(
+        f"Expected tensor map or tensor map pointer but got {ty}", var
+    )
+
+
+def require_tensor_map_ty(var: Var) -> TensorMapTy:
+    ty = var.get_type()
+    if not isinstance(ty, TensorMapTy):
+        raise TileTypeError(f"Expected a tensor map, got {ty}")
+    return ty
+
+
+def require_optional(var: Var, requirement_if_not_none: Callable[[Var], Any]):
+    if is_none(var):
+        return None
+    return requirement_if_not_none(var)
 
 
 def require_optional_alignment(alignment: Var) -> int | None:

@@ -92,6 +92,7 @@ from .op_defs import (
     RawNVVMIntrinsic,
     RawMLIROperation,
     ForeignFunction,
+    TensorMapAsOpaquePtr,
     VectorGetItem,
     BitCast,
     StorePointer,
@@ -107,6 +108,7 @@ from .type_checking_helpers import (
     require_signed_int_scalar_or_tuple,
     require_clusterlaunchcontrol_token_type,
     is_none,
+    require_tensor_map_ty,
 )
 
 from .type import (
@@ -148,6 +150,7 @@ from .op_impl.pointer_impl import (
     contiguous_strides_from_shape,
     pointer_impl_registry,
 )
+from .op_impl.cp_async import cp_async_impl_registry
 
 cuda_lang_impl_registry = ImplRegistry()
 cuda_lang_impl_registry.update(core_impl_registry())
@@ -160,6 +163,7 @@ cuda_lang_impl_registry.update(tcgen05_impl_registry())
 cuda_lang_impl_registry.update(math_impl_registry())
 cuda_lang_impl_registry.update(vector_impl_registry())
 cuda_lang_impl_registry.update(pointer_impl_registry())
+cuda_lang_impl_registry.update(cp_async_impl_registry())
 
 impl = cuda_lang_impl_registry.impl
 
@@ -866,18 +870,6 @@ def tensor_map_tiled_impl(array: Var, tile_shape: Var, order: Var, swizzle: Var)
                          base_ptr=array_val.base_ptr,
                          array_shape=tuple(array_val.shape[i] for i in order),
                          array_strides=tuple(array_val.strides[i] for i in order))
-
-
-@dataclass
-class TensorMapAsOpaquePtr(Operation, opcode="tensor_map_as_opaque_ptr"):
-    tensor_map: Var = operand()
-
-
-def require_tensor_map_ty(var: Var) -> TensorMapTy:
-    ty = var.get_type()
-    if not isinstance(ty, TensorMapTy):
-        raise TileTypeError(f"Expected a tensor map, got {ty}")
-    return ty
 
 
 @impl(tensor_map.TensorMap.as_opaque_ptr)

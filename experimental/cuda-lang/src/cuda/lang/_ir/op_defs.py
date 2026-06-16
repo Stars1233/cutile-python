@@ -84,3 +84,8 @@ class LoadPointer(Operation, opcode="load_pointer", memory_effect=MemoryEffect.L
 @dataclass(eq=False)
 class ReinterpretPointerAsArray(Operation, opcode="reinterpret_ptr_as_array"):
     pointer: Var = operand()
+
+
+@dataclass
+class TensorMapAsOpaquePtr(Operation, opcode="tensor_map_as_opaque_ptr"):
+    tensor_map: Var = operand()

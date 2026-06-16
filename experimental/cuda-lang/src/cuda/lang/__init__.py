@@ -27,6 +27,12 @@ from ._stub.types import (
     Vector,
     Pointer,
 )
+from ._stub.cp_async import (
+    TMALoadMode,
+    TMAStoreMode,
+    cp_async_bulk_tensor_shared_to_global,
+    cp_async_bulk_tensor_global_to_shared,
+)
 from ._stub.core_api import (
     dtype_of,
     warp_size,
@@ -228,6 +234,8 @@ __all__ = (
     "tcgen05_dealloc",
     "tcgen05_commit",
     "tcgen05_ld",
+    "TMALoadMode",
+    "TMAStoreMode",
     "nanosleep",
     "mbarrier",
     "MbarrierScope",
@@ -249,4 +257,6 @@ __all__ = (
     "griddepcontrol_wait",
     "griddepcontrol_launch_dependents",
     "bitcast",
+    "cp_async_bulk_tensor_shared_to_global",
+    "cp_async_bulk_tensor_global_to_shared",
 )

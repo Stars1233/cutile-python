@@ -4,6 +4,7 @@
 
 import enum
 from cuda.tile import _cext
+from cuda.tile._memory_model import MemorySpace
 
 
 class TensorMapSwizzle(enum.Enum):
@@ -23,3 +24,34 @@ class MbarrierScope(enum.Enum):
 
     BLOCK = "cta"
     CLUSTER = "cluster"
+
+
+class TMALoadMode(enum.Enum):
+    TILE = 0
+    IM2COL = 1
+    IM2COL_W = 2
+    IM2COL_W_128 = 3
+    TILE_GATHER4 = 4
+
+
+class TMAStoreMode(enum.Enum):
+    TILE = 0
+    IM2COL = 1
+    TILE_SCATTER4 = 2
+
+
+class CTAGroup(enum.Enum):
+    """CTA group selection for tcgen05 tensor memory operations."""
+
+    CTA_1 = "cg1"
+    CTA_2 = "cg2"
+
+
+__all__ = (
+    "MemorySpace",
+    "TensorMapSwizzle",
+    "MbarrierScope",
+    "TMALoadMode",
+    "TMAStoreMode",
+    "CTAGroup",
+)

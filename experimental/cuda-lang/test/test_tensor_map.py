@@ -11,8 +11,8 @@ from .util import require_hopper_or_newer
 @require_hopper_or_newer()
 def test_mbar_manager():
     @cl.kernel()
-    def kernel(x, y, i, j, W: cl.Constant[int], H: cl.Constant[int]):
-        x_tm = cl.tensor_map_tiled(x, (H, W), order="F")
+    def kernel(x, y, i, j, H: cl.Constant[int], W: cl.Constant[int]):
+        x_tm = cl.tensor_map_tiled(x, (W, H), order='F')
         mbar = cl.shared_array(shape=(), dtype=cl.mbarrier, alignment=8).get_base_pointer()
         smem = cl.shared_array(shape=(W * H,), dtype=cl.int32, alignment=512)
 
@@ -21,15 +21,8 @@ def test_mbar_manager():
 
         cl.syncthreads()
         if cl.elect_sync():
-            # TODO: proper cp.async API
-            cl._nvvm.cp_async_bulk_tensor_g2s_cta_tile_2d(
-                smem.get_base_pointer(),
-                mbar,
-                x_tm.as_opaque_ptr(),
-                j,
-                i,
-                0,
-                False,
+            cl.cp_async_bulk_tensor_global_to_shared(
+                x_tm, (j, i), smem.get_base_pointer(), mbar
             )
             tok = cl.mbarrier_arrive_expect_tx(mbar, W * H * 4)
         else:
@@ -58,38 +51,27 @@ def test_mbar_manager():
 @require_hopper_or_newer()
 def test_tensor_map_tiled():
     @cl.kernel
-    def kern(x, y, i, j, W: cl.Constant[int], H: cl.Constant[int]):
-        # TODO: barrier API
-        barrier = cl.shared_array(shape=(), dtype=cl.uint64)
+    def kern(x, y, i, j, H: cl.Constant[int], W: cl.Constant[int]):
+        barrier = cl.shared_array(shape=(), dtype=cl.mbarrier, alignment=8)
         smem = cl.shared_array(shape=(W * H,), dtype=cl.int32, alignment=512)
-        x_tm = cl.tensor_map_tiled(x, (H, W), order="F")
+        x_tm = cl.tensor_map_tiled(x, (W, H), order="F")
 
         if cl.thread_idx(0) == 0:
-            cl._nvvm.mbarrier_init_shared(barrier.get_base_pointer(), cl.block_dim(0))
+            cl.mbarrier_init(barrier.get_base_pointer(), cl.block_dim(0))
 
         cl.syncthreads()
         if cl.elect_sync():
-            # TODO: proper cp.async API
-            cl._nvvm.cp_async_bulk_tensor_g2s_cta_tile_2d(
+            cl.cp_async_bulk_tensor_global_to_shared(
+                x_tm,
+                (j, i),
                 smem.get_base_pointer(),
                 barrier.get_base_pointer(),
-                x_tm.as_opaque_ptr(),
-                j,
-                i,
-                0,
-                False,
             )
-            tok = cl._nvvm.mbarrier_arrive_expect_tx_scope_cta_space_cta(
-                barrier.get_base_pointer(), W * H * 4
-            )
+            tok = cl.mbarrier_arrive_expect_tx(barrier.get_base_pointer(), W * H * 4)
         else:
-            tok = cl._nvvm.mbarrier_arrive_scope_cta_space_cta(
-                barrier.get_base_pointer(), 1
-            )
+            tok = cl.mbarrier_arrive(barrier.get_base_pointer())
 
-        while not cl._nvvm.mbarrier_try_wait_scope_cta_space_cta(
-            barrier.get_base_pointer(), tok
-        ):
+        while not cl.mbarrier_try_wait(barrier.get_base_pointer(), tok):
             # TODO: back off (see __cccl_thread_poll_with_backoff in CUDA C++ stdlib)
             cl._nvvm.nanosleep(10000)
 

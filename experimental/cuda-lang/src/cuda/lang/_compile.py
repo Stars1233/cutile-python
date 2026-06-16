@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from copy import deepcopy
 from functools import total_ordering
 import sys
 import tempfile
@@ -48,7 +49,9 @@ class MLIR2CubinResult:
     ptx: str | None
 
 
-def mlir2cubin(mlir_text: str, gpu_name: str, arch: str) -> MLIR2CubinResult:
+def mlir2cubin(
+    mlir_text: str, gpu_name: str, arch: str, log_flags=get_log_flags()
+) -> MLIR2CubinResult:
     executable = get_compiler_binary_path()
     argv = [executable, "-", "-o", "-", f"--gpu-name={gpu_name}", f"--arch={arch}"]
     custom_flags = os.environ.get("CUDA_LANG_MLIR2CUBIN_FLAGS", None)
@@ -57,7 +60,6 @@ def mlir2cubin(mlir_text: str, gpu_name: str, arch: str) -> MLIR2CubinResult:
         argv.extend(custom_flags.split())
 
     with contextlib.ExitStack() as ec:
-        log_flags = get_log_flags()
         ptx_file, ptx_src = None, None
 
         if log_flags.log_ptx:
@@ -179,6 +181,10 @@ def compile_simt(
     arch: str | None = None,
     compiler_options: CompilerOptions = CompilerOptions(),
     ctx: ir.IRContext | None = None,
+    log_hir: bool = False,
+    log_ir: bool = False,
+    log_mlir: bool = False,
+    log_ptx: bool = False,
 ) -> CompilationResult:
     match function:
         case FunctionType():
@@ -186,7 +192,12 @@ def compile_simt(
         case kernel():
             function = get_annotated_function(function._pyfunc)
 
-    log_flags = get_log_flags()
+    log_flags = deepcopy(get_log_flags())
+    log_flags.log_hir |= log_hir
+    log_flags.log_ir |= log_ir
+    log_flags.log_mlir |= log_mlir
+    log_flags.log_ptx |= log_ptx
+
     logging_template = (
         '=' * 20 + ' cuda.lang {header} dump: ' + '=' * 20 + '\n' + '{body}' + '\n'
     )
@@ -229,7 +240,7 @@ def compile_simt(
         gpu_name = gpu_name or cc.gpu_name + suffix
         arch = arch or cc.arch + suffix
 
-    compiled = mlir2cubin(str(mlir_module), gpu_name=gpu_name, arch=arch)
+    compiled = mlir2cubin(str(mlir_module), gpu_name=gpu_name, arch=arch, log_flags=log_flags)
 
     return CompilationResult(
         kernel_signatures=[signature],
