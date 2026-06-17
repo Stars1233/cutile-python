@@ -913,14 +913,14 @@ def atomic_cas(
 
 
 @stub
-def shfl_sync(mask: int, value: int, src_lane: int, width: int = 32) -> int:
+def shfl_sync(value: int, src_lane: int, width: int = 32, mask: int = FULL_MASK) -> int:
     """
     Return ``value`` from lane ``src_lane`` within the logical warp subdivision.
     """
 
 
 @stub
-def shfl_up_sync(mask: int, value: int, delta: int, width: int = 32) -> int:
+def shfl_up_sync(value: int, delta: int, width: int = 32, mask: int = FULL_MASK) -> int:
     """
     Return ``value`` from the lane ``delta`` positions lower in the logical warp
     subdivision.
@@ -928,7 +928,7 @@ def shfl_up_sync(mask: int, value: int, delta: int, width: int = 32) -> int:
 
 
 @stub
-def shfl_down_sync(mask: int, value: int, delta: int, width: int = 32) -> int:
+def shfl_down_sync(value: int, delta: int, width: int = 32, mask: int = FULL_MASK) -> int:
     """
     Return ``value`` from the lane ``delta`` positions higher in the logical
     warp subdivision.
@@ -936,7 +936,7 @@ def shfl_down_sync(mask: int, value: int, delta: int, width: int = 32) -> int:
 
 
 @stub
-def shfl_xor_sync(mask: int, value: int, lane_mask: int, width: int = 32) -> int:
+def shfl_xor_sync(value: int, lane_mask: int, width: int = 32, mask: int = FULL_MASK) -> int:
     """
     Return ``value`` from the lane addressed by XORing the caller lane with
     ``lane_mask`` within the logical warp subdivision.

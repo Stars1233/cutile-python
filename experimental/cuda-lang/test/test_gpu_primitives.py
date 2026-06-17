@@ -7,8 +7,11 @@ from cuda.lang._exception import TileCompilerExecutionError
 import torch
 import pytest
 
+from cuda.lang.compilation import KernelSignature
+
 from .util import (
     compile_for_arguments,
+    filecheck,
     make_symbolic_tensor,
     require_blackwell_or_newer,
     require_hopper_or_newer,
@@ -271,7 +274,7 @@ def test_warp_size_full_mask_and_ptx_comment(log_ptx):
     def kernel(out):
         tidx = cl.thread_idx(0)
         cl.ptx_comment(ptx_comment)
-        value = cl.shfl_sync(cl.full_mask(), tidx, 7)
+        value = cl.shfl_sync(tidx, 7)
         if tidx == 0:
             out[0] = cl.warp_size()
             out[1] = value
@@ -452,7 +455,7 @@ class TestShuffle:
 
             delta = cl.int32(1)
             for _ in range(4):
-                other = cl.shfl_up_sync(mask, value, delta, width)
+                other = cl.shfl_up_sync(value, delta, width, mask=mask)
                 if sublane >= delta:
                     value += other
                 delta *= 2
@@ -472,7 +475,7 @@ class TestShuffle:
         @cl.kernel
         def kernel(out):
             lane = cl.thread_idx(0)
-            out[lane] = cl.shfl_sync(cl.int32(0xFFFFFFFF), lane, 4)
+            out[lane] = cl.shfl_sync(lane, 4)
 
         out = torch.zeros(32, dtype=torch.int32, device="cuda")
         cl.launch(torch.cuda.current_stream(), (1,), (32,), kernel, (out,))
@@ -483,7 +486,7 @@ class TestShuffle:
         @cl.kernel
         def kernel(out):
             lane = cl.thread_idx(0)
-            out[lane] = cl.shfl_down_sync(cl.int32(0xFFFFFFFF), lane, 4)
+            out[lane] = cl.shfl_down_sync(lane, 4)
 
         out = torch.zeros(32, dtype=torch.int32, device="cuda")
         cl.launch(torch.cuda.current_stream(), (1,), (32,), kernel, (out,))
@@ -495,12 +498,36 @@ class TestShuffle:
         @cl.kernel
         def kernel(out):
             lane = cl.thread_idx(0)
-            out[lane] = cl.shfl_xor_sync(cl.int32(0xFFFFFFFF), lane, 16)
+            out[lane] = cl.shfl_xor_sync(lane, 16, mask=cl.int32(0xFFFFFFFF))
 
         out = torch.zeros(32, dtype=torch.int32, device="cuda")
         cl.launch(torch.cuda.current_stream(), (1,), (32,), kernel, (out,))
         expected = torch.tensor([lane ^ 16 for lane in range(32)], dtype=torch.int32)
         assert (out.cpu() == expected).all()
+
+    @pytest.mark.parametrize(
+        "op", (cl.shfl_down_sync, cl.shfl_xor_sync, cl.shfl_sync, cl.shfl_up_sync)
+    )
+    def test_shfl_primitive_mask_persists(self, op):
+        @cl.kernel
+        def kernel(tensor):
+            i1 = op(1, 1, 1, mask=1234)
+            i2 = op(1, 1, 1, mask=4321)
+            i2 = op(1, 1, 1)  # omitted, ensure it's FULL_MASK
+            tensor[0] = i1 + i2
+
+        cres = cl.compile_simt(
+            kernel, [KernelSignature([make_symbolic_tensor(1, cl.int32)])]
+        )
+
+        filecheck(
+            cres.mlir,
+            f"""
+            CHECK: 1234
+            CHECK: 4321
+            CHECK: {0xFFFFFFFF}
+            """,
+        )
 
 
 class TestBarrierSync:

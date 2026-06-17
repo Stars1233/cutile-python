@@ -768,7 +768,7 @@ def inline_ptx_impl(ptx_code: Var, constraint_pairs: tuple) -> Var[TupleTy]:
     return build_tuple(results)
 
 
-def shfl_sync_impl(mode: str, mask: Var, value: Var, lane_mask: Var, width: Var) -> Var:
+def shfl_sync_impl(mode: str, mask: Var, value: Var, operand: Var, width: Var) -> Var:
     """
     Implements the instructions as the psuedocode in the NVVM IR spec.
     https://docs.nvidia.com/cuda/archive/12.3.1/nvvm-ir-spec/index.html#data-movement
@@ -776,7 +776,6 @@ def shfl_sync_impl(mode: str, mask: Var, value: Var, lane_mask: Var, width: Var)
     See also Clang's lowering in __clang_cuda_intrinsics.h.
     """
     valid_value_dtypes = (datatype.int32, datatype.uint32, datatype.float32)
-    valid_mask_dtypes = (datatype.int32, datatype.uint32)
     value_ty = require_scalar_type(
         value,
         lambda dtype: dtype in valid_value_dtypes,
@@ -784,14 +783,16 @@ def shfl_sync_impl(mode: str, mask: Var, value: Var, lane_mask: Var, width: Var)
     )
     require_scalar_type(
         mask,
-        lambda dtype: dtype in valid_mask_dtypes,
-        f"Expected shuffle mask dtype to be one of {valid_mask_dtypes}",
+        datatype.is_integral,
+        "Expected shuffle mask dtype to be an integer",
     )
+    mask = astype(mask, datatype.int32)
     require_scalar_type(
-        lane_mask,
-        lambda dtype: dtype in valid_mask_dtypes,
-        f"Expected shuffle lane mask dtype to be one of {valid_mask_dtypes}",
+        operand,
+        datatype.is_integral,
+        "Expected shuffle lane mask dtype to be an integer",
     )
+    operand = astype(operand, datatype.int32)
     width = require_constant_int(width)
     if width not in (1, 2, 4, 8, 16, 32):
         raise TileTypeError(f"Expected shuffle width to be a power of two in [1, 32], got {width}")
@@ -809,27 +810,27 @@ def shfl_sync_impl(mode: str, mask: Var, value: Var, lane_mask: Var, width: Var)
         RawNVVMIntrinsic,
         value_ty,
         intrinsic=intrinsic,
-        operands_=(mask, value, lane_mask, mask_and_clamp),
+        operands_=(mask, value, operand, mask_and_clamp),
     )
 
 
 @impl(core_api.shfl_sync)
-def shfl_sync_idx_impl(mask: Var, value: Var, src_lane: Var, width: Var) -> Var:
+def shfl_sync_idx_impl(value: Var, src_lane: Var, width: Var, mask: Var) -> Var:
     return shfl_sync_impl("idx", mask, value, src_lane, width)
 
 
 @impl(core_api.shfl_up_sync)
-def shfl_sync_up_impl(mask: Var, value: Var, delta: Var, width: Var) -> Var:
+def shfl_sync_up_impl(value: Var, delta: Var, width: Var, mask: Var) -> Var:
     return shfl_sync_impl("up", mask, value, delta, width)
 
 
 @impl(core_api.shfl_down_sync)
-def shfl_sync_down_impl(mask: Var, value: Var, delta: Var, width: Var) -> Var:
+def shfl_sync_down_impl(value: Var, delta: Var, width: Var, mask: Var) -> Var:
     return shfl_sync_impl("down", mask, value, delta, width)
 
 
 @impl(core_api.shfl_xor_sync)
-def shfl_sync_xor_impl(mask: Var, value: Var, lane_mask: Var, width: Var) -> Var:
+def shfl_sync_xor_impl(value: Var, lane_mask: Var, width: Var, mask: Var) -> Var:
     return shfl_sync_impl("bfly", mask, value, lane_mask, width)
 
 
