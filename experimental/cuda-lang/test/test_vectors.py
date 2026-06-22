@@ -9,7 +9,7 @@ import torch
 
 import cuda.lang as cl
 from cuda.lang._datatype import to_torch_dtype
-from cuda.lang._exception import TileTypeError
+from cuda.lang._exception import TileTypeError, TileValueError
 from cuda.lang.compilation import KernelSignature
 from cuda.tile import static_iter
 
@@ -71,6 +71,86 @@ def test_vector_apis():
     out = torch.zeros(4, dtype=torch.int32).cuda()
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (out,))
     assert out.cpu().tolist() == [1, 1, 1, 4]
+
+
+def test_vector_constructor():
+    @cl.kernel
+    def kernel(out):
+        vec = cl.Vector(1, 2, 3, 4)
+        out.get_base_pointer().store(vec, alignment=16)
+
+    out = torch.zeros(4, dtype=torch.int32).cuda()
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (out,))
+    assert out.cpu().tolist() == [1, 2, 3, 4]
+
+
+def test_vector_constructor_unsigned():
+    @cl.kernel
+    def kernel(out):
+        vec = cl.Vector(cl.uint32(1), 2, 3, 4)
+        out.get_base_pointer().store(vec, alignment=16)
+
+    out = torch.zeros(4, dtype=torch.uint32).cuda()
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (out,))
+    assert out.cpu().tolist() == [1, 2, 3, 4]
+
+
+def test_vector_constructor_uses_explicit_dtype():
+    @cl.kernel
+    def kernel(out):
+        vec = cl.Vector(1, 2, 3, 4, dtype=cl.int8)
+        out.get_base_pointer().store(vec, alignment=4)
+
+    out = torch.zeros(4, dtype=torch.int8).cuda()
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (out,))
+    assert out.cpu().tolist() == [1, 2, 3, 4]
+
+
+def test_vector_constructor_rejects_empty():
+    @cl.kernel
+    def kernel():
+        cl.Vector()
+
+    with pytest.raises(TileTypeError, match=r"Vector\(\) expects at least one element"):
+        cl.compile_simt(kernel, [KernelSignature([])])
+
+
+def test_vector_constructor_rejects_non_scalar_element():
+    @cl.kernel
+    def kernel():
+        cl.Vector((1, 2))
+
+    with pytest.raises(TileTypeError, match=r"Vector\(\) element 0: Expected a scalar"):
+        cl.compile_simt(kernel, [KernelSignature([])])
+
+
+def test_vector_constructor_explicit_dtype_rejects_out_of_range_element():
+    @cl.kernel
+    def kernel():
+        cl.Vector(1, 300, dtype=cl.int8)
+
+    with pytest.raises(TileValueError, match="out of range of int8"):
+        cl.compile_simt(kernel, [KernelSignature([])])
+
+
+def test_vector_constructor_rejects_negative_for_unsigned():
+    @cl.kernel
+    def kernel():
+        cl.Vector(cl.uint32(1), -1)
+
+    with pytest.raises(
+        TileValueError, match=r"out of range of uint32"
+    ):
+        cl.compile_simt(kernel, [KernelSignature([])])
+
+
+def test_vector_constructor_rejects_widen_dtype():
+    @cl.kernel
+    def kernel():
+        cl.Vector(cl.int8(1), 2, 3, 5_000_000_000)
+
+    with pytest.raises(TileValueError, match="out of range of int8"):
+        cl.compile_simt(kernel, [KernelSignature([])])
 
 
 @pytest.mark.parametrize(

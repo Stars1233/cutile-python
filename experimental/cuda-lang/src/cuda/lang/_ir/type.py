@@ -135,6 +135,8 @@ class VectorTy(TensorLikeTy):
             raise TileTypeError(
                 f"Expected vector length to be an int, got {type(self.length).__name__}"
             )
+        if self.length <= 0:
+            raise TileTypeError(f"Expected vector length to be positive, got {self.length}")
 
     @override
     def tensor_dtype(self) -> "DType":

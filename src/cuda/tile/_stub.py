@@ -946,7 +946,6 @@ class TiledView:
 
 
 class Slice:
-    _cutile_is_builtin = True
     """A start + length index for array dimensions.
 
     Used as a dense-dimension entry in :func:`load_advanced_indexing` and
@@ -960,6 +959,9 @@ class Slice:
         start: Integer element-space start offset.
         length: Length in elements.
     """
+
+    _cutile_is_builtin = True
+
     @stub
     def __init__(self, start, length, /):
         pass  # implemented via @impl(ct.Slice) in ops.py

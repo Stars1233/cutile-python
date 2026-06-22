@@ -6,14 +6,18 @@ from typing import Callable
 from cuda.tile._ir.op_impl import (
     WILDCARD,
     ImplRegistry,
+    require_dtype_spec,
 )
 from cuda.tile._ir.cast_ops import implicit_cast
 from cuda.tile._ir.ops import strictly_typed_const
+from cuda.tile._ir.ops_utils import promote_dtypes
+from cuda.tile._ir.type import LooselyTypedScalar
 from cuda.lang._exception import TileInternalError, TileTypeError
 import cuda.lang._datatype as datatype
-from ..type_checking_helpers import require_vector_type
+from ..type_checking_helpers import require_vector_type, require_scalar_type
 from ..op_defs import RawMLIROperation, VectorGetItem
 from ..type import ScalarTy, Type, VectorTy
+from ..._stub.types import Vector
 from ..ir import Var, add_operation
 
 
@@ -45,6 +49,60 @@ def vector_setitem(vector: Var[VectorTy], key: int | Var[ScalarTy], value: Var[S
         op_name="llvm.insertelement",
         operands_=(vector, value, key),
     )
+
+
+def _vector_constructor_element_dtype(elements: tuple[Var, ...]) -> datatype.DType:
+    loose_types = [element.get_loose_type() for element in elements]
+    concrete_dtypes = [
+        lt.tensor_dtype()
+        for lt in loose_types
+        if not isinstance(lt, LooselyTypedScalar)
+    ]
+
+    if not concrete_dtypes:
+        element_dtype = loose_types[0].tensor_dtype()
+        for lt in loose_types[1:]:
+            element_dtype = promote_dtypes(element_dtype, lt.tensor_dtype())
+        return element_dtype
+
+    element_dtype = concrete_dtypes[0]
+    for concrete_dtype in concrete_dtypes[1:]:
+        element_dtype = promote_dtypes(element_dtype, concrete_dtype)
+    return element_dtype
+
+
+def _optional_vector_constructor_dtype(dtype: Var) -> datatype.DType | None:
+    if dtype.is_constant() and dtype.get_constant() is None:
+        return None
+    return require_dtype_spec(dtype)
+
+
+def _require_vector_constructor_element(element: Var, index: int) -> None:
+    try:
+        require_scalar_type(element)
+    except TileTypeError as e:
+        raise TileTypeError(f"Vector() element {index}: {str(e)}")
+
+
+@impl(Vector)
+def vector_constructor_impl(elements: tuple[Var, ...], dtype: Var) -> Var[VectorTy]:
+    if not elements:
+        raise TileTypeError("Vector() expects at least one element")
+
+    for index, element in enumerate(elements):
+        _require_vector_constructor_element(element, index)
+
+    explicit_dtype = _optional_vector_constructor_dtype(dtype)
+    element_dtype = (
+        explicit_dtype
+        if explicit_dtype is not None
+        else _vector_constructor_element_dtype(elements)
+    )
+    res = vector_undef(VectorTy(element_dtype, len(elements)))
+    for index, element in enumerate(elements):
+        value = implicit_cast(element, element_dtype, f"Vector() element {index}")
+        res = vector_setitem(res, index, value)
+    return res
 
 
 def vector_elementwise_apply(
