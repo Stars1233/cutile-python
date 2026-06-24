@@ -34,11 +34,6 @@ class ArithIntegerOverflowFlagsInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class ArithNonNegFlagInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
 class ArithRoundingModeInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
@@ -206,14 +201,11 @@ def add_AddFOp(
     lhs: Value,
     rhs: Value,
     fastmath: FastMathFlags = FastMathFlags(0),
-    roundingmode: Optional[RoundingMode] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
     result_type = lhs.type
     all_props = []
     all_props.append(('fastmath', FastMathFlagsAttr(value=fastmath)))
-    if roundingmode is not None:
-        all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
     return add_operation(
         name="arith.addf",
         result_type=result_type,
@@ -384,41 +376,16 @@ def add_ConstantOp(
     )
 
 
-def add_ConvertFOp(
-    *,
-    out_type: Type,
-    in_: Value,
-    roundingmode: Optional[RoundingMode] = None,
-    fastmath: Optional[FastMathFlags] = None,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    all_props = []
-    if roundingmode is not None:
-        all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
-    if fastmath is not None:
-        all_props.append(('fastmath', FastMathFlagsAttr(value=fastmath)))
-    return add_operation(
-        name="arith.convertf",
-        result_type=out_type,
-        operands=[in_],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
 def add_DivFOp(
     *,
     lhs: Value,
     rhs: Value,
     fastmath: FastMathFlags = FastMathFlags(0),
-    roundingmode: Optional[RoundingMode] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
     result_type = lhs.type
     all_props = []
     all_props.append(('fastmath', FastMathFlagsAttr(value=fastmath)))
-    if roundingmode is not None:
-        all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
     return add_operation(
         name="arith.divf",
         result_type=result_type,
@@ -507,12 +474,9 @@ def add_ExtUIOp(
     *,
     out_type: Type,
     in_: Value,
-    nonNeg: bool = False,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
     all_props = []
-    if nonNeg:
-        all_props.append(('nonNeg', UnitAttr()))
     return add_operation(
         name="arith.extui",
         result_type=out_type,
@@ -571,24 +535,6 @@ def add_FloorDivSIOp(
     )
 
 
-def add_FlushDenormalsOp(
-    *,
-    operand: Value,
-    fastmath: FastMathFlags = FastMathFlags(0),
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    result_type = operand.type
-    all_props = []
-    all_props.append(('fastmath', FastMathFlagsAttr(value=fastmath)))
-    return add_operation(
-        name="arith.flush_denormals",
-        result_type=result_type,
-        operands=[operand],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
 def add_IndexCastOp(
     *,
     out_type: Type,
@@ -609,12 +555,9 @@ def add_IndexCastUIOp(
     *,
     out_type: Type,
     in_: Value,
-    nonNeg: bool = False,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
     all_props = []
-    if nonNeg:
-        all_props.append(('nonNeg', UnitAttr()))
     return add_operation(
         name="arith.index_castui",
         result_type=out_type,
@@ -773,14 +716,11 @@ def add_MulFOp(
     lhs: Value,
     rhs: Value,
     fastmath: FastMathFlags = FastMathFlags(0),
-    roundingmode: Optional[RoundingMode] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
     result_type = lhs.type
     all_props = []
     all_props.append(('fastmath', FastMathFlagsAttr(value=fastmath)))
-    if roundingmode is not None:
-        all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
     return add_operation(
         name="arith.mulf",
         result_type=result_type,
@@ -1074,14 +1014,11 @@ def add_SubFOp(
     lhs: Value,
     rhs: Value,
     fastmath: FastMathFlags = FastMathFlags(0),
-    roundingmode: Optional[RoundingMode] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
     result_type = lhs.type
     all_props = []
     all_props.append(('fastmath', FastMathFlagsAttr(value=fastmath)))
-    if roundingmode is not None:
-        all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
     return add_operation(
         name="arith.subf",
         result_type=result_type,
@@ -1154,12 +1091,9 @@ def add_UIToFPOp(
     *,
     out_type: Type,
     in_: Value,
-    nonNeg: bool = False,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
     all_props = []
-    if nonNeg:
-        all_props.append(('nonNeg', UnitAttr()))
     return add_operation(
         name="arith.uitofp",
         result_type=out_type,

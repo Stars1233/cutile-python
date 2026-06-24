@@ -50,6 +50,7 @@ from cuda.lang._mlir.nvvm import (
     FPRoundingMode,
     GridDepActionKind,
     LoadCacheModifierKind,
+    MMABlockScaleKind,
     MemOrderKind,
     MemScopeKind,
     PermuteMode,
@@ -89,6 +90,11 @@ def bar_warp_sync(*, mask: I32) -> None: ...
     args=(ArgSpec(type=strip(I32), name='barrierId', optional=True), ArgSpec(type=strip(I32), name='numberOfThreads'),),
 )
 def barrier_arrive(*, barrier_id: I32 | None = None, number_of_threads: I32) -> None: ...
+
+@nvvm_mlir_interface_stub(
+    op_name='nvvm.barrier0',
+)
+def barrier0() -> None: ...
 
 @nvvm_mlir_interface_stub(
     op_name='nvvm.breakpoint',
@@ -139,20 +145,6 @@ def convert_f32x2_to_f16x2(*, src_hi: F32, src_lo: F32, random_bits: I32 | None 
     args=(ArgSpec(type=strip(F32), name='src'), ArgSpec(type=strip(FPRoundingMode), name='rnd', kind='attribute'), ArgSpec(type=strip(SaturationMode), name='sat', kind='attribute'), ArgSpec(type=strip(B), name='relu', kind='attribute'),),
 )
 def convert_float_to_tf32(*, src: F32, rnd: FPRoundingMode = FPRoundingMode.NONE, sat: SaturationMode = SaturationMode.NONE, relu: B = False) -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.convert.s2f6x2.to.bf16x2',
-    results=(ResultSpec(name='dst', type=strip(VX)),),
-    args=(ArgSpec(type=strip(VX), name='src'), ArgSpec(type=strip(I16), name='scaleFactor', optional=True), ArgSpec(type=strip(SaturationMode), name='sat', kind='attribute'), ArgSpec(type=strip(B), name='relu', kind='attribute'),),
-)
-def convert_s2f6x2_to_bf16x2(*, src: VX, scale_factor: I16 | None = None, sat: SaturationMode = SaturationMode.NONE, relu: B = False) -> VX: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.cos',
-    results=(ResultSpec(name='res', type=strip(F32)),),
-    args=(ArgSpec(type=strip(F32), name='src'), ArgSpec(type=strip(B), name='ftz', kind='attribute'),),
-)
-def cos(*, src: F32, ftz: B = False) -> F32: ...
 
 @nvvm_mlir_interface_stub(
     op_name='nvvm.cp.async.bulk.commit.group',
@@ -264,13 +256,6 @@ def dot_accumulate_4way(*, a: VX, a_type: DotAccumulateType, b: VX, b_type: DotA
 def elect_sync(*, membermask: I32 | None = None) -> B: ...
 
 @nvvm_mlir_interface_stub(
-    op_name='nvvm.ex2',
-    results=(ResultSpec(name='res', type=strip(F32)),),
-    args=(ArgSpec(type=strip(F32), name='src'), ArgSpec(type=strip(B), name='ftz', kind='attribute'),),
-)
-def ex2(*, src: F32, ftz: B = False) -> F32: ...
-
-@nvvm_mlir_interface_stub(
     op_name='nvvm.exit',
 )
 def exit() -> None: ...
@@ -320,13 +305,6 @@ def fence_sync_restrict(*, order: MemoryOrder) -> None: ...
     args=(ArgSpec(type=strip(GridDepActionKind), name='kind', kind='attribute'),),
 )
 def griddepcontrol(*, kind: GridDepActionKind) -> None: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.log2',
-    results=(ResultSpec(name='res', type=strip(F32)),),
-    args=(ArgSpec(type=strip(F32), name='src'), ArgSpec(type=strip(B), name='ftz', kind='attribute'),),
-)
-def log2(*, src: F32, ftz: B = False) -> F32: ...
 
 @nvvm_mlir_interface_stub(
     op_name='nvvm.mbarrier.arrive.nocomplete',
@@ -419,281 +397,10 @@ def prmt(*, lo: I32, hi: I32 | None = None, selector: I32, mode: PermuteMode) ->
 def rcp_approx_ftz_f(*, arg: F32) -> F32: ...
 
 @nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.aggr.smem.size',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_aggr_smem_size() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.clock',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_clock() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.clock64',
-    results=(ResultSpec(name='res', type=strip(I64)),),
-)
-def read_ptx_sreg_clock64() -> I64: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.dynamic.smem.size',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_dynamic_smem_size() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg0',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg0() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg1',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg1() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg10',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg10() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg11',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg11() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg12',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg12() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg13',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg13() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg14',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg14() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg15',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg15() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg16',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg16() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg17',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg17() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg18',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg18() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg19',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg19() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg2',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg2() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg20',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg20() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg21',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg21() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg22',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg22() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg23',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg23() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg24',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg24() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg25',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg25() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg26',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg26() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg27',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg27() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg28',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg28() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg29',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg29() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg3',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg3() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg30',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg30() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg31',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg31() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg4',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg4() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg5',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg5() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg6',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg6() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg7',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg7() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg8',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg8() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.envreg9',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_envreg9() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.globaltimer',
-    results=(ResultSpec(name='res', type=strip(I64)),),
-)
-def read_ptx_sreg_globaltimer() -> I64: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.globaltimer.lo',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_globaltimer_lo() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.lanemask.eq',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_lanemask_eq() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.lanemask.ge',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_lanemask_ge() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.lanemask.gt',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_lanemask_gt() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.lanemask.le',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_lanemask_le() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.lanemask.lt',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_lanemask_lt() -> I32: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.read.ptx.sreg.total.smem.size',
-    results=(ResultSpec(name='res', type=strip(I32)),),
-)
-def read_ptx_sreg_total_smem_size() -> I32: ...
-
-@nvvm_mlir_interface_stub(
     op_name='nvvm.setmaxregister',
     args=(ArgSpec(type=strip(U32), name='regCount', kind='attribute'), ArgSpec(type=strip(SetMaxRegisterAction), name='action', kind='attribute'),),
 )
 def setmaxregister(*, reg_count: U32, action: SetMaxRegisterAction) -> None: ...
-
-@nvvm_mlir_interface_stub(
-    op_name='nvvm.sin',
-    results=(ResultSpec(name='res', type=strip(F32)),),
-    args=(ArgSpec(type=strip(F32), name='src'), ArgSpec(type=strip(B), name='ftz', kind='attribute'),),
-)
-def sin(*, src: F32, ftz: B = False) -> F32: ...
 
 @nvvm_mlir_interface_stub(
     op_name='nvvm.st.bulk',
@@ -740,9 +447,9 @@ def tcgen05_mma(*, kind: Tcgen05MMAKind, cta_group: CTAGroupKind, collector_op: 
 
 @nvvm_mlir_interface_stub(
     op_name='nvvm.tcgen05.mma.block_scale',
-    args=(ArgSpec(type=strip(Tcgen05MMAKind), name='kind', kind='attribute'), ArgSpec(type=strip(CTAGroupKind), name='ctaGroup', kind='attribute'), ArgSpec(type=strip(Tcgen05MMABlockScale), name='blockScale', kind='attribute'), ArgSpec(type=strip(Tcgen05MMACollectorOp), name='collectorOp', kind='attribute'), ArgSpec(type=strip(P6), name='matrixD'), ArgSpec(type=(strip(P6), strip(I64),), name='matrixA'), ArgSpec(type=strip(I64), name='matrixB'), ArgSpec(type=strip(I32), name='idesc'), ArgSpec(type=strip(B), name='enableInputD'), ArgSpec(type=strip(P6), name='scaleA'), ArgSpec(type=strip(P6), name='scaleB'),),
+    args=(ArgSpec(type=strip(MMABlockScaleKind), name='kind', kind='attribute'), ArgSpec(type=strip(CTAGroupKind), name='ctaGroup', kind='attribute'), ArgSpec(type=strip(Tcgen05MMABlockScale), name='blockScale', kind='attribute'), ArgSpec(type=strip(Tcgen05MMACollectorOp), name='collectorOp', kind='attribute'), ArgSpec(type=strip(P6), name='matrixD'), ArgSpec(type=(strip(P6), strip(I64),), name='matrixA'), ArgSpec(type=strip(I64), name='matrixB'), ArgSpec(type=strip(I32), name='idesc'), ArgSpec(type=strip(B), name='enableInputD'), ArgSpec(type=strip(P6), name='scaleA'), ArgSpec(type=strip(P6), name='scaleB'),),
 )
-def tcgen05_mma_block_scale(*, kind: Tcgen05MMAKind, cta_group: CTAGroupKind, block_scale: Tcgen05MMABlockScale = Tcgen05MMABlockScale.DEFAULT, collector_op: Tcgen05MMACollectorOp = Tcgen05MMACollectorOp.DISCARD, matrix_d: P6, matrix_a: P6 | I64, matrix_b: I64, idesc: I32, enable_input_d: B, scale_a: P6, scale_b: P6) -> None: ...
+def tcgen05_mma_block_scale(*, kind: MMABlockScaleKind, cta_group: CTAGroupKind, block_scale: Tcgen05MMABlockScale = Tcgen05MMABlockScale.DEFAULT, collector_op: Tcgen05MMACollectorOp = Tcgen05MMACollectorOp.DISCARD, matrix_d: P6, matrix_a: P6 | I64, matrix_b: I64, idesc: I32, enable_input_d: B, scale_a: P6, scale_b: P6) -> None: ...
 
 @nvvm_mlir_interface_stub(
     op_name='nvvm.tcgen05.mma.sp',
@@ -753,9 +460,9 @@ def tcgen05_mma_sp(*, kind: Tcgen05MMAKind, cta_group: CTAGroupKind, collector_o
 
 @nvvm_mlir_interface_stub(
     op_name='nvvm.tcgen05.mma.sp.block_scale',
-    args=(ArgSpec(type=strip(Tcgen05MMAKind), name='kind', kind='attribute'), ArgSpec(type=strip(CTAGroupKind), name='ctaGroup', kind='attribute'), ArgSpec(type=strip(Tcgen05MMABlockScale), name='blockScale', kind='attribute'), ArgSpec(type=strip(Tcgen05MMACollectorOp), name='collectorOp', kind='attribute'), ArgSpec(type=strip(P6), name='matrixD'), ArgSpec(type=(strip(P6), strip(I64),), name='matrixA'), ArgSpec(type=strip(I64), name='matrixB'), ArgSpec(type=strip(I32), name='idesc'), ArgSpec(type=strip(B), name='enableInputD'), ArgSpec(type=strip(P6), name='sparseMetadata'), ArgSpec(type=strip(P6), name='scaleA'), ArgSpec(type=strip(P6), name='scaleB'),),
+    args=(ArgSpec(type=strip(MMABlockScaleKind), name='kind', kind='attribute'), ArgSpec(type=strip(CTAGroupKind), name='ctaGroup', kind='attribute'), ArgSpec(type=strip(Tcgen05MMABlockScale), name='blockScale', kind='attribute'), ArgSpec(type=strip(Tcgen05MMACollectorOp), name='collectorOp', kind='attribute'), ArgSpec(type=strip(P6), name='matrixD'), ArgSpec(type=(strip(P6), strip(I64),), name='matrixA'), ArgSpec(type=strip(I64), name='matrixB'), ArgSpec(type=strip(I32), name='idesc'), ArgSpec(type=strip(B), name='enableInputD'), ArgSpec(type=strip(P6), name='sparseMetadata'), ArgSpec(type=strip(P6), name='scaleA'), ArgSpec(type=strip(P6), name='scaleB'),),
 )
-def tcgen05_mma_sp_block_scale(*, kind: Tcgen05MMAKind, cta_group: CTAGroupKind, block_scale: Tcgen05MMABlockScale = Tcgen05MMABlockScale.DEFAULT, collector_op: Tcgen05MMACollectorOp = Tcgen05MMACollectorOp.DISCARD, matrix_d: P6, matrix_a: P6 | I64, matrix_b: I64, idesc: I32, enable_input_d: B, sparse_metadata: P6, scale_a: P6, scale_b: P6) -> None: ...
+def tcgen05_mma_sp_block_scale(*, kind: MMABlockScaleKind, cta_group: CTAGroupKind, block_scale: Tcgen05MMABlockScale = Tcgen05MMABlockScale.DEFAULT, collector_op: Tcgen05MMACollectorOp = Tcgen05MMACollectorOp.DISCARD, matrix_d: P6, matrix_a: P6 | I64, matrix_b: I64, idesc: I32, enable_input_d: B, sparse_metadata: P6, scale_a: P6, scale_b: P6) -> None: ...
 
 @nvvm_mlir_interface_stub(
     op_name='nvvm.tcgen05.mma.ws',
@@ -819,6 +526,7 @@ def wgmma_wait_group_sync_aligned(*, group: U64) -> None: ...
 __all__ = (
     'bar_warp_sync',
     'barrier_arrive',
+    'barrier0',
     'breakpoint',
     'cluster_arrive',
     'cluster_arrive_relaxed',
@@ -827,8 +535,6 @@ __all__ = (
     'convert_f32x2_to_bf16x2',
     'convert_f32x2_to_f16x2',
     'convert_float_to_tf32',
-    'convert_s2f6x2_to_bf16x2',
-    'cos',
     'cp_async_bulk_commit_group',
     'cp_async_bulk_global_shared_cta',
     'cp_async_bulk_prefetch',
@@ -846,7 +552,6 @@ __all__ = (
     'dot_accumulate_2way',
     'dot_accumulate_4way',
     'elect_sync',
-    'ex2',
     'exit',
     'fence_mbarrier_init',
     'fence_proxy',
@@ -856,7 +561,6 @@ __all__ = (
     'fence_sc_cluster',
     'fence_sync_restrict',
     'griddepcontrol',
-    'log2',
     'mbarrier_arrive_nocomplete',
     'mbarrier_arrive_drop_nocomplete',
     'mbarrier_complete_tx',
@@ -871,52 +575,7 @@ __all__ = (
     'prefetch',
     'prmt',
     'rcp_approx_ftz_f',
-    'read_ptx_sreg_aggr_smem_size',
-    'read_ptx_sreg_clock',
-    'read_ptx_sreg_clock64',
-    'read_ptx_sreg_dynamic_smem_size',
-    'read_ptx_sreg_envreg0',
-    'read_ptx_sreg_envreg1',
-    'read_ptx_sreg_envreg10',
-    'read_ptx_sreg_envreg11',
-    'read_ptx_sreg_envreg12',
-    'read_ptx_sreg_envreg13',
-    'read_ptx_sreg_envreg14',
-    'read_ptx_sreg_envreg15',
-    'read_ptx_sreg_envreg16',
-    'read_ptx_sreg_envreg17',
-    'read_ptx_sreg_envreg18',
-    'read_ptx_sreg_envreg19',
-    'read_ptx_sreg_envreg2',
-    'read_ptx_sreg_envreg20',
-    'read_ptx_sreg_envreg21',
-    'read_ptx_sreg_envreg22',
-    'read_ptx_sreg_envreg23',
-    'read_ptx_sreg_envreg24',
-    'read_ptx_sreg_envreg25',
-    'read_ptx_sreg_envreg26',
-    'read_ptx_sreg_envreg27',
-    'read_ptx_sreg_envreg28',
-    'read_ptx_sreg_envreg29',
-    'read_ptx_sreg_envreg3',
-    'read_ptx_sreg_envreg30',
-    'read_ptx_sreg_envreg31',
-    'read_ptx_sreg_envreg4',
-    'read_ptx_sreg_envreg5',
-    'read_ptx_sreg_envreg6',
-    'read_ptx_sreg_envreg7',
-    'read_ptx_sreg_envreg8',
-    'read_ptx_sreg_envreg9',
-    'read_ptx_sreg_globaltimer',
-    'read_ptx_sreg_globaltimer_lo',
-    'read_ptx_sreg_lanemask_eq',
-    'read_ptx_sreg_lanemask_ge',
-    'read_ptx_sreg_lanemask_gt',
-    'read_ptx_sreg_lanemask_le',
-    'read_ptx_sreg_lanemask_lt',
-    'read_ptx_sreg_total_smem_size',
     'setmaxregister',
-    'sin',
     'st_bulk',
     'tcgen05_alloc',
     'tcgen05_commit',

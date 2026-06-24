@@ -36,6 +36,34 @@ def test_special_float_attr_printing(float_type, value, expected):
     assert str(mlir.FloatAttr(type=float_type, value=mlir.APFloat(value))) == expected
 
 
+@pytest.mark.parametrize(
+    "float_type,value,expected",
+    [
+        (mlir.Float16Type(), 2**-24, "0x0001 : f16"),
+        (mlir.BFloat16Type(), 2**-133, "0x0001 : bf16"),
+        (mlir.Float32Type(), 2**-149, "0x00000001 : f32"),
+        (mlir.Float64Type(), 2**-1074, "0x0000000000000001 : f64"),
+        (mlir.Float32Type(), 0.0, "0x00000000 : f32"),
+        (mlir.Float32Type(), -0.0, "0x80000000 : f32"),
+    ],
+)
+def test_non_normal_float_attr_printing(float_type, value, expected):
+    assert str(mlir.FloatAttr(type=float_type, value=mlir.APFloat(value))) == expected
+
+
+@pytest.mark.parametrize(
+    "float_type,value,expected",
+    [
+        (mlir.Float16Type(), 2**-14, "6.103515625e-05 : f16"),
+        (mlir.BFloat16Type(), 2**-126, "1.1754943508222875e-38 : bf16"),
+        (mlir.Float32Type(), 2**-126, "1.1754943508222875e-38 : f32"),
+        (mlir.Float64Type(), 2**-1022, "2.2250738585072014e-308 : f64"),
+    ],
+)
+def test_min_normal_float_attr_printing(float_type, value, expected):
+    assert str(mlir.FloatAttr(type=float_type, value=mlir.APFloat(value))) == expected
+
+
 def test_string_attr_printing():
     assert str(mlir.StringAttr(value="")) == '""'
     assert str(mlir.StringAttr(value="Hello, world")) == '"Hello, world"'

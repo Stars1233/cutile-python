@@ -2,8 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import math
-
 from ._builtins import APFloat
 from ._builtins import APInt
 from ._builtins import AffineMap
@@ -24,7 +22,6 @@ from typing import Optional
 from typing import Sequence
 import dataclasses
 import struct
-from .._fp_utils import isnormal
 
 
 # ========= 'builtin' dialect of MLIR ==========
@@ -78,11 +75,6 @@ class DLTIQueryInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class DataLayoutDialectInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
 class DataLayoutEntryInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
@@ -99,11 +91,6 @@ class DataLayoutSpecInterface:
 
 
 class DataLayoutTypeInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class DenseElementType:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -228,17 +215,7 @@ class PromotableOpInterface:
         raise NotImplementedError('Interfaces cannot be instantiated')
 
 
-class PromotableRegionOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
 class PtrLikeTypeInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class QuantStorageTypeInterface:
     def __init__(self):
         raise NotImplementedError('Interfaces cannot be instantiated')
 
@@ -454,7 +431,7 @@ class DenseI8ArrayAttr(_DenseArrayAttrImpl):
 
 
 @dataclass(kw_only=True)
-class DenseTypedElementsAttr(DenseElementsAttr, TypedAttr, ElementsAttr):
+class DenseIntOrFPElementsAttr(DenseElementsAttr, TypedAttr, ElementsAttr):
     type: "ShapedType"
     rawData: "bytes"
 
@@ -467,7 +444,7 @@ class DenseTypedElementsAttr(DenseElementsAttr, TypedAttr, ElementsAttr):
         p(">")
 
 
-DenseIntOrFPElementsAttr = DenseTypedElementsAttr
+DenseTypedElementsAttr = DenseIntOrFPElementsAttr
 
 
 class DenseIntElementsAttr(DenseIntOrFPElementsAttr):
@@ -550,7 +527,9 @@ class FloatAttr(Attribute, TypedAttr):
         return self.type
 
     def _print_mlir_unqualified(self, p):
+        import math
         import struct
+        from .._fp_utils import isnormal
 
         value = float(self.value)
         match self.type:
@@ -560,7 +539,7 @@ class FloatAttr(Attribute, TypedAttr):
                 bits = struct.unpack(">H", struct.pack(">e", value))[0]
                 p(f"0x{bits:04X}")
             case BFloat16Type():
-                if isnormal(value, 16):
+                if isnormal(value, 32):
                     return p(self.value)
                 bits = struct.unpack(">I", struct.pack(">f", value))[0] >> 16
                 p(f"0x{bits:04X}")
@@ -577,7 +556,7 @@ class FloatAttr(Attribute, TypedAttr):
             case _:
                 if math.isfinite(value):
                     return p(self.value)
-                raise TypeError(f"Cannot print abnormal FloatAttr {value} for type {self.type}")
+                raise TypeError(f"Cannot print non-normal FloatAttr {value} for type {self.type}")
 
 
 @dataclass(kw_only=True)
@@ -710,7 +689,7 @@ class UnknownLoc(LocationAttr):
 
 
 @dataclass(kw_only=True)
-class BFloat16Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class BFloat16Type(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("bf16")
@@ -721,127 +700,124 @@ class BaseMemRefType(Type, PtrLikeTypeInterface, ShapedType):
 
 
 @dataclass(kw_only=True)
-class ComplexType(Type, DenseElementType):
+class ComplexType(Type):
     elementType: "Type"
 
 
 @dataclass(kw_only=True)
-class Float128Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class Float128Type(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f128")
 
 
 @dataclass(kw_only=True)
-class Float16Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class Float16Type(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f16")
 
 
 @dataclass(kw_only=True)
-class Float32Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class Float32Type(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f32")
 
 
 @dataclass(kw_only=True)
-class Float4E2M1FNType(Type, QuantStorageTypeInterface, DenseElementType,
-                       VectorElementTypeInterface, FloatType):
+class Float4E2M1FNType(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f4E2M1FN")
 
 
 @dataclass(kw_only=True)
-class Float64Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class Float64Type(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f64")
 
 
 @dataclass(kw_only=True)
-class Float6E2M3FNType(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class Float6E2M3FNType(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f6E2M3FN")
 
 
 @dataclass(kw_only=True)
-class Float6E3M2FNType(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class Float6E3M2FNType(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f6E3M2FN")
 
 
 @dataclass(kw_only=True)
-class Float80Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class Float80Type(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f80")
 
 
 @dataclass(kw_only=True)
-class Float8E3M4Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class Float8E3M4Type(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f8E3M4")
 
 
 @dataclass(kw_only=True)
-class Float8E4M3B11FNUZType(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class Float8E4M3B11FNUZType(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f8E4M3B11FNUZ")
 
 
 @dataclass(kw_only=True)
-class Float8E4M3FNType(Type, QuantStorageTypeInterface, DenseElementType,
-                       VectorElementTypeInterface, FloatType):
+class Float8E4M3FNType(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f8E4M3FN")
 
 
 @dataclass(kw_only=True)
-class Float8E4M3FNUZType(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class Float8E4M3FNUZType(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f8E4M3FNUZ")
 
 
 @dataclass(kw_only=True)
-class Float8E4M3Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class Float8E4M3Type(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f8E4M3")
 
 
 @dataclass(kw_only=True)
-class Float8E5M2FNUZType(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class Float8E5M2FNUZType(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f8E5M2FNUZ")
 
 
 @dataclass(kw_only=True)
-class Float8E5M2Type(Type, QuantStorageTypeInterface, DenseElementType,
-                     VectorElementTypeInterface, FloatType):
+class Float8E5M2Type(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f8E5M2")
 
 
 @dataclass(kw_only=True)
-class Float8E8M0FNUType(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class Float8E8M0FNUType(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("f8E8M0FNU")
 
 
 @dataclass(kw_only=True)
-class FloatTF32Type(Type, DenseElementType, VectorElementTypeInterface, FloatType):
+class FloatTF32Type(Type, VectorElementTypeInterface, FloatType):
 
     def _print_mlir_unqualified(self, p):
         p("tf32")
@@ -879,14 +855,14 @@ class GraphType(Type):
 
 
 @dataclass(kw_only=True)
-class IndexType(Type, DenseElementType, VectorElementTypeInterface):
+class IndexType(Type, VectorElementTypeInterface):
 
     def _print_mlir_unqualified(self, p):
         p("index")
 
 
 @dataclass(kw_only=True)
-class IntegerType(Type, VectorElementTypeInterface, QuantStorageTypeInterface, DenseElementType):
+class IntegerType(Type, VectorElementTypeInterface):
     width: "int"
     signedness: "SignednessSemantics"
 

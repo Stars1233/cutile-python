@@ -30,19 +30,6 @@ from typing import Sequence
 # ========= 'memref' dialect of MLIR ==========
 
 
-# ---- Interfaces ----
-
-
-class IndexedAccessOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
-class IndexedMemCopyOpInterface:
-    def __init__(self):
-        raise NotImplementedError('Interfaces cannot be instantiated')
-
-
 # ---- Operators ----
 
 

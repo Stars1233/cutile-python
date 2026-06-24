@@ -6,12 +6,10 @@ from . import ArrayAttr
 from . import BoolAttr
 from . import DLTIQueryInterface
 from . import DataLayoutTypeInterface
-from . import DenseElementType
 from . import DenseI32ArrayAttr
 from . import DenseI64ArrayAttr
 from . import DenseIntElementsAttr
 from . import DestructurableTypeInterface
-from . import DictionaryAttr
 from . import DistinctAttr
 from . import FlatSymbolRefAttr
 from . import Float64Type
@@ -162,13 +160,11 @@ class AtomicBinOp(enum.Enum):
     usub_sat = 18
     fmaximum = 19
     fminimum = 20
-    fmaximumnum = 21
-    fminimumnum = 22
 
     def _print_mlir_unqualified(self, p):
         p(("xchg", "add", "sub", "_and", "nand", "_or", "_xor", "max", "min", "umax", "umin",
            "fadd", "fsub", "fmax", "fmin", "uinc_wrap", "udec_wrap", "usub_cond", "usub_sat",
-           "fmaximum", "fminimum", "fmaximumnum", "fminimumnum",)[self._value_])
+           "fmaximum", "fminimum",)[self._value_])
 
 
 class AtomicBinOpAttr(IntegerAttr):
@@ -312,22 +308,6 @@ class DISubprogramFlags(enum.IntFlag):
 class DISubprogramFlagsAttr(IntegerAttr):
     def __init__(self, value: DISubprogramFlags):
         super().__init__(type=IntegerType.signless(32), value=APInt(value._value_, 32))
-
-
-class DenormalModeKind(enum.Enum):
-    IEEE = 0
-    PreserveSign = 1
-    PositiveZero = 2
-    Dynamic = 3
-    Invalid = -1
-
-    def _print_mlir_unqualified(self, p):
-        p(("ieee", "preservesign", "positivezero", "invalid",)[self._value_])
-
-
-class DenormalModeKindAttr(IntegerAttr):
-    def __init__(self, value: DenormalModeKind):
-        super().__init__(type=IntegerType.signless(64), value=APInt(value._value_, 64))
 
 
 class FCmpPredicate(enum.Enum):
@@ -827,7 +807,7 @@ class DITypeAttr(DINodeAttr):
 @dataclass(kw_only=True)
 class DIBasicTypeAttr(DITypeAttr, dialect='llvm', mnemonic='di_basic_type'):
     tag: "int" = 0
-    name: Optional["StringAttr"] = None
+    name: "StringAttr"
     sizeInBits: "int" = 0
     encoding: "int" = 0
 
@@ -837,20 +817,14 @@ class DIBasicTypeAttr(DITypeAttr, dialect='llvm', mnemonic='di_basic_type'):
         if self.tag != 0:
             p("tag = ")
             p(str(self.tag))
-            comma = ", "
-        if self.name is not None:
-            p(comma)
-            p("name = ")
-            self.name._print_mlir_unqualified(p)
-            comma = ", "
+        p(comma)
+        p("name = ")
+        self.name._print_mlir_unqualified(p)
         if self.sizeInBits != 0:
-            p(comma)
-            p("sizeInBits = ")
+            p(", sizeInBits = ")
             p(str(self.sizeInBits))
-            comma = ", "
         if self.encoding != 0:
-            p(comma)
-            p("encoding = ")
+            p(", encoding = ")
             p(str(self.encoding))
         p(">")
 
@@ -885,82 +859,36 @@ class DICommonBlockAttr(DIScopeAttr, dialect='llvm', mnemonic='di_common_block')
 
 
 @dataclass(kw_only=True)
-class DICompileUnitAttr(DIScopeAttr, DIRecursiveTypeAttrInterface, dialect='llvm',
-                        mnemonic='di_compile_unit'):
-    recId: Optional["DistinctAttr"] = None
-    isRecSelf: "bool" = False
-    id: Optional["DistinctAttr"] = None
-    sourceLanguage: "int" = 0
-    file: Optional["DIFileAttr"] = None
+class DICompileUnitAttr(DIScopeAttr, dialect='llvm', mnemonic='di_compile_unit'):
+    id: "DistinctAttr"
+    sourceLanguage: "int"
+    file: "DIFileAttr"
     producer: Optional["StringAttr"] = None
-    isOptimized: "bool" = False
-    emissionKind: "DIEmissionKind" = dataclasses.field(default_factory=lambda: DIEmissionKind(0))
-    isDebugInfoForProfiling: "bool" = False
+    isOptimized: "bool"
+    emissionKind: "DIEmissionKind"
     nameTableKind: "DINameTableKind" = dataclasses.field(default_factory=lambda: DINameTableKind(0))  # noqa: E501
     splitDebugFilename: Optional["StringAttr"] = None
-    importedEntities: "Sequence[DINodeAttr]" = ()
 
     def _print_mlir_unqualified(self, p):
-        p("<")
-        comma = ""
-        if self.recId is not None:
-            p("recId = ")
-            self.recId._print_mlir_unqualified(p)
-            comma = ", "
-        if self.isRecSelf:
-            p(comma)
-            p("isRecSelf = ")
-            p("true" if self.isRecSelf else "false")
-            comma = ", "
-        if self.id is not None:
-            p(comma)
-            p("id = ")
-            self.id._print_mlir_unqualified(p)
-            comma = ", "
-        if self.sourceLanguage != 0:
-            p(comma)
-            p("sourceLanguage = ")
-            p(str(self.sourceLanguage))
-            comma = ", "
-        if self.file is not None:
-            p(comma)
-            p("file = ")
-            self.file._print_mlir_unqualified(p)
-            comma = ", "
+        p("<id = ")
+        self.id._print_mlir_unqualified(p)
+        p(", sourceLanguage = ")
+        p(str(self.sourceLanguage))
+        p(", file = ")
+        self.file._print_mlir_unqualified(p)
         if self.producer is not None:
-            p(comma)
-            p("producer = ")
+            p(", producer = ")
             self.producer._print_mlir_unqualified(p)
-            comma = ", "
-        if self.isOptimized:
-            p(comma)
-            p("isOptimized = ")
-            p("true" if self.isOptimized else "false")
-            comma = ", "
-        if self.emissionKind != DIEmissionKind(0):
-            p(comma)
-            p("emissionKind = ")
-            self.emissionKind._print_mlir_unqualified(p)
-            comma = ", "
-        if self.isDebugInfoForProfiling:
-            p(comma)
-            p("isDebugInfoForProfiling = ")
-            p("true" if self.isDebugInfoForProfiling else "false")
-            comma = ", "
+        p(", isOptimized = ")
+        p("true" if self.isOptimized else "false")
+        p(", emissionKind = ")
+        self.emissionKind._print_mlir_unqualified(p)
         if self.nameTableKind != DINameTableKind(0):
-            p(comma)
-            p("nameTableKind = ")
+            p(", nameTableKind = ")
             self.nameTableKind._print_mlir_unqualified(p)
-            comma = ", "
         if self.splitDebugFilename is not None:
-            p(comma)
-            p("splitDebugFilename = ")
+            p(", splitDebugFilename = ")
             self.splitDebugFilename._print_mlir_unqualified(p)
-            comma = ", "
-        if self.importedEntities != ():
-            p(comma)
-            p("importedEntities = ")
-            p.print_array(self.importedEntities)
         p(">")
 
 
@@ -982,8 +910,6 @@ class DICompositeTypeAttr(DITypeAttr, DIRecursiveTypeAttrInterface, dialect='llv
     rank: Optional["DIExpressionAttr"] = None
     allocated: Optional["DIExpressionAttr"] = None
     associated: Optional["DIExpressionAttr"] = None
-    identifier: Optional["StringAttr"] = None
-    discriminator: Optional["DIDerivedTypeAttr"] = None
     elements: "Sequence[DINodeAttr]" = ()
 
     def _print_mlir_unqualified(self, p):
@@ -1063,16 +989,6 @@ class DICompositeTypeAttr(DITypeAttr, DIRecursiveTypeAttrInterface, dialect='llv
             p("associated = ")
             self.associated._print_mlir_unqualified(p)
             comma = ", "
-        if self.identifier is not None:
-            p(comma)
-            p("identifier = ")
-            self.identifier._print_mlir_unqualified(p)
-            comma = ", "
-        if self.discriminator is not None:
-            p(comma)
-            p("discriminator = ")
-            self.discriminator._print_mlir_unqualified(p)
-            comma = ", "
         if self.elements != ():
             p(comma)
             p("elements = ")
@@ -1084,16 +1000,12 @@ class DICompositeTypeAttr(DITypeAttr, DIRecursiveTypeAttrInterface, dialect='llv
 class DIDerivedTypeAttr(DITypeAttr, dialect='llvm', mnemonic='di_derived_type'):
     tag: "int" = 0
     name: Optional["StringAttr"] = None
-    file: Optional["DIFileAttr"] = None
-    line: "int" = 0
-    scope: Optional["DIScopeAttr"] = None
     baseType: Optional["DITypeAttr"] = None
     sizeInBits: "int" = 0
     alignInBits: "int" = 0
     offsetInBits: "int" = 0
     dwarfAddressSpace: "Optional[int]" = None
-    flags: "DIFlags" = dataclasses.field(default_factory=lambda: DIFlags(0))
-    extraData: "Attribute" = None
+    extraData: Optional["DINodeAttr"] = None
 
     def _print_mlir_unqualified(self, p):
         p("<")
@@ -1106,21 +1018,6 @@ class DIDerivedTypeAttr(DITypeAttr, dialect='llvm', mnemonic='di_derived_type'):
             p(comma)
             p("name = ")
             self.name._print_mlir_unqualified(p)
-            comma = ", "
-        if self.file is not None:
-            p(comma)
-            p("file = ")
-            self.file._print_mlir_unqualified(p)
-            comma = ", "
-        if self.line != 0:
-            p(comma)
-            p("line = ")
-            p(str(self.line))
-            comma = ", "
-        if self.scope is not None:
-            p(comma)
-            p("scope = ")
-            self.scope._print_mlir_unqualified(p)
             comma = ", "
         if self.baseType is not None:
             p(comma)
@@ -1146,11 +1043,6 @@ class DIDerivedTypeAttr(DITypeAttr, dialect='llvm', mnemonic='di_derived_type'):
             p(comma)
             p("dwarfAddressSpace = ")
             p.if_present(self.dwarfAddressSpace, lambda: p(str(self.dwarfAddressSpace)))
-            comma = ", "
-        if self.flags != DIFlags(0):
-            p(comma)
-            p("flags = ")
-            self.flags._print_mlir_unqualified(p)
             comma = ", "
         if self.extraData is not None:
             p(comma)
@@ -1516,7 +1408,7 @@ class DINullTypeAttr(DITypeAttr, dialect='llvm', mnemonic='di_null_type'):
 @dataclass(kw_only=True)
 class DIStringTypeAttr(DITypeAttr, dialect='llvm', mnemonic='di_string_type'):
     tag: "int" = 0
-    name: Optional["StringAttr"] = None
+    name: "StringAttr"
     sizeInBits: "int" = 0
     alignInBits: "int" = 0
     stringLength: Optional["DIVariableAttr"] = None
@@ -1530,40 +1422,26 @@ class DIStringTypeAttr(DITypeAttr, dialect='llvm', mnemonic='di_string_type'):
         if self.tag != 0:
             p("tag = ")
             p(str(self.tag))
-            comma = ", "
-        if self.name is not None:
-            p(comma)
-            p("name = ")
-            self.name._print_mlir_unqualified(p)
-            comma = ", "
+        p(comma)
+        p("name = ")
+        self.name._print_mlir_unqualified(p)
         if self.sizeInBits != 0:
-            p(comma)
-            p("sizeInBits = ")
+            p(", sizeInBits = ")
             p(str(self.sizeInBits))
-            comma = ", "
         if self.alignInBits != 0:
-            p(comma)
-            p("alignInBits = ")
+            p(", alignInBits = ")
             p(str(self.alignInBits))
-            comma = ", "
         if self.stringLength is not None:
-            p(comma)
-            p("stringLength = ")
+            p(", stringLength = ")
             self.stringLength._print_mlir_unqualified(p)
-            comma = ", "
         if self.stringLengthExp is not None:
-            p(comma)
-            p("stringLengthExp = ")
+            p(", stringLengthExp = ")
             self.stringLengthExp._print_mlir_unqualified(p)
-            comma = ", "
         if self.stringLocationExp is not None:
-            p(comma)
-            p("stringLocationExp = ")
+            p(", stringLocationExp = ")
             self.stringLocationExp._print_mlir_unqualified(p)
-            comma = ", "
         if self.encoding != 0:
-            p(comma)
-            p("encoding = ")
+            p(", encoding = ")
             p(str(self.encoding))
         p(">")
 
@@ -1720,25 +1598,6 @@ class DSOLocalEquivalentAttr(Attribute, dialect='llvm', mnemonic='dso_local_equi
 
     def _print_mlir_unqualified(self, p):
         self.sym._print_mlir_unqualified(p)
-
-
-@dataclass(kw_only=True)
-class DenormalFPEnvAttr(Attribute, dialect='llvm', mnemonic='denormal_fpenv'):
-    default_output_mode: "DenormalModeKind"
-    default_input_mode: "DenormalModeKind"
-    float_output_mode: "DenormalModeKind"
-    float_input_mode: "DenormalModeKind"
-
-    def _print_mlir_unqualified(self, p):
-        p("<default_output_mode = ")
-        self.default_output_mode._print_mlir_unqualified(p)
-        p(", default_input_mode = ")
-        self.default_input_mode._print_mlir_unqualified(p)
-        p(", float_output_mode = ")
-        self.float_output_mode._print_mlir_unqualified(p)
-        p(", float_input_mode = ")
-        self.float_input_mode._print_mlir_unqualified(p)
-        p(">")
 
 
 @dataclass(kw_only=True)
@@ -2160,50 +2019,6 @@ class LoopVectorizeAttr(Attribute, dialect='llvm', mnemonic='loop_vectorize'):
 
 
 @dataclass(kw_only=True)
-class MDConstantAttr(Attribute, dialect='llvm', mnemonic='md_const'):
-    value: "Attribute"
-
-    def _print_mlir_unqualified(self, p):
-        p("<")
-        self.value._print_mlir_unqualified(p)
-        p(">")
-
-
-@dataclass(kw_only=True)
-class MDFuncAttr(Attribute, dialect='llvm', mnemonic='md_func'):
-    name: "FlatSymbolRefAttr"
-
-    def _print_mlir_unqualified(self, p):
-        p("<")
-        self.name._print_mlir_unqualified(p)
-        p(">")
-
-
-@dataclass(kw_only=True)
-class MDNodeAttr(Attribute, dialect='llvm', mnemonic='md_node'):
-    operands: "Sequence[Attribute]" = ()
-
-    def _print_mlir_unqualified(self, p):
-        p("<")
-        if self.operands != ():
-            if self.operands != ():
-                p.print_array(self.operands)
-            p(">")
-        else:
-            p(">")
-
-
-@dataclass(kw_only=True)
-class MDStringAttr(Attribute, dialect='llvm', mnemonic='md_string'):
-    value: "StringAttr"
-
-    def _print_mlir_unqualified(self, p):
-        p("<")
-        self.value._print_mlir_unqualified(p)
-        p(">")
-
-
-@dataclass(kw_only=True)
 class MMRATagAttr(Attribute, dialect='llvm', mnemonic='mmra_tag'):
     prefix: "str"
     suffix: "str"
@@ -2556,8 +2371,8 @@ class LLVMMetadataType(Type):
 
 
 @dataclass(kw_only=True)
-class LLVMPPCFP128Type(Type, DenseElementType, VectorElementTypeInterface, FloatType,
-                       dialect='llvm', mnemonic='ppc_fp128'):
+class LLVMPPCFP128Type(Type, VectorElementTypeInterface, FloatType, dialect='llvm',
+                       mnemonic='ppc_fp128'):
 
     def _print_mlir_unqualified(self, p):
         pass
@@ -3156,24 +2971,6 @@ def add_CallOp(
     convergent: bool = False,
     no_unwind: bool = False,
     will_return: bool = False,
-    noreturn: bool = False,
-    returns_twice: bool = False,
-    hot: bool = False,
-    cold: bool = False,
-    noduplicate: bool = False,
-    no_caller_saved_registers: bool = False,
-    nocallback: bool = False,
-    modular_format: Optional[str] = None,
-    nobuiltins: Optional[ArrayAttr] = None,
-    allocsize: Optional[Sequence[int]] = None,
-    optsize: bool = False,
-    minsize: bool = False,
-    builtin: bool = False,
-    nobuiltin: bool = False,
-    save_reg_params: bool = False,
-    zero_call_used_regs: Optional[str] = None,
-    trap_func_name: Optional[str] = None,
-    default_func_attrs: Optional[DictionaryAttr] = None,
     op_bundle_operands: Sequence[Value],
     op_bundle_sizes: Sequence[int],
     op_bundle_tags: Optional[ArrayAttr] = None,
@@ -3204,42 +3001,6 @@ def add_CallOp(
         all_props.append(('no_unwind', UnitAttr()))
     if will_return:
         all_props.append(('will_return', UnitAttr()))
-    if noreturn:
-        all_props.append(('noreturn', UnitAttr()))
-    if returns_twice:
-        all_props.append(('returns_twice', UnitAttr()))
-    if hot:
-        all_props.append(('hot', UnitAttr()))
-    if cold:
-        all_props.append(('cold', UnitAttr()))
-    if noduplicate:
-        all_props.append(('noduplicate', UnitAttr()))
-    if no_caller_saved_registers:
-        all_props.append(('no_caller_saved_registers', UnitAttr()))
-    if nocallback:
-        all_props.append(('nocallback', UnitAttr()))
-    if modular_format is not None:
-        all_props.append(('modular_format', StringAttr(value=modular_format)))
-    if nobuiltins is not None:
-        all_props.append(('nobuiltins', nobuiltins))
-    if allocsize is not None:
-        all_props.append(('allocsize', DenseI32ArrayAttr(allocsize)))
-    if optsize:
-        all_props.append(('optsize', UnitAttr()))
-    if minsize:
-        all_props.append(('minsize', UnitAttr()))
-    if builtin:
-        all_props.append(('builtin', UnitAttr()))
-    if nobuiltin:
-        all_props.append(('nobuiltin', UnitAttr()))
-    if save_reg_params:
-        all_props.append(('save_reg_params', UnitAttr()))
-    if zero_call_used_regs is not None:
-        all_props.append(('zero_call_used_regs', StringAttr(value=zero_call_used_regs)))
-    if trap_func_name is not None:
-        all_props.append(('trap_func_name', StringAttr(value=trap_func_name)))
-    if default_func_attrs is not None:
-        all_props.append(('default_func_attrs', default_func_attrs))
     all_props.append(('op_bundle_sizes', DenseI32ArrayAttr(op_bundle_sizes)))
     if op_bundle_tags is not None:
         all_props.append(('op_bundle_tags', op_bundle_tags))
@@ -3353,113 +3114,6 @@ def add_ConstantOp(
     )
 
 
-def add_ConstrainedFAddIntr(
-    *,
-    arg_0: Value,
-    arg_1: Value,
-    roundingmode: RoundingMode,
-    fpExceptionBehavior: FPExceptionBehavior,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = arg_0.type
-    all_props = []
-    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
-    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
-    return add_operation(
-        name="llvm.intr.experimental.constrained.fadd",
-        result_type=res_type,
-        operands=[arg_0, arg_1],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_ConstrainedFDivIntr(
-    *,
-    arg_0: Value,
-    arg_1: Value,
-    roundingmode: RoundingMode,
-    fpExceptionBehavior: FPExceptionBehavior,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = arg_0.type
-    all_props = []
-    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
-    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
-    return add_operation(
-        name="llvm.intr.experimental.constrained.fdiv",
-        result_type=res_type,
-        operands=[arg_0, arg_1],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_ConstrainedFMAIntr(
-    *,
-    arg_0: Value,
-    arg_1: Value,
-    arg_2: Value,
-    roundingmode: RoundingMode,
-    fpExceptionBehavior: FPExceptionBehavior,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = arg_0.type
-    all_props = []
-    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
-    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
-    return add_operation(
-        name="llvm.intr.experimental.constrained.fma",
-        result_type=res_type,
-        operands=[arg_0, arg_1, arg_2],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_ConstrainedFMulAddIntr(
-    *,
-    arg_0: Value,
-    arg_1: Value,
-    arg_2: Value,
-    roundingmode: RoundingMode,
-    fpExceptionBehavior: FPExceptionBehavior,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = arg_0.type
-    all_props = []
-    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
-    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
-    return add_operation(
-        name="llvm.intr.experimental.constrained.fmuladd",
-        result_type=res_type,
-        operands=[arg_0, arg_1, arg_2],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_ConstrainedFMulIntr(
-    *,
-    arg_0: Value,
-    arg_1: Value,
-    roundingmode: RoundingMode,
-    fpExceptionBehavior: FPExceptionBehavior,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = arg_0.type
-    all_props = []
-    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
-    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
-    return add_operation(
-        name="llvm.intr.experimental.constrained.fmul",
-        result_type=res_type,
-        operands=[arg_0, arg_1],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
 def add_ConstrainedFPExtIntr(
     *,
     res_type: Type,
@@ -3493,48 +3147,6 @@ def add_ConstrainedFPTruncIntr(
         name="llvm.intr.experimental.constrained.fptrunc",
         result_type=res_type,
         operands=[arg_0],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_ConstrainedFRemIntr(
-    *,
-    arg_0: Value,
-    arg_1: Value,
-    roundingmode: RoundingMode,
-    fpExceptionBehavior: FPExceptionBehavior,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = arg_0.type
-    all_props = []
-    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
-    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
-    return add_operation(
-        name="llvm.intr.experimental.constrained.frem",
-        result_type=res_type,
-        operands=[arg_0, arg_1],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_ConstrainedFSubIntr(
-    *,
-    arg_0: Value,
-    arg_1: Value,
-    roundingmode: RoundingMode,
-    fpExceptionBehavior: FPExceptionBehavior,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    res_type = arg_0.type
-    all_props = []
-    all_props.append(('roundingmode', RoundingModeAttr(roundingmode)))
-    all_props.append(('fpExceptionBehavior', FPExceptionBehaviorAttr(fpExceptionBehavior)))
-    return add_operation(
-        name="llvm.intr.experimental.constrained.fsub",
-        result_type=res_type,
-        operands=[arg_0, arg_1],
         properties=all_props,
         attributes=extra_attributes,
     )
@@ -4276,11 +3888,9 @@ def add_FPExtOp(
     *,
     res_type: Type,
     arg: Value,
-    fastmathFlags: FastmathFlags = FastmathFlags(0),
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
     all_props = []
-    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
     return add_operation(
         name="llvm.fpext",
         result_type=res_type,
@@ -4326,11 +3936,9 @@ def add_FPTruncOp(
     *,
     res_type: Type,
     arg: Value,
-    fastmathFlags: FastmathFlags = FastmathFlags(0),
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Value:
     all_props = []
-    all_props.append(('fastmathFlags', FastmathFlagsAttr(value=fastmathFlags)))
     return add_operation(
         name="llvm.fptrunc",
         result_type=res_type,
@@ -4391,21 +3999,6 @@ def add_FTruncOp(
         name="llvm.intr.trunc",
         result_type=res_type,
         operands=[in_],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_FakeUseOp(
-    *,
-    args: Sequence[Value],
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> None:
-    all_props = []
-    return add_operation(
-        name="llvm.intr.fake.use",
-        result_type=None,
-        operands=list(args),
         properties=all_props,
         attributes=extra_attributes,
     )
@@ -4926,7 +4519,7 @@ def add_LLVMFuncOp(
     dso_local: bool = False,
     CConv: cconv_CConv = cconv_CConv(0),
     comdat: Optional[SymbolRefAttr] = None,
-    convergent: bool = False,
+    convergent: Optional[bool] = None,
     personality: Optional[str] = None,
     garbageCollector: Optional[str] = None,
     passthrough: Optional[ArrayAttr] = None,
@@ -4935,14 +4528,14 @@ def add_LLVMFuncOp(
     function_entry_count: Optional[int] = None,
     memory_effects: Optional[MemoryEffectsAttr] = None,
     visibility_: Visibility = Visibility(0),
-    arm_streaming: bool = False,
-    arm_locally_streaming: bool = False,
-    arm_streaming_compatible: bool = False,
-    arm_new_za: bool = False,
-    arm_in_za: bool = False,
-    arm_out_za: bool = False,
-    arm_inout_za: bool = False,
-    arm_preserves_za: bool = False,
+    arm_streaming: Optional[bool] = None,
+    arm_locally_streaming: Optional[bool] = None,
+    arm_streaming_compatible: Optional[bool] = None,
+    arm_new_za: Optional[bool] = None,
+    arm_in_za: Optional[bool] = None,
+    arm_out_za: Optional[bool] = None,
+    arm_inout_za: Optional[bool] = None,
+    arm_preserves_za: Optional[bool] = None,
     section: Optional[str] = None,
     unnamed_addr: Optional[UnnamedAddr] = None,
     alignment: Optional[int] = None,
@@ -4953,38 +4546,25 @@ def add_LLVMFuncOp(
     reciprocal_estimates: Optional[str] = None,
     prefer_vector_width: Optional[str] = None,
     target_features: Optional[TargetFeaturesAttr] = None,
+    no_infs_fp_math: Optional[bool] = None,
+    no_nans_fp_math: Optional[bool] = None,
     no_signed_zeros_fp_math: Optional[bool] = None,
-    denormal_fpenv: Optional[DenormalFPEnvAttr] = None,
+    denormal_fp_math: Optional[str] = None,
+    denormal_fp_math_f32: Optional[str] = None,
     fp_contract: Optional[str] = None,
     instrument_function_entry: Optional[str] = None,
     instrument_function_exit: Optional[str] = None,
-    no_inline: bool = False,
-    always_inline: bool = False,
-    inline_hint: bool = False,
-    no_unwind: bool = False,
-    will_return: bool = False,
-    noreturn: bool = False,
-    optimize_none: bool = False,
-    returns_twice: bool = False,
-    hot: bool = False,
-    cold: bool = False,
-    noduplicate: bool = False,
-    no_caller_saved_registers: bool = False,
-    nocallback: bool = False,
-    modular_format: Optional[str] = None,
-    nobuiltins: Optional[ArrayAttr] = None,
-    allocsize: Optional[Sequence[int]] = None,
-    optsize: Optional[bool] = None,
-    minsize: Optional[bool] = None,
-    save_reg_params: Optional[bool] = None,
-    zero_call_used_regs: Optional[str] = None,
-    default_func_attrs: Optional[DictionaryAttr] = None,
+    no_inline: Optional[bool] = None,
+    always_inline: Optional[bool] = None,
+    inline_hint: Optional[bool] = None,
+    no_unwind: Optional[bool] = None,
+    will_return: Optional[bool] = None,
+    optimize_none: Optional[bool] = None,
     vec_type_hint: Optional[VecTypeHintAttr] = None,
     work_group_size_hint: Optional[Sequence[int]] = None,
     reqd_work_group_size: Optional[Sequence[int]] = None,
     intel_reqd_sub_group_size: Optional[int] = None,
     uwtable_kind: Optional[UWTableKindAttr] = None,
-    use_sample_profile: Optional[bool] = None,
     body: Region,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> None:
@@ -4999,7 +4579,7 @@ def add_LLVMFuncOp(
     all_props.append(('CConv', CConvAttr(CallingConv=CConv)))
     if comdat is not None:
         all_props.append(('comdat', comdat))
-    if convergent:
+    if convergent is not None:
         all_props.append(('convergent', UnitAttr()))
     if personality is not None:
         all_props.append(('personality', FlatSymbolRefAttr(personality)))
@@ -5017,21 +4597,21 @@ def add_LLVMFuncOp(
     if memory_effects is not None:
         all_props.append(('memory_effects', memory_effects))
     all_props.append(('visibility_', VisibilityAttr(visibility_)))
-    if arm_streaming:
+    if arm_streaming is not None:
         all_props.append(('arm_streaming', UnitAttr()))
-    if arm_locally_streaming:
+    if arm_locally_streaming is not None:
         all_props.append(('arm_locally_streaming', UnitAttr()))
-    if arm_streaming_compatible:
+    if arm_streaming_compatible is not None:
         all_props.append(('arm_streaming_compatible', UnitAttr()))
-    if arm_new_za:
+    if arm_new_za is not None:
         all_props.append(('arm_new_za', UnitAttr()))
-    if arm_in_za:
+    if arm_in_za is not None:
         all_props.append(('arm_in_za', UnitAttr()))
-    if arm_out_za:
+    if arm_out_za is not None:
         all_props.append(('arm_out_za', UnitAttr()))
-    if arm_inout_za:
+    if arm_inout_za is not None:
         all_props.append(('arm_inout_za', UnitAttr()))
-    if arm_preserves_za:
+    if arm_preserves_za is not None:
         all_props.append(('arm_preserves_za', UnitAttr()))
     if section is not None:
         all_props.append(('section', StringAttr(value=section)))
@@ -5053,10 +4633,16 @@ def add_LLVMFuncOp(
         all_props.append(('prefer_vector_width', StringAttr(value=prefer_vector_width)))
     if target_features is not None:
         all_props.append(('target_features', target_features))
+    if no_infs_fp_math is not None:
+        all_props.append(('no_infs_fp_math', BoolAttr(value=no_infs_fp_math)))
+    if no_nans_fp_math is not None:
+        all_props.append(('no_nans_fp_math', BoolAttr(value=no_nans_fp_math)))
     if no_signed_zeros_fp_math is not None:
         all_props.append(('no_signed_zeros_fp_math', BoolAttr(value=no_signed_zeros_fp_math)))
-    if denormal_fpenv is not None:
-        all_props.append(('denormal_fpenv', denormal_fpenv))
+    if denormal_fp_math is not None:
+        all_props.append(('denormal_fp_math', StringAttr(value=denormal_fp_math)))
+    if denormal_fp_math_f32 is not None:
+        all_props.append(('denormal_fp_math_f32', StringAttr(value=denormal_fp_math_f32)))
     if fp_contract is not None:
         all_props.append(('fp_contract', StringAttr(value=fp_contract)))
     if instrument_function_entry is not None:
@@ -5064,48 +4650,18 @@ def add_LLVMFuncOp(
                           StringAttr(value=instrument_function_entry)))
     if instrument_function_exit is not None:
         all_props.append(('instrument_function_exit', StringAttr(value=instrument_function_exit)))
-    if no_inline:
+    if no_inline is not None:
         all_props.append(('no_inline', UnitAttr()))
-    if always_inline:
+    if always_inline is not None:
         all_props.append(('always_inline', UnitAttr()))
-    if inline_hint:
+    if inline_hint is not None:
         all_props.append(('inline_hint', UnitAttr()))
-    if no_unwind:
+    if no_unwind is not None:
         all_props.append(('no_unwind', UnitAttr()))
-    if will_return:
+    if will_return is not None:
         all_props.append(('will_return', UnitAttr()))
-    if noreturn:
-        all_props.append(('noreturn', UnitAttr()))
-    if optimize_none:
+    if optimize_none is not None:
         all_props.append(('optimize_none', UnitAttr()))
-    if returns_twice:
-        all_props.append(('returns_twice', UnitAttr()))
-    if hot:
-        all_props.append(('hot', UnitAttr()))
-    if cold:
-        all_props.append(('cold', UnitAttr()))
-    if noduplicate:
-        all_props.append(('noduplicate', UnitAttr()))
-    if no_caller_saved_registers:
-        all_props.append(('no_caller_saved_registers', UnitAttr()))
-    if nocallback:
-        all_props.append(('nocallback', UnitAttr()))
-    if modular_format is not None:
-        all_props.append(('modular_format', StringAttr(value=modular_format)))
-    if nobuiltins is not None:
-        all_props.append(('nobuiltins', nobuiltins))
-    if allocsize is not None:
-        all_props.append(('allocsize', DenseI32ArrayAttr(allocsize)))
-    if optsize is not None:
-        all_props.append(('optsize', UnitAttr()))
-    if minsize is not None:
-        all_props.append(('minsize', UnitAttr()))
-    if save_reg_params is not None:
-        all_props.append(('save_reg_params', UnitAttr()))
-    if zero_call_used_regs is not None:
-        all_props.append(('zero_call_used_regs', StringAttr(value=zero_call_used_regs)))
-    if default_func_attrs is not None:
-        all_props.append(('default_func_attrs', default_func_attrs))
     if vec_type_hint is not None:
         all_props.append(('vec_type_hint', vec_type_hint))
     if work_group_size_hint is not None:
@@ -5117,8 +4673,6 @@ def add_LLVMFuncOp(
                           IntegerAttr.make(IntegerType.signless(32), intel_reqd_sub_group_size)))
     if uwtable_kind is not None:
         all_props.append(('uwtable_kind', uwtable_kind))
-    if use_sample_profile is not None:
-        all_props.append(('use_sample_profile', BoolAttr(value=use_sample_profile)))
     return add_operation(
         name="llvm.func",
         result_type=None,
@@ -5845,24 +5399,6 @@ def add_MulOp(
     )
 
 
-def add_NamedMetadataOp(
-    *,
-    metadata_name: str,
-    nodes: ArrayAttr,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> None:
-    all_props = []
-    all_props.append(('metadata_name', StringAttr(value=metadata_name)))
-    all_props.append(('nodes', nodes))
-    return add_operation(
-        name="llvm.named_metadata",
-        result_type=None,
-        operands=[],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
 def add_NearbyintOp(
     *,
     in_: Value,
@@ -6038,22 +5574,6 @@ def add_PtrMaskOp(
         name="llvm.intr.ptrmask",
         result_type=res_type,
         operands=[ptr, mask],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
-def add_PtrToAddrOp(
-    *,
-    res_type: Type,
-    arg: Value,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    all_props = []
-    return add_operation(
-        name="llvm.ptrtoaddr",
-        result_type=res_type,
-        operands=[arg],
         properties=all_props,
         attributes=extra_attributes,
     )

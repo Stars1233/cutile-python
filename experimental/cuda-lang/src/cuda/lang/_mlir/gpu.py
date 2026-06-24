@@ -64,10 +64,9 @@ class AddressSpace(enum.Enum):
     Global = 1
     Workgroup = 2
     Private = 3
-    Constant = 4
 
     def _print_mlir_unqualified(self, p):
-        p(("", "global", "workgroup", "private", "constant",)[self._value_])
+        p(("", "global", "workgroup", "private",)[self._value_])
 
 
 class AllReduceOperation(enum.Enum):
@@ -117,16 +116,6 @@ class Dimension(enum.Enum):
         p(("x", "y", "z",)[self._value_])
 
 
-class DimensionKind(enum.Enum):
-    Other = 0
-    Block = 1
-    Grid = 2
-    Cluster = 3
-
-    def _print_mlir_unqualified(self, p):
-        p(("other", "block", "grid", "cluster",)[self._value_])
-
-
 class MMAElementwiseOp(enum.Enum):
     ADDF = 0
     MULF = 1
@@ -142,11 +131,10 @@ class MMAElementwiseOp(enum.Enum):
     NEGATEF = 11
     NEGATES = 12
     EXTF = 13
-    TRUNCF = 14
 
     def _print_mlir_unqualified(self, p):
         p(("addf", "mulf", "subf", "maxf", "minf", "divf", "addi", "muli", "subi", "divs", "divu",
-           "negatef", "negates", "extf", "truncf",)[self._value_])
+           "negatef", "negates", "extf",)[self._value_])
 
 
 class MappingId(enum.Enum):
@@ -540,30 +528,11 @@ def add_AllocOp(
     )
 
 
-def add_BallotOp(
-    *,
-    result_type: IntegerType,
-    predicate: Value,
-    extra_attributes: Sequence[tuple[str, Attribute]] = (),
-) -> Value:
-    all_props = []
-    return add_operation(
-        name="gpu.ballot",
-        result_type=result_type,
-        operands=[predicate],
-        properties=all_props,
-        attributes=extra_attributes,
-    )
-
-
 def add_BarrierOp(
     *,
-    address_spaces: Optional[ArrayAttr] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> None:
     all_props = []
-    if address_spaces is not None:
-        all_props.append(('address_spaces', address_spaces))
     return add_operation(
         name="gpu.barrier",
         result_type=None,
@@ -950,8 +919,6 @@ def add_GPUFuncOp(
     known_block_size: Optional[Sequence[int]] = None,
     known_grid_size: Optional[Sequence[int]] = None,
     known_cluster_size: Optional[Sequence[int]] = None,
-    workgroup_attributions: Optional[int] = None,
-    kernel: bool = False,
     body: Region,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> None:
@@ -971,11 +938,6 @@ def add_GPUFuncOp(
         all_props.append(('known_grid_size', DenseI32ArrayAttr(known_grid_size)))
     if known_cluster_size is not None:
         all_props.append(('known_cluster_size', DenseI32ArrayAttr(known_cluster_size)))
-    if workgroup_attributions is not None:
-        all_props.append(('workgroup_attributions',
-                          IntegerAttr.make(IntegerType.signless(64), workgroup_attributions)))
-    if kernel:
-        all_props.append(('kernel', UnitAttr()))
     return add_operation(
         name="gpu.func",
         result_type=None,
@@ -1113,15 +1075,12 @@ def add_LaunchFuncOp(
     clusterSizeY: Optional[Value] = None,
     clusterSizeZ: Optional[Value] = None,
     dynamicSharedMemorySize: Optional[Value] = None,
-    cooperative: bool = False,
     kernelOperands: Sequence[Value],
     asyncObject: Optional[Value] = None,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Optional[Value]:
     all_props = []
     all_props.append(('kernel', kernel))
-    if cooperative:
-        all_props.append(('cooperative', UnitAttr()))
     all_props.append(('operandSegmentSizes',
                       DenseI32ArrayAttr([len(asyncDependencies), 1, 1, 1, 1, 1, 1,
                                          int(clusterSizeX is not None),
@@ -1157,23 +1116,16 @@ def add_LaunchOp(
     clusterSizeY: Optional[Value] = None,
     clusterSizeZ: Optional[Value] = None,
     dynamicSharedMemorySize: Optional[Value] = None,
-    cooperative: bool = False,
     module: Optional[str] = None,
     function: Optional[str] = None,
-    workgroup_attributions: Optional[int] = None,
     body: Region,
     extra_attributes: Sequence[tuple[str, Attribute]] = (),
 ) -> Optional[Value]:
     all_props = []
-    if cooperative:
-        all_props.append(('cooperative', UnitAttr()))
     if module is not None:
         all_props.append(('module', FlatSymbolRefAttr(module)))
     if function is not None:
         all_props.append(('function', FlatSymbolRefAttr(function)))
-    if workgroup_attributions is not None:
-        all_props.append(('workgroup_attributions',
-                          IntegerAttr.make(IntegerType.signless(64), workgroup_attributions)))
     all_props.append(('operandSegmentSizes',
                       DenseI32ArrayAttr([len(asyncDependencies), 1, 1, 1, 1, 1, 1,
                                          int(clusterSizeX is not None),
