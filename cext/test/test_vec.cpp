@@ -97,5 +97,10 @@ int main() {
     CHECK(!(Vec<int>{1} == Vec<int>{0}));
     CHECK(Vec<int>{1} != Vec<int>{0});
 
+    // Aligned vector
+    Vec<int, AlignedAllocation<int, 4096>> v_aligned;
+    v_aligned.push_back(3);
+    CHECK(reinterpret_cast<uintptr_t>(v_aligned.data()) % 4096 == 0);
+
     return 0;
 }
