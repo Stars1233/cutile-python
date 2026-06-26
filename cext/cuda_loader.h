@@ -38,6 +38,10 @@
     X(cuMemAllocHost, 3020) \
     X(cuMemFree, 3020) \
     X(cuMemFreeHost, 2000) \
+    X(cuMemGetAddressRange, 3020) \
+    X(cuIpcGetMemHandle, 4010) \
+    X(cuIpcOpenMemHandle, 4010) \
+    X(cuIpcCloseMemHandle, 4010) \
     X(cuMemcpyHtoDAsync, 3020) \
     X(cuStreamCreate, 2000) \
     X(cuStreamDestroy, 4000) \

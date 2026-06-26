@@ -7,10 +7,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, Sequence, TypeVar
 
-from cuda.tile._cext import (
-    _benchmark,
-    _synchronize_context,
-)
+from cuda.tile._cext import _benchmark, _synchronize_context
+from cuda.tile.tune._tune_utils import benchmark_with_timeout
 import logging
 import sys
 
@@ -228,6 +226,7 @@ def exhaustive_search(
     best_cfg_id = None
     total = len(search_space)
     isatty = _in_terminal()
+    dynamic_launch_timeout_sec = _MAX_DYNAMIC_LAUNCH_TIMEOUT_SEC
 
     for i, cfg in enumerate(search_space):
         if not quiet and isatty:
@@ -237,9 +236,10 @@ def exhaustive_search(
         hints = hints_fn(cfg) if hints_fn is not None else {}
         updated_kernel = kernel.replace_hints(**hints)
         try:
-            avg_us, error_bar, repeats = _time_us(
+            avg_us, error_bar, repeats, wall_time_sec = _time_us(
                 stream, grid, updated_kernel,
                 lambda _cfg=cfg: args_fn(_cfg),
+                dynamic_launch_timeout_sec,
             )
         except Exception as e:
             err_type = type(e).__name__
@@ -257,6 +257,14 @@ def exhaustive_search(
                 best_time_us = avg_us
                 best_cfg_id = len(successes) - 1
 
+            if wall_time_sec is not None:
+                # udpate dynamic launch timeout to 2x of the fastest successful launch
+                # wall time and floor by _MIN_DYNAMIC_LAUNCH_TIMEOUT_SEC
+                dynamic_launch_timeout_sec = min(
+                    dynamic_launch_timeout_sec,
+                    max(_MIN_DYNAMIC_LAUNCH_TIMEOUT_SEC, wall_time_sec * 2),
+                )
+
     if len(search_space) == 0:
         raise ValueError("Search space is empty.")
     elif best_cfg_id is None:
@@ -273,17 +281,24 @@ def exhaustive_search(
     return result
 
 
+_MAX_DYNAMIC_LAUNCH_TIMEOUT_SEC = 5.0
+_MIN_DYNAMIC_LAUNCH_TIMEOUT_SEC = 0.5
 _MAX_MEASURE_TIME_US = 5_000_000  # 5s
 _MIN_REPEATS = 20
 _MAX_REPEATS = 1000
 _WARM_UP_STEPS = 10
 
 
-def _time_us(stream, grid, kernel, get_args) -> tuple[float, float, int]:
+def _time_us(
+        stream, grid, kernel, get_args,
+        dynamic_launch_timeout_sec: float) -> tuple[float, float, int, float | None]:
     _synchronize_context()
 
     # Warmup
-    for _ in range(_WARM_UP_STEPS):
+    # First warmup is timed to ensure it doesn't deadlock.
+    _, wall_time_sec = benchmark_with_timeout(
+        stream, grid, kernel, get_args(), dynamic_launch_timeout_sec)
+    for _ in range(_WARM_UP_STEPS - 1):
         _benchmark(stream, grid, kernel, get_args())
 
     _synchronize_context()
@@ -306,4 +321,4 @@ def _time_us(stream, grid, kernel, get_args) -> tuple[float, float, int]:
             if (estimated_error <= 0.01 * running_mean  # estimated relative error is <1%,
                     or repeats >= _MAX_REPEATS  # ... or we ran too many times,
                     or running_mean * repeats > _MAX_MEASURE_TIME_US):  # ... or taking too long.
-                return running_mean, estimated_error, repeats
+                return running_mean, estimated_error, repeats, wall_time_sec

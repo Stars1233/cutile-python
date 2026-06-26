@@ -8,6 +8,8 @@
 #include "cuda_loader.h"
 #include "cuda_helper.h"
 #include "hash_map.h"
+#include "ipc_util.h"
+#include "launch_helper.h"
 #include "py.h"
 #include "ref_ptr.h"
 #include "stream_buffer.h"
@@ -19,6 +21,7 @@
 #include <array>
 #include <memory>
 #include <algorithm>
+#include <optional>
 #include <utility>
 
 
@@ -335,45 +338,17 @@ struct TileKernel {
     Vec<HoistedTensorMap> hoisted_tensor_maps;
 };
 
+struct KernelImage {
+    PyPtr cubin;
+    PyPtr symbol;
+};
+
 using KernelMap = HashMap<Vec<int64_t>, TileKernel>;
 
 struct KernelFamily : SimpleRefcount<KernelFamily> {
     KernelMap kernels_by_constants;
 };
 
-using ArenaOffset = size_t;
-
-union Word {
-    void* device_ptr;
-    int32_t i32;
-    int64_t i64;
-    size_t size;
-    float f32;
-    ArenaOffset arena_offset;
-};
-
-static_assert(sizeof(Word) == 8);
-
-using Arena = Vec<Word, AlignedAllocation<Word, alignof(CUtensorMap)>>;
-
-struct ListArg {
-    ArenaOffset base_ptr_cuarg;
-    size_t length;
-    ArenaOffset item_offsets;  // [length], each word contains an `ArenaOffset` points to the item
-    size_t item_size_words;
-};
-
-struct LaunchHelper {
-    Vec<PyTypeObject*> pyarg_types;
-    Arena arena;
-    Vec<ArenaOffset> cuarg_offsets;  // offsets into `arena`
-    Vec<void*> launch_params;
-    Vec<ListArg> list_args;
-    size_t total_list_data_size_words;
-    Vec<int64_t> constants;
-    CUcontext cuda_context;
-    LaunchHelper* next_free;
-};
 
 static ArenaOffset arena_alloc_words(Arena& arena, size_t count) {
     ArenaOffset offset = arena.size();
@@ -1152,6 +1127,7 @@ static Status extract_array(const DriverApi* driver, PyObject* pyobj, unsigned i
     if (!ar.is_ok()) return ErrorRaised;
 
     size_t num_words = 1 + 2 * ar->arrty.ndim;
+    helper.array_ptr_arena_offsets.push_back(ar->repr);
     for (size_t i = 0; i < num_words; ++i)
         helper.cuarg_offsets.push_back(ar->repr + i);
 
@@ -1320,6 +1296,7 @@ static Status extract_py_list(const DriverApi* driver, PyObject* pyobj, unsigned
                                                       helper.arena);
     if (!first_repr_res.is_ok()) return ErrorRaised;
 
+    helper.array_ptr_arena_offsets.push_back(first_repr_res->repr);
     ArenaOffset item_offsets = arena_alloc_words(helper.arena, len);
     size_t item_size_words = 1 + 2 * first_repr_res->arrty.ndim;
 
@@ -1353,6 +1330,7 @@ static Status extract_py_list(const DriverApi* driver, PyObject* pyobj, unsigned
 
         Result<ArrayRepr> repr_res = get_array_repr(kind, item, index_bitwidth, helper.arena);
         if (!repr_res.is_ok()) return ErrorRaised;
+        helper.array_ptr_arena_offsets.push_back(repr_res->repr);
         helper.arena[item_offsets + i].arena_offset = repr_res->repr;
 
         // TODO: nicer error messages
@@ -1405,6 +1383,7 @@ static Status extract_cuda_args(const DriverApi* driver,
     CHECK(num_pyargs == arg_kinds.size());
     helper.arena.clear();
     helper.cuarg_offsets.clear();
+    helper.array_ptr_arena_offsets.clear();
     helper.list_args.clear();
     helper.total_list_data_size_words = 0;
     helper.constants.clear();
@@ -1835,7 +1814,8 @@ static void get_pyarg_types(PyObject* const* pyargs, Py_ssize_t num_pyargs,
 static Result<TileKernel> compile(const DriverApi* driver,
                                   PyObject* dispatcher_pyobj,
                                   PyObject* signature,
-                                  PyObject* py_tile_context) {
+                                  PyObject* py_tile_context,
+                                  KernelImage* image) {
     PyPtr compile_result = steal(PyObject_CallMethod(
             dispatcher_pyobj, "_compile", "(OO)",
             signature, py_tile_context));
@@ -1869,7 +1849,8 @@ static Result<TileKernel> compile(const DriverApi* driver,
     if (PyBytes_AsStringAndSize(py_cubin_bytes, &cubin_data, &cubin_size) < 0)
         return ErrorRaised;
 
-    const char* cufunc_name = PyUnicode_AsUTF8(py_cufunc_name);
+    Py_ssize_t py_cufunc_name_size;
+    const char* cufunc_name = PyUnicode_AsUTF8AndSize(py_cufunc_name, &py_cufunc_name_size);
     if (!cufunc_name) return ErrorRaised;
 
     Result<CudaKernel> cukernel = load_cuda_kernel(driver, cubin_data, cubin_size, cufunc_name);
@@ -1887,6 +1868,11 @@ static Result<TileKernel> compile(const DriverApi* driver,
         Result<HoistedTensorMap> map_res = hoisted_tensor_map_parse(map_pyobj);
         if (!map_res.is_ok()) return ErrorRaised;
         hoisted_tensor_maps.push_back(*map_res);
+    }
+
+    if (image) {
+        image->cubin = newref(py_cubin_bytes);
+        image->symbol = newref(py_cufunc_name);
     }
 
     return TileKernel{std::move(*cukernel),
@@ -2069,6 +2055,8 @@ struct PreparedLaunch {
     LaunchHelperPtr helper;
     CUkernel kernel;
     unsigned dynamic_smem_bytes;
+    TileKernel* tile_kernel;
+    std::optional<KernelImage> kernel_image;
 };
 
 static Result<CUcontext> get_stream_context(const DriverApi* driver, CUstream stream) {
@@ -2084,12 +2072,68 @@ static Result<CUcontext> get_stream_context(const DriverApi* driver, CUstream st
     return ctx;
 }
 
+static Status stage_list_args_on_stream(const DriverApi* driver,
+                                        CUstream launch_stream,
+                                        CUcontext cuda_context,
+                                        Arena& arena,
+                                        const Vec<ListArg>& list_args,
+                                        size_t total_list_data_size_words,
+                                        StreamBufferTransaction& tx) {
+    if (list_args.empty())
+        return OK;
+
+    if (!tx) {
+        CUstreamCaptureStatus status;
+        CUresult res = driver->cuStreamIsCapturing(launch_stream, &status);
+        if (res != CUDA_SUCCESS)
+            return raise(PyExc_RuntimeError, "Failed to check stream capturing status: %s",
+                    get_cuda_error(driver, res));
+        if (status != CU_STREAM_CAPTURE_STATUS_NONE)
+            return raise(PyExc_RuntimeError, "List argument in CUDAGraph isn't supported yet");
+
+        Result<StreamBufferPool*> pool_res = get_stream_buffer_pool(driver, cuda_context);
+        if (!pool_res.is_ok()) return ErrorRaised;
+
+        tx = stream_buffer_transaction_open(driver, *pool_res, launch_stream);
+        if (!tx) return raise(PyExc_RuntimeError, "Failed to open a stream buffer transaction");
+    }
+
+    size_t size = total_list_data_size_words * sizeof(Word);
+    DualPointer ptr = tx.allocate(size);
+    if (!ptr)
+        return raise(PyExc_RuntimeError, "Failed to allocate memory in stream buffer");
+
+    for (const ListArg& list_arg : list_args) {
+        size_t data_offset_words = arena[list_arg.base_ptr_cuarg].size;
+        arena[list_arg.base_ptr_cuarg].device_ptr = reinterpret_cast<void*>(
+                ptr.device + data_offset_words * sizeof(Word));
+        Word* dst = reinterpret_cast<Word*>(ptr.host) + data_offset_words;
+        size_t item_size_words = list_arg.item_size_words;
+        size_t item_size_bytes = item_size_words * sizeof(Word);
+        for (size_t i = 0; i < list_arg.length; ++i) {
+            ArenaOffset item_offset = arena[list_arg.item_offsets + i].arena_offset;
+            mem_copy(dst, arena.data() + item_offset, item_size_bytes);
+            dst += item_size_words;
+        }
+    }
+
+    CUresult res = driver->cuMemcpyHtoDAsync(ptr.device, ptr.host, size, launch_stream);
+    if (res != CUDA_SUCCESS) {
+        return raise(PyExc_RuntimeError, "Failed to copy memory from host to device: %s",
+                     get_cuda_error(driver, res));
+    }
+
+    return OK;
+}
+
 static Result<PreparedLaunch> prepare_launch(
         const DriverApi* driver,
         PyObject* dispatcher_pyobj,
         CUstream launch_stream,
         PyObject* const* pyargs,
         Py_ssize_t num_pyargs,
+        bool capture_kernel_image,
+        bool stage_list_args,
         StreamBufferTransaction& tx) {
 
     LaunchHelperPtr helper = launch_helper_get();
@@ -2146,8 +2190,8 @@ static Result<PreparedLaunch> prepare_launch(
 
     KernelMap& kernel_map = profile_item->value.family->kernels_by_constants;
     KernelMap::Item* kernel_item = kernel_map.find(helper->constants);
-    if (!kernel_item) {
-        // Slowest path: need to compile a new kernel
+    std::optional<KernelImage> kernel_image;
+    if (!kernel_item || capture_kernel_image) {
         Vec<ParameterKind> param_kinds;
         for (PythonArgKind k : profile_item->value.arg_kinds)
             param_kinds.push_back(param_kind_from_pyarg_kind(k));
@@ -2160,60 +2204,24 @@ static Result<PreparedLaunch> prepare_launch(
                 dispatcher.int64_param_flags, cconv);
         if (!signature) return ErrorRaised;
 
+        KernelImage* image = capture_kernel_image ? &kernel_image.emplace() : nullptr;
         Result<TileKernel> res = compile(driver, dispatcher_pyobj, signature.get(),
-                                         g_default_tile_context);
+                                         g_default_tile_context, image);
         if (!res.is_ok()) return ErrorRaised;
 
-        kernel_item = kernel_map.insert(std::move(helper->constants), std::move(*res));
+        if (!kernel_item)
+            kernel_item = kernel_map.insert(std::move(helper->constants), std::move(*res));
     }
 
     ContextGuard ctx_guard(driver);
     if (!maybe_switch_context(driver, helper->cuda_context, ctx_guard))
         return ErrorRaised;
 
-    // Handle list arguments
-    if (!helper->list_args.empty()) {
-        if (!tx) {
-            CUstreamCaptureStatus status;
-            CUresult res = driver->cuStreamIsCapturing(launch_stream, &status);
-            if (res != CUDA_SUCCESS)
-                return raise(PyExc_RuntimeError, "Failed to check stream capturing status: %s",
-                        get_cuda_error(driver, res));
-            if (status != CU_STREAM_CAPTURE_STATUS_NONE)
-                return raise(PyExc_RuntimeError, "List argument in CUDAGraph isn't supported yet");
-
-            Result<StreamBufferPool*> pool_res = get_stream_buffer_pool(driver,
-                                                                        helper->cuda_context);
-            if (!pool_res.is_ok()) return ErrorRaised;
-
-            tx = stream_buffer_transaction_open(driver, *pool_res, launch_stream);
-            if (!tx) return raise(PyExc_RuntimeError, "Failed to open a stream buffer transaction");
-        }
-
-        size_t size = helper->total_list_data_size_words * sizeof(Word);
-        DualPointer ptr = tx.allocate(size);
-        if (!ptr)
-            return raise(PyExc_RuntimeError, "Failed to allocate memory in stream buffer");
-
-        for (const ListArg& list_arg : helper->list_args) {
-            size_t data_offset_words = helper->arena[list_arg.base_ptr_cuarg].size;
-            helper->arena[list_arg.base_ptr_cuarg].device_ptr = reinterpret_cast<void*>(
-                    ptr.device + data_offset_words * sizeof(Word));
-            Word* dst = reinterpret_cast<Word*>(ptr.host) + data_offset_words;
-            size_t item_size_words = list_arg.item_size_words;
-            size_t item_size_bytes = item_size_words * sizeof(Word);
-            for (size_t i = 0; i < list_arg.length; ++i) {
-                ArenaOffset item_offset = helper->arena[list_arg.item_offsets + i].arena_offset;
-                mem_copy(dst, helper->arena.data() + item_offset, item_size_bytes);
-                dst += item_size_words;
-            }
-        }
-
-        CUresult res = driver->cuMemcpyHtoDAsync(ptr.device, ptr.host, size, launch_stream);
-        if (res != CUDA_SUCCESS) {
-            return raise(PyExc_RuntimeError, "Failed to copy memory from host to device: %s",
-                         get_cuda_error(driver, res));
-        }
+    if (stage_list_args
+            && !stage_list_args_on_stream(driver, launch_stream, helper->cuda_context,
+                                          helper->arena, helper->list_args,
+                                          helper->total_list_data_size_words, tx)) {
+        return ErrorRaised;
     }
 
     if (!hoisted_tensor_map_encode(*driver, kernel_item->value.hoisted_tensor_maps, *helper))
@@ -2221,13 +2229,14 @@ static Result<PreparedLaunch> prepare_launch(
 
     int64_t stack[HostProgram::kMaxStackDepth];
     host_program_eval(kernel_item->value.dyn_smem_size_prog,
-                      helper->arena, helper->cuarg_offsets, stack);
+        helper->arena, helper->cuarg_offsets, stack);
     int64_t dyn_smem_size = stack[0];
     if (dyn_smem_size < 0 || dyn_smem_size > UINT_MAX)
         return raise(PyExc_RuntimeError, "Invalid dynamic shared memory size");
 
     return PreparedLaunch{std::move(helper), kernel_item->value.cukernel.kernel,
-                          static_cast<unsigned>(dyn_smem_size)};
+                          static_cast<unsigned>(dyn_smem_size),
+                          &kernel_item->value, std::move(kernel_image)};
 }
 
 
@@ -2245,7 +2254,8 @@ static Status launch(const DriverApi* driver,
                      ) {
     StreamBufferTransaction tx;
     Result<PreparedLaunch> prep = prepare_launch(
-            driver, dispatcher_pyobj, launch_stream, pyargs, num_pyargs, tx);
+            driver, dispatcher_pyobj, launch_stream, pyargs, num_pyargs,
+            /*capture_kernel_image=*/false, /*stage_list_args=*/true, tx);
     if (!prep.is_ok()) return ErrorRaised;
 
     ContextGuard ctx_guard(driver);
@@ -2283,18 +2293,12 @@ static Status launch(const DriverApi* driver,
 }
 
 static Result<double> benchmark(const DriverApi* driver,
-                                PyObject* dispatcher_pyobj,
                                 Grid grid,
                                 CUstream launch_stream,
-                                PyObject** pyargs,
-                                Py_ssize_t num_pyargs) {
-    StreamBufferTransaction tx;
-
-    Result<PreparedLaunch> prep = prepare_launch(
-            driver, dispatcher_pyobj, launch_stream, pyargs, num_pyargs, tx);
-    if (!prep.is_ok()) return ErrorRaised;
-
-    CUcontext ctx = prep->helper->cuda_context;
+                                CUcontext ctx,
+                                CUkernel kernel,
+                                unsigned dynamic_smem_bytes,
+                                LaunchHelper& helper) {
     ContextGuard bench_ctx(driver);
     if (!maybe_switch_context(driver, ctx, bench_ctx))
         return ErrorRaised;
@@ -2368,7 +2372,6 @@ static Result<double> benchmark(const DriverApi* driver,
                      ev_start.get()));
 
     // Kernel
-    PreparedLaunch& pl = *prep;
     CUDA_KERNEL_NODE_PARAMS kparams = {};
     kparams.func = nullptr;
     kparams.gridDimX = grid.dims[0];
@@ -2377,11 +2380,11 @@ static Result<double> benchmark(const DriverApi* driver,
     kparams.blockDimX = 1;
     kparams.blockDimY = 1;
     kparams.blockDimZ = 1;
-    kparams.sharedMemBytes = pl.dynamic_smem_bytes;
-    kparams.kernelParams = make_launch_params(*pl.helper);
+    kparams.sharedMemBytes = dynamic_smem_bytes;
+    kparams.kernelParams = make_launch_params(helper);
     kparams.extra = nullptr;
-    kparams.kern = pl.kernel;
-    kparams.ctx = pl.helper->cuda_context;
+    kparams.kern = kernel;
+    kparams.ctx = ctx;
 
     CUgraphNode kernel_node;
     CU_CHECK("cuGraphAddKernelNode",
@@ -2799,9 +2802,229 @@ static PyObject* cuda_tile_benchmark(PyObject* mod, PyObject* const* args, Py_ss
     Result<const DriverApi*> driver = get_driver_api();
     if (!driver.is_ok()) return nullptr;
 
-    Result<double> elapsed_us = benchmark(*driver, launch_args.dispatcher, launch_args.grid,
-                                          launch_args.stream, launch_args.kernel_args,
-                                          launch_args.num_kernel_args);
+    StreamBufferTransaction tx;
+    Result<PreparedLaunch> prep = prepare_launch(
+            *driver, launch_args.dispatcher, launch_args.stream,
+            launch_args.kernel_args, launch_args.num_kernel_args,
+            /*capture_kernel_image=*/false, /*stage_list_args=*/true, tx);
+    if (!prep.is_ok()) return nullptr;
+
+    Result<double> elapsed_us = benchmark(
+            *driver, launch_args.grid, launch_args.stream,
+            prep->helper->cuda_context, prep->kernel,
+            prep->dynamic_smem_bytes, *prep->helper);
+    if (!elapsed_us.is_ok()) return nullptr;
+
+    return PyFloat_FromDouble(*elapsed_us);
+}
+
+#define EXPORT_IPC_BENCHMARK_PAYLOAD_SIGNATURE \
+    "_export_ipc_benchmark_payload(stream, grid, kernel, pyargs_tuples, /)"
+
+static PyObject* cuda_tile_export_ipc_benchmark_payload(PyObject*, PyObject* const* args,
+                                                        Py_ssize_t nargs) {
+#ifdef Py_GIL_DISABLED
+    PyCriticalSectionGuard guard(&g_launch_mutex);
+#endif
+    LaunchArgs launch_args;
+    if (!parse_launch_args(args, nargs, EXPORT_IPC_BENCHMARK_PAYLOAD_SIGNATURE, false,
+                           &launch_args))
+        return nullptr;
+
+    Result<const DriverApi*> driver = get_driver_api();
+    if (!driver.is_ok()) return nullptr;
+
+    StreamBufferTransaction tx;
+    Result<PreparedLaunch> prep = prepare_launch(
+            *driver, launch_args.dispatcher, launch_args.stream,
+            launch_args.kernel_args, launch_args.num_kernel_args,
+            /*capture_kernel_image=*/true, /*stage_list_args=*/false, tx);
+    if (!prep.is_ok()) return nullptr;
+
+    LaunchHelper& helper = *prep->helper;
+    TileKernel* tile_kernel = prep->tile_kernel;
+    CHECK(prep->kernel_image.has_value());
+    KernelImage& kernel_image = *prep->kernel_image;
+
+    // IPC payload is not supported for hoisted tensor maps yet.
+    // TODO: support hoisted tensor maps
+    if (!tile_kernel->hoisted_tensor_maps.empty())
+        Py_RETURN_NONE;
+
+    char* cubin_data;
+    Py_ssize_t cubin_size;
+    if (PyBytes_AsStringAndSize(kernel_image.cubin.get(), &cubin_data, &cubin_size) < 0)
+        return nullptr;
+
+    Py_ssize_t symbol_size;
+    const char* symbol = PyUnicode_AsUTF8AndSize(kernel_image.symbol.get(), &symbol_size);
+    if (!symbol) return nullptr;
+
+    ContextGuard ctx_guard(*driver);
+    if (!maybe_switch_context(*driver, helper.cuda_context, ctx_guard))
+        return nullptr;
+
+    CUdevice device;
+    CUresult res = (*driver)->cuCtxGetDevice(&device);
+    if (res != CUDA_SUCCESS) {
+        raise(PyExc_RuntimeError, "Failed to get current CUDA device: %s",
+              get_cuda_error(*driver, res));
+        return nullptr;
+    }
+    int device_id = static_cast<int>(device);
+    if (device_id < 0) {
+        raise(PyExc_RuntimeError, "Invalid CUDA device id");
+        return nullptr;
+    }
+
+    IpcHandleExporter ipc_pointer_exporter(*driver);
+    // Return None to allow fallback to non-IPC when IPC is not supported.
+    if (!helper.array_ptr_arena_offsets.empty()) {
+        Result<bool> ipc_supported = ipc_pointer_exporter.check_ipc_supported(device);
+        if (!ipc_supported.is_ok()) return nullptr;
+        if (!*ipc_supported)
+            Py_RETURN_NONE;
+    }
+
+    Vec<IpcArrayPtrPatch> arena_array_ptrs;
+    arena_array_ptrs.reserve(helper.array_ptr_arena_offsets.size());
+    for (ArenaOffset arena_offset : helper.array_ptr_arena_offsets) {
+        CUdeviceptr device_ptr = reinterpret_cast<CUdeviceptr>(
+                helper.arena[arena_offset].device_ptr);
+
+        Result<bool> capable = ipc_pointer_exporter.is_legacy_ipc_capable(device_ptr);
+        if (!capable.is_ok())
+            return nullptr;
+
+        // Return None to allow fallback to non-IPC when pointer is not legacy IPC capable.
+        if (!*capable)
+            Py_RETURN_NONE;
+
+        Result<IpcDevicePtrRef> ipc_array_ptr =
+                ipc_pointer_exporter.get_ipc_pointer(device_ptr);
+        if (!ipc_array_ptr.is_ok())
+            return nullptr;
+
+        arena_array_ptrs.push_back(IpcArrayPtrPatch{arena_offset, *ipc_array_ptr});
+    }
+
+    uint32_t grid_dims[Grid::Len];
+    for (size_t i = 0; i < Grid::Len; ++i)
+        grid_dims[i] = static_cast<uint32_t>(launch_args.grid.dims[i]);
+
+    PyPtr payload = serialize_ipc_benchmark_payload(
+            grid_dims, device_id, prep->dynamic_smem_bytes, helper.arena,
+            helper.cuarg_offsets, helper.list_args, helper.total_list_data_size_words,
+            arena_array_ptrs, ipc_pointer_exporter.ipc_mem_handles,
+            cubin_data, static_cast<size_t>(cubin_size),
+            symbol, static_cast<size_t>(symbol_size) + 1);
+    if (!payload) return nullptr;
+
+    // cuda_tile_benchmark_with_ipc_payload runs in a different process and cannot share
+    // the same stream. So synchronize the stream before returning the payload.
+    res = (*driver)->cuStreamSynchronize(launch_args.stream);
+    if (res != CUDA_SUCCESS) {
+        raise(PyExc_RuntimeError, "Failed to synchronize stream for IPC benchmark payload: %s",
+              get_cuda_error(*driver, res));
+        return nullptr;
+    }
+
+    return payload.release();
+}
+
+#define BENCHMARK_WITH_IPC_PAYLOAD_SIGNATURE "_benchmark_with_ipc_payload(payload, /)"
+
+static PyObject* cuda_tile_benchmark_with_ipc_payload(PyObject*, PyObject* const* args,
+                                                      Py_ssize_t nargs) {
+#ifdef Py_GIL_DISABLED
+    PyCriticalSectionGuard guard(&g_launch_mutex);
+#endif
+    if (nargs != 1) {
+        raise(PyExc_TypeError, "Wrong number of arguments to %s",
+              BENCHMARK_WITH_IPC_PAYLOAD_SIGNATURE);
+        return nullptr;
+    }
+
+    PyObject* py_payload = args[0];
+    if (!PyBytes_Check(py_payload)) {
+        raise(PyExc_TypeError, "IPC benchmark payload must be bytes");
+        return nullptr;
+    }
+
+    char* payload_data;
+    Py_ssize_t payload_nbytes;
+    if (PyBytes_AsStringAndSize(py_payload, &payload_data, &payload_nbytes) < 0)
+        return nullptr;
+
+    LaunchHelperPtr helper = launch_helper_get();
+    Result<IpcBenchmarkPayload> payload_res = deserialize_ipc_benchmark_payload(
+            payload_data, static_cast<size_t>(payload_nbytes), *helper);
+    if (!payload_res.is_ok()) return nullptr;
+    IpcBenchmarkPayload& payload = *payload_res;
+
+    Grid grid;
+    for (size_t i = 0; i < Grid::Len; ++i)
+        grid.dims[i] = payload.grid_dims[i];
+    if (!validate_grid(grid)) return nullptr;
+
+    Result<const DriverApi*> driver = get_driver_api();
+    if (!driver.is_ok()) return nullptr;
+
+    int device_id = payload.device_id;
+    CUdevice device;
+    CUresult res = (*driver)->cuDeviceGet(&device, device_id);
+    if (res != CUDA_SUCCESS) {
+        raise(PyExc_RuntimeError, "cuDeviceGet: %s", get_cuda_error(*driver, res));
+        return nullptr;
+    }
+
+    CUcontext ctx;
+    res = (*driver)->cuDevicePrimaryCtxRetain(&ctx, device);
+    if (res != CUDA_SUCCESS) {
+        raise(PyExc_RuntimeError, "cuDevicePrimaryCtxRetain: %s",
+              get_cuda_error(*driver, res));
+        return nullptr;
+    }
+
+    ContextGuard ctx_guard(*driver);
+    if (!maybe_switch_context(*driver, ctx, ctx_guard))
+        return nullptr;
+
+    IpcHandleCreator ipc_mem_handle(*driver);
+    if (!ipc_mem_handle.open_handles(payload.ipc_mem_handles)) return nullptr;
+
+    for (const IpcArrayPtrPatch& arena_array_ptr : payload.arena_array_ptrs) {
+        if (arena_array_ptr.arena_offset >= helper->arena.size()) {
+            raise(PyExc_ValueError, "IPC arena array pointer offset is out of range");
+            return nullptr;
+        }
+        const IpcDevicePtrRef& ipc_array_ptr = arena_array_ptr.array_ptr;
+        if (ipc_array_ptr.ipc_mem_handle_index >= ipc_mem_handle.mapped_handles.size()) {
+            raise(PyExc_ValueError,
+                  "IPC arena array pointer ipc_mem_handle_index is out of range");
+            return nullptr;
+        }
+
+        helper->arena[arena_array_ptr.arena_offset].device_ptr = reinterpret_cast<void*>(
+                ipc_mem_handle.mapped_handles[ipc_array_ptr.ipc_mem_handle_index]
+                + ipc_array_ptr.offset);
+    }
+
+    CUstream launch_stream = nullptr;
+    StreamBufferTransaction tx;
+    if (!stage_list_args_on_stream(*driver, launch_stream, ctx, helper->arena,
+                                   helper->list_args, helper->total_list_data_size_words,
+                                   tx)) {
+        return nullptr;
+    }
+
+    Result<CudaKernel> kernel = load_cuda_kernel(
+            *driver, payload.cubin.data(), payload.cubin.size(), payload.symbol.data());
+    if (!kernel.is_ok()) return nullptr;
+
+    Result<double> elapsed_us = benchmark(
+            *driver, grid, launch_stream, ctx, kernel->kernel, payload.dynamic_smem_bytes,
+            *helper);
     if (!elapsed_us.is_ok()) return nullptr;
 
     return PyFloat_FromDouble(*elapsed_us);
@@ -2825,6 +3048,26 @@ static Status init_default_tile_context() {
 
     return OK;
 };
+
+
+static Result<bool> py_environ_has(const char* name) {
+    PyPtr os = steal(PyImport_ImportModule("os"));
+    if (!os) return ErrorRaised;
+
+    PyPtr py_environ = steal(PyObject_GetAttrString(os.get(), "environ"));
+    if (!py_environ) return ErrorRaised;
+
+    PyPtr value = steal(PyMapping_GetItemString(py_environ.get(), name));
+    if (value) {
+        return true;
+    } else {
+        if (PyErr_ExceptionMatches(PyExc_KeyError)) {
+            PyErr_Clear();
+            return false;
+        }
+        return ErrorRaised;
+    }
+}
 
 
 static void try_get_torch_globals() {
@@ -2922,6 +3165,21 @@ static PyMethodDef functions[] = {
         "Benchmark a cuTile kernel using CUDA graphs.\n\n"
         "Returns total elapsed time in microseconds (L2 flush between invocations).\n"
     },
+    {"_export_ipc_benchmark_payload",
+        reinterpret_cast<PyCFunction>(cuda_tile_export_ipc_benchmark_payload), METH_FASTCALL,
+        EXPORT_IPC_BENCHMARK_PAYLOAD_SIGNATURE "\n"
+        "--\n\n"
+        "Build a CUDA IPC benchmark payload for the _benchmark_with_ipc_payload call.\n"
+        "Returns None when the payload is not supported by CUDA IPC.\n"
+    },
+    {"_benchmark_with_ipc_payload",
+        reinterpret_cast<PyCFunction>(cuda_tile_benchmark_with_ipc_payload), METH_FASTCALL,
+        BENCHMARK_WITH_IPC_PAYLOAD_SIGNATURE "\n"
+        "--\n\n"
+        "Benchmark a cuTile kernel with a CUDA IPC payload using CUDA graphs.\n"
+        "The IPC payload must be generated by _export_ipc_benchmark_payload().\n"
+        "Returns total elapsed time in microseconds (L2 flush between invocations).\n"
+    },
     {}
 };
 
@@ -2959,13 +3217,22 @@ Status tile_kernel_init(PyObject* m) {
 
     g_stream_buffer_pool_by_ctx_id = new StreamBufferPoolMap();
 
-    try_get_torch_globals();
+    Result<bool> is_ipc_benchmark_worker = py_environ_has(
+            "CUDA_TILE_IPC_BENCHMARK_WORKER");
+    if (!is_ipc_benchmark_worker.is_ok()) return ErrorRaised;
 
-    try_get_cupy_globals();
+    // The IPC benchmark worker receives an already serialized launch and does
+    // not inspect Python framework objects. Avoid importing several large,
+    // optional framework packages in that short-lived helper process.
+    if (!*is_ipc_benchmark_worker) {
+        try_get_torch_globals();
 
-    try_get_numba_globals();
+        try_get_cupy_globals();
 
-    try_get_cuda_bindings_globals();
+        try_get_numba_globals();
+
+        try_get_cuda_bindings_globals();
+    }
 
     if (PyType_Ready(&CallingConvention::pytype) < 0)
         return ErrorRaised;

@@ -112,6 +112,16 @@ def run_coroutine(coro):
     """
 
 
+def _export_ipc_benchmark_payload(stream: int,
+                                  grid: tuple[int] | tuple[int, int] | tuple[int, int, int],
+                                  kernel,
+                                  pyargs_tuples: tuple[Any, ...],
+                                  /) -> bytes | None: ...
+
+
+def _benchmark_with_ipc_payload(payload: bytes, /) -> float: ...
+
+
 CU_TENSOR_MAP_DATA_TYPE_UINT8: int
 CU_TENSOR_MAP_DATA_TYPE_UINT16: int
 CU_TENSOR_MAP_DATA_TYPE_UINT32: int
