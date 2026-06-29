@@ -5,9 +5,11 @@
 from typing import Any, Callable
 
 import cuda.lang._datatype as datatype
+from cuda.lang._enums import TMALoadMode
 from cuda.lang._ir.ir import add_operation
 from cuda.lang._ir.op_defs import LoadPointer, StorePointer, TensorMapAsOpaquePtr
 from cuda.lang._ir.type import MemorySpace, ScalarTy, TensorMapTy, VectorTy, PointerTy
+from cuda.lang._exception import TypeCheckingError
 from cuda.tile import DType
 from cuda.tile._memory_model import MemoryOrder
 from cuda.tile._ir.ir import Var
@@ -199,6 +201,16 @@ def require_tensor_map_ty(var: Var) -> TensorMapTy:
     if not isinstance(ty, TensorMapTy):
         raise make_type_checking_error(f"Expected a tensor map, got {ty}", var)
     return ty
+
+
+def validate_tensor_map_load_mode(map_ty: TensorMapTy, mode: TMALoadMode) -> None:
+    """Validate constraints imposed by a TMA load mode on a typed TensorMap."""
+    if mode is TMALoadMode.TILE_GATHER4 and (
+        len(map_ty.tile_shape) != 2 or map_ty.tile_shape[1] != 1
+    ):
+        raise TypeCheckingError(
+            "TILE_GATHER4 requires a rank-2 tensor map with tile_shape[1] == 1"
+        )
 
 
 def require_optional(var: Var, requirement_if_not_none: Callable[[Var], Any]):

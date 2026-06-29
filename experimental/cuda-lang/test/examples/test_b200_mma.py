@@ -185,7 +185,7 @@ def make_mma_kernel(
                             )
                         cl.mbarrier_arrive_expect_transaction(
                             tma_expect_mbar,
-                            (BLOCK_M + block_n // cta_group) * BLOCK_K * 2,
+                            a_tmap.get_transaction_bytes() + b_tmap.get_transaction_bytes(),
                             scope=cl.MbarrierScope.BLOCK,
                         )
 
@@ -234,14 +234,14 @@ def make_mma_kernel(
                         b_smem_addr = p3_to_u64(b_stage_ptr)
                         a_desc = cl.Tcgen05SharedMemoryDescriptor(
                             matrix_start_address=a_smem_addr,
-                            leading_dimension_offset=0,
-                            stride_dimension_offset=8 * 128,
+                            leading_dimension_byte_offset=16,
+                            stride_dimension_byte_offset=8 * 128,
                             swizzle_mode=(cl.SwizzleMode.SWIZZLE_128B),
                         ).encode()
                         b_desc = cl.Tcgen05SharedMemoryDescriptor(
                             matrix_start_address=b_smem_addr,
-                            leading_dimension_offset=0,
-                            stride_dimension_offset=8 * 128,
+                            leading_dimension_byte_offset=16,
+                            stride_dimension_byte_offset=8 * 128,
                             swizzle_mode=(cl.SwizzleMode.SWIZZLE_128B),
                         ).encode()
 

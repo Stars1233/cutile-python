@@ -176,6 +176,10 @@ reserved for future support.
 Use :meth:`TensorMap.as_opaque_ptr` when passing the descriptor to low-level TMA
 intrinsics.
 
+Use :meth:`TensorMap.get_transaction_bytes` to obtain the shared memory
+destination payload size. This can be used as the byte count expected by
+an mbarrier that tracks a global-to-shared TMA load.
+
 .. seealso::
   :ref:`cuda.lang.TensorMap class documentation <data-tensor-map-cuda-lang-tensor-map>`
   :ref:`TensorMap operations <operations-tensor-map>`

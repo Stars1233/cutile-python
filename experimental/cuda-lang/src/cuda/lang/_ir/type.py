@@ -252,6 +252,7 @@ def dtype_to_tensor_map_type(dtype: datatype.DType) -> str:
 @dataclass(frozen=True)
 class TensorMapTy(Type):
     data_type: str  # "CU_TENSOR_MAP_DATA_TYPE_*"
+    element_bitwidth: int
     tile_shape: tuple[int, ...]
     swizzle: SwizzleMode
 

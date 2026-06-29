@@ -9,6 +9,7 @@ from cuda.lang._ir.enum_to_mlir import cl_enum_to_mlir_attribute
 from cuda.lang._mlir import BoolAttr
 from cuda.lang._enums import MemorySpace
 from cuda.lang._stub import copy_async
+from cuda.lang._ir.type import TensorMapTy
 from .raw_mlir_operation_utils import RawMLIROperationBuilder
 from ..type_checking_helpers import (
     optional_cast,
@@ -20,6 +21,7 @@ from ..type_checking_helpers import (
     require_pointer_in_memory_space,
     require_uniform_int_tuple_type,
     tensor_map_descriptor_like,
+    validate_tensor_map_load_mode,
 )
 from cuda.tile._ir.op_impl import require_constant_enum, require_optional_constant_enum
 
@@ -67,13 +69,16 @@ def copy_async_bulk_tensor_global_to_shared_impl(
     cta_group,
     predicate,
 ):
-    tensor_map = tensor_map_descriptor_like(src_tensor_map_descriptor)
+    src_tensor_map_ty = src_tensor_map_descriptor.get_type()
     src_coordinate_vars = require_uniform_int_tuple_type(src_coordinates)
     im2col_offset_vars = require_uniform_int_tuple_type(im2col_offsets)
     require_mbarrier_ptr(mbarrier, (MemorySpace.SHARED,))
     mode = require_constant_enum(mode, copy_async.TMALoadMode)
     validate_g2s_mode(mode, len(im2col_offset_vars))
     mode_attribute = cl_enum_to_mlir_attribute(mode)
+    if isinstance(src_tensor_map_ty, TensorMapTy):
+        validate_tensor_map_load_mode(src_tensor_map_ty, mode)
+    tensor_map = tensor_map_descriptor_like(src_tensor_map_descriptor)
     dst_ty = require_pointer_in_memory_space(
         dst_memory,
         (MemorySpace.SHARED, MemorySpace.SHARED_CLUSTER),

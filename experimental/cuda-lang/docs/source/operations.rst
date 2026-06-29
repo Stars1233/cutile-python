@@ -180,6 +180,8 @@ TensorMap
    :nosignatures:
 
     tensor_map_tiled
+    copy_async_bulk_tensor_global_to_shared
+    copy_async_bulk_tensor_shared_to_global
 
 .. autosummary::
    :toctree: generated
@@ -277,6 +279,7 @@ TensorCore (Gen5)
    :template: autosummary/class_no_init.rst
 
     Tcgen05LoadStoreShape
+    Tcgen05SharedMemoryDescriptor
     CTAGroup
 
 

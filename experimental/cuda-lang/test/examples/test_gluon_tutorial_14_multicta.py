@@ -340,14 +340,14 @@ def two_cta_tcgen05_kernel(a, b, c):
             cl.tcgen05_fence_after_thread_sync()
             a_desc = cl.Tcgen05SharedMemoryDescriptor(
                 matrix_start_address=p3_to_u64(a_smem.get_base_pointer()),
-                leading_dimension_offset=0,
-                stride_dimension_offset=8 * 128,
+                leading_dimension_byte_offset=16,
+                stride_dimension_byte_offset=8 * 128,
                 swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
             ).encode()
             b_desc = cl.Tcgen05SharedMemoryDescriptor(
                 matrix_start_address=p3_to_u64(b_smem.get_base_pointer()),
-                leading_dimension_offset=0,
-                stride_dimension_offset=8 * 128,
+                leading_dimension_byte_offset=16,
+                stride_dimension_byte_offset=8 * 128,
                 swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
             ).encode()
             instruction = cl.Tcgen05InstructionDescriptor(
@@ -462,14 +462,14 @@ def tma_tcgen05_kernel(a, b, c):
 
     a_desc = cl.Tcgen05SharedMemoryDescriptor(
         matrix_start_address=p3_to_u64(a_smem.get_base_pointer()),
-        leading_dimension_offset=0,
-        stride_dimension_offset=8 * 128,
+        leading_dimension_byte_offset=16,
+        stride_dimension_byte_offset=8 * 128,
         swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
     ).encode()
     b_desc = cl.Tcgen05SharedMemoryDescriptor(
         matrix_start_address=p3_to_u64(b_smem.get_base_pointer()),
-        leading_dimension_offset=0,
-        stride_dimension_offset=8 * 128,
+        leading_dimension_byte_offset=16,
+        stride_dimension_byte_offset=8 * 128,
         swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
     ).encode()
     instruction = cl.Tcgen05InstructionDescriptor(
@@ -908,16 +908,16 @@ def matmul_multicta_kernel(
                         matrix_start_address=p3_to_u64(
                             a_smem.get_element_pointer((stage, 0))
                         ),
-                        leading_dimension_offset=0,
-                        stride_dimension_offset=8 * 128,
+                        leading_dimension_byte_offset=16,
+                        stride_dimension_byte_offset=8 * 128,
                         swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
                     ).encode()
                     b_desc = cl.Tcgen05SharedMemoryDescriptor(
                         matrix_start_address=p3_to_u64(
                             b_smem.get_element_pointer((stage, 0))
                         ),
-                        leading_dimension_offset=0,
-                        stride_dimension_offset=8 * 128,
+                        leading_dimension_byte_offset=16,
+                        stride_dimension_byte_offset=8 * 128,
                         swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
                     ).encode()
                     for kk in ct.static_iter(range(tile_k // MMA_K)):

@@ -64,8 +64,8 @@ def encode_tcgen05_mxf4_instruction_descriptor():
 def encode_tcgen05_shared_memory_descriptor():
     return cl.Tcgen05SharedMemoryDescriptor(
         matrix_start_address=0x12340,
-        leading_dimension_offset=0x23450,
-        stride_dimension_offset=0x34560,
+        leading_dimension_byte_offset=0x23450,
+        stride_dimension_byte_offset=0x34560,
         base_offset=5,
         leading_dimension_mode=(
             cl.Tcgen05SharedMemoryDescriptor.LeadingDimensionMode.ByteAddressAbsolute
@@ -157,8 +157,8 @@ def test_tcgen05_shared_memory_descriptor_swizzle_encoding(
     def kernel(out):
         descriptor = cl.Tcgen05SharedMemoryDescriptor(
             matrix_start_address=0,
-            leading_dimension_offset=0,
-            stride_dimension_offset=0,
+            leading_dimension_byte_offset=0,
+            stride_dimension_byte_offset=0,
             swizzle_mode=swizzle_mode,
         )
         out[0] = descriptor.encode() >> 61

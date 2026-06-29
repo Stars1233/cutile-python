@@ -23,7 +23,12 @@ def copy_async_bulk_tensor_global_to_shared(
     cta_group=None,
     predicate=None,
 ):
-    """
+    """Initiate a multi-dimensional TMA copy from global to shared memory.
+
+    See the `CUDA Programming Guide's multi-dimensional TMA alignment requirements
+    <https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/async-copies.html#table-alignment-multi-dim-tma>`_
+    for source and destination alignment requirements.
+
     Args:
         src_tensor_map_descriptor (TensorMap | P0):
         src_coordinates (tuple[int, ...]):
@@ -49,7 +54,12 @@ def copy_async_bulk_tensor_shared_to_global(
     mode=TMAStoreMode.TILE,
     predicate=None,
 ):
-    """
+    """Initiate a multi-dimensional TMA copy from shared to global memory.
+
+    See the `CUDA Programming Guide's multi-dimensional TMA alignment requirements
+    <https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/async-copies.html#table-alignment-multi-dim-tma>`_
+    for source and destination alignment requirements.
+
     Args:
         src_memory (P3):
         dst_tensor_map_descriptor (TensorMap | P0):

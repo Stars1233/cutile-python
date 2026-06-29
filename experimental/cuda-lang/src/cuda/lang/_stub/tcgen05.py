@@ -374,13 +374,251 @@ class Tcgen05Mxf4InstructionDescriptor:
 
 @dataclass(frozen=True)
 class Tcgen05SharedMemoryDescriptor:
+    """Describe the shared-memory layout of a matrix operand for tcgen05.
+
+    The encoded descriptor is passed as ``matrix_a`` or ``matrix_b`` to
+    :func:`tcgen05_mma`. Its address, strides, and swizzle mode must describe the
+    same physical layout that was used to populate shared memory.
+
+    How tcgen05 organizes a swizzled matrix
+    ---------------------------------------
+
+    The PTX specification describes tcgen05 layouts using 16-byte *cells*. A
+    *swizzle layout atom* is the smallest rectangular group of cells that repeats
+    to form a matrix in shared memory. The atom shape is part of the tcgen05
+    matrix layout; it is not determined by the TMA tile shape.
+
+    The atom has a *leading dimension* and a *stride dimension*:
+
+    * For a K-major matrix, K is the leading dimension. A row of the atom runs
+      along K, and the stride dimension advances through M for matrix A or N for
+      matrix B.
+    * For an MN-major matrix, M or N is the leading dimension and K is the stride
+      dimension.
+
+    The instruction descriptor's transpose bits select K-major or MN-major. The
+    following atom shapes come from Table 58 of the PTX ISA. Every shape is
+    written as ``M-or-N extent x K extent``; both extents count 16-byte cells,
+    before converting them to the matrix element type. Major-ness specifies
+    which of these two dimensions is the leading dimension, not the order in
+    which the shape is printed.
+
+    .. list-table:: tcgen05 swizzle atom shapes
+       :header-rows: 1
+
+       * - Swizzle mode
+         - K-major atom (M/N x K)
+         - MN-major atom (M/N x K)
+         - Atom bytes
+       * - 128B, 16B atomicity
+         - ``8 x 8``
+         - ``8 x 8``
+         - 1024
+       * - 128B, 32B atomicity
+         - unsupported
+         - ``8 x 4``
+         - 512
+       * - 64B, 16B atomicity
+         - ``8 x 4``
+         - ``4 x 8``
+         - 512
+       * - 32B, 16B atomicity
+         - ``8 x 2``
+         - ``2 x 8``
+         - 256
+       * - no swizzle
+         - ``8 x 1``
+         - ``1 x 8``
+         - 128
+
+    In the table, the K-major Swizzle 128B atom shape ``8 x 8`` means eight matrix
+    rows with eight 16-byte cells in each row. Converting that shape to bytes
+    gives::
+
+        bytes per row = 8 cells * 16 bytes = 128 bytes
+        bytes per atom = 8 rows * 128 bytes = 1024 bytes
+
+    The swizzle permutes the cells within this 1024-byte region; it does not
+    change the region's total size.
+
+    The same calculation applies to the other K-major modes. A 64B atom is eight
+    rows by four cells, or ``8 * 64 = 512`` bytes. A 32B atom is eight rows by two
+    cells, or ``8 * 32 = 256`` bytes. Without swizzling, the atom is eight rows by
+    one cell, or ``8 * 16 = 128`` bytes.
+
+    For element types smaller than 16 bytes, expand the atom along its leading
+    dimension. One 16-byte cell holds eight BF16 values, for example. The K-major
+    BF16 atom shapes for 128B, 64B, and 32B swizzling are therefore respectively
+    ``8 x 64``, ``8 x 32``, and ``8 x 16`` elements, where the first number is
+    the number of M or N rows and the second number is the K extent.
+
+    In a K-major descriptor, ``stride_dimension_byte_offset`` is the byte
+    distance from the first group of eight rows to the next group of eight rows.
+    When atoms are stored consecutively, this is the atom size: 1024 bytes for
+    128B swizzling, 512 bytes for 64B swizzling, and 256 bytes for 32B
+    swizzling.
+
+    TMA swizzling and tcgen05 layout are separate requirements. A TMA tensor map
+    controls how a copy permutes addresses in shared memory. A tcgen05 shared-
+    memory descriptor controls how MMA interprets those addresses as a matrix.
+    Using the same :class:`SwizzleMode` in both descriptors is necessary, but it
+    does not by itself make their layouts compatible.
+
+    For example, in a K-major tensor map, descriptor axis zero is K. TMA permits
+    a 128B-swizzled BF16 tile with a K extent of 32, meaning
+    ``tile_shape[0] == 32``. One tile row is then only ``32 * 2 = 64`` bytes,
+    which is within TMA's 128-byte limit. That tile is not a complete K-major
+    tcgen05 atom row. The table above requires 64 BF16 values, or 128 bytes, per
+    row. To feed tcgen05 directly, the TMA tile axes must therefore arrange eight
+    such rows into each 1024-byte atom.
+
+    For the authoritative definitions and diagrams, see:
+
+    * `PTX ISA: tcgen05 shared-memory layout and swizzling
+      <https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-shared-memory-layout-and-swizzling>`_
+      for atom shapes, major-ness, element-size conversion, and examples.
+    * `PTX ISA: tensor swizzling modes
+      <https://docs.nvidia.com/cuda/parallel-thread-execution/#swizzling-modes>`_
+      for the address permutations produced by TMA, supported atomicities, and
+      repeating-pattern alignment.
+
+    Constructing a 128B K-major BF16 operand with TMA
+    --------------------------------------------------
+
+    Suppose a BF16 matrix is K-major: values adjacent along K are adjacent in
+    global memory. The table above requires each shared-memory atom to contain
+    eight rows and 64 K values per row.
+
+    To express this layout, split K into a position within a 64-element segment
+    and a segment number::
+
+        k = 64 * k_outer + k_inner
+
+    Call these coordinates ``K_inner`` and ``K_outer``, respectively. Reshape the
+    global matrix into a three-dimensional view whose axes retain the natural
+    ``(M, K_outer, K_inner)`` order::
+
+        shape   = (M, K // 64, 64)
+        strides = (K, 64, 1)
+
+    This view does not move or copy data. Its strides preserve the original
+    address calculation: element ``(m, k_outer, k_inner)`` is at offset
+    ``m * K + 64 * k_outer + k_inner``. Set ``order=(2, 0, 1)`` to select view
+    axes 2, 0, and 1, producing the permuted descriptor order
+    ``(K_inner, M, K_outer)``::
+
+        a_map = cl.tensor_map_tiled(
+            a_view,
+            (64, BLOCK_M, BLOCK_K // 64),
+            order=(2, 0, 1),
+            swizzle=cl.SwizzleMode.SWIZZLE_128B,
+        )
+
+    Before applying the swizzle permutation, TMA packs the tile in descriptor-
+    axis order. The logical shared-memory byte offset is therefore::
+
+        2 * (k_inner + 64 * (m + BLOCK_M * k_outer))
+
+    The corresponding nesting is ``[K_outer][M][K_inner]``: all M rows for one
+    64-element K segment are contiguous. Because a 128B atom covers eight rows,
+    the shared-memory descriptor uses 1024 bytes as the distance between
+    eight-row groups::
+
+        a_desc = cl.Tcgen05SharedMemoryDescriptor(
+            matrix_start_address=a_smem_addr,
+            leading_dimension_byte_offset=16,
+            stride_dimension_byte_offset=8 * 128,
+            swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
+        ).encode()
+
+    To see why the split and permutation are needed, first consider using the
+    original matrix, whose shape and major-to-minor nesting are ``(M, K)`` and
+    ``[M][K]``. A logical ``(BLOCK_M, BLOCK_K)`` matrix tile would be described
+    as follows::
+
+        a_map = cl.tensor_map_tiled(
+            a,
+            (BLOCK_K, BLOCK_M),  # Descriptor-axis order is (K, M).
+            order=(1, 0),
+            swizzle=cl.SwizzleMode.SWIZZLE_128B,
+        )
+
+    For BF16, ``BLOCK_K <= 64`` satisfies TMA's Swizzle 128B width constraint;
+    other tensor-map restrictions still apply. Tcgen05 imposes the stricter
+    layout requirement that an atom row contain exactly 64 BF16 values:
+
+    * ``BLOCK_K < 64`` may be valid for TMA but does not fill a tcgen05 atom row.
+    * ``BLOCK_K == 64`` fills one 128-byte tcgen05 atom row.
+    * ``BLOCK_K > 64`` is not valid as one TMA tile row with Swizzle 128B.
+
+    If a wider K tile is copied as multiple 64-element segments while retaining
+    the natural ``[M][K]`` nesting, the segments remain grouped by matrix row.
+    For a tile with two K segments, shared memory would contain::
+
+        Byte range       Matrix data
+        0    .. 127      row 0, K segment 0    [atom row 0, 128B]
+        128  .. 255      row 0, K segment 1    [atom row 1, 128B]
+        256  .. 383      row 1, K segment 0    [atom row 2, 128B]
+        384  .. 511      row 1, K segment 1    [atom row 3, 128B]
+
+    The K values from matrix row 0 are therefore split across atom rows 0 and 1.
+    A K-major Swizzle 128B atom has a different interpretation: its eight atom
+    rows represent eight consecutive M rows at the same K segment.
+
+    Splitting the view into ``(M, K_outer, K_inner)`` and applying
+    ``order=(2, 0, 1)`` changes the major-to-minor nesting to
+    ``[K_outer][M][K_inner]``. Shared memory then contains::
+
+        Byte range       Matrix data
+        0    .. 127      row 0, K segment 0    [atom row 0, 128B]
+        128  .. 255      row 1, K segment 0    [atom row 1, 128B]
+        ...
+        896  .. 1023     row 7, K segment 0    [atom row 7, 128B]
+        1024 .. 1151     row 8, K segment 0    [next atom, row 0, 128B]
+
+    Each matrix row's 64 ``K_inner`` values remain contiguous within one atom
+    row, while eight consecutive M rows at the same ``K_outer`` fill one complete
+    atom. This is the K-major Swizzle 128B layout consumed by tcgen05.
+
+    Compatibility invariant
+    -----------------------
+
+    A TMA-produced shared-memory layout can be consumed by tcgen05 when every
+    region that tcgen05 interprets as one swizzle atom contains exactly the
+    logical matrix coordinates specified by the PTX atom shape. To preserve this
+    invariant for any supported swizzle mode, major-ness, and element type:
+
+    * Use the same :class:`SwizzleMode` for the TMA tensor map and the
+      :class:`Tcgen05SharedMemoryDescriptor`.
+    * Convert the PTX atom shape from 16-byte cells to the operand's element
+      extents. The resulting layout must contain complete atom rows.
+    * Factor the logical tile into an outer grid of complete atoms. For a K-major
+      ``BLOCK_M x BLOCK_K`` tile, its conceptual major-to-minor shape is::
+
+          [BLOCK_K // atom_row_size][BLOCK_M // 8][8][atom_row_size]
+
+      Here, ``atom_row_size`` is the number of operand elements in one complete
+      atom row (for example, 64 BF16 elements for Swizzle 128B). The innermost
+      ``[8][atom_row_size]`` region is one atom. ``BLOCK_M // 8`` enumerates
+      eight-row groups within a K segment, and ``BLOCK_K // atom_row_size``
+      enumerates the K segments. The tensor-map descriptor axes, listed
+      minor-to-major, must produce this nesting. For MN-major, use the
+      corresponding MN-major atom extents from the table above, with M or N as
+      the fastest-moving dimension.
+    * Set the shared-memory descriptor's start address, base offset, and strides
+      to the same atom boundaries populated by TMA.
+
+    When these conditions hold, TMA's physical address permutation and tcgen05's
+    interpretation of that permutation describe the same shared-memory layout.
+    """
+
     class LeadingDimensionMode(IntEnum):
         ByteOffsetRelative = 0
         ByteAddressAbsolute = 1
 
     matrix_start_address: int
-    leading_dimension_offset: int
-    stride_dimension_offset: int
+    leading_dimension_byte_offset: int
+    stride_dimension_byte_offset: int
     base_offset: int = 0
     leading_dimension_mode: LeadingDimensionMode = (
         LeadingDimensionMode.ByteOffsetRelative

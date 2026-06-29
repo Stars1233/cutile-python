@@ -112,6 +112,7 @@ from .type_checking_helpers import (
     require_clusterlaunchcontrol_token_type,
     is_none,
     require_tensor_map_ty,
+    validate_tensor_map_load_mode,
 )
 
 from .type import (
@@ -139,7 +140,7 @@ from .ir import (
 )
 from .._stub.cluster_launch_control import clusterlaunchcontrol_try_cancel, \
     clusterlaunchcontrol_is_canceled, clusterlaunchcontrol_get_first_block_index
-from .._enums import SwizzleMode
+from .._enums import SwizzleMode, TMALoadMode
 from .._stub.mbarrier import MbarrierScope
 from .._stub import (
     foreign_function,
@@ -850,6 +851,7 @@ def shfl_sync_xor_impl(value: Var, lane_mask: Var, width: Var, mask: Var) -> Var
 
 
 @impl(getattr, overload=(TensorMapTy, "as_opaque_ptr"))
+@impl(getattr, overload=(TensorMapTy, "get_transaction_bytes"))
 def getattr_tensor_map_method(object: Var, name: Var):
     name = require_constant_str(name)
     unbound_func = getattr(tensor_map.TensorMap, name)
@@ -874,12 +876,37 @@ def tensor_map_tiled_impl(array: Var, tile_shape: Var, order: Var, swizzle: Var)
     swizzle = require_constant_enum(swizzle, SwizzleMode)
     data_type = dtype_to_tensor_map_type(array_ty.dtype)
     map_ty = TensorMapTy(data_type=data_type,
+                         element_bitwidth=array_ty.dtype.bitwidth,
                          tile_shape=tile_shape,
                          swizzle=swizzle)
     return add_operation(CreateTensorMap, map_ty,
                          base_ptr=array_val.base_ptr,
                          array_shape=tuple(array_val.shape[i] for i in order),
                          array_strides=tuple(array_val.strides[i] for i in order))
+
+
+@impl(tensor_map.TensorMap.get_transaction_bytes)
+def tensor_map_get_transaction_bytes_impl(self: Var, mode: Var):
+    map_ty = require_tensor_map_ty(self)
+    mode = require_constant_enum(mode, TMALoadMode)
+
+    if map_ty.element_bitwidth % 8 != 0:
+        raise TypeCheckingError(
+            "Transaction-byte computation does not support sub-byte tensor maps"
+        )
+
+    match mode:
+        case TMALoadMode.TILE:
+            element_count = math.prod(map_ty.tile_shape)
+        case TMALoadMode.TILE_GATHER4:
+            validate_tensor_map_load_mode(map_ty, mode)
+            element_count = 4 * map_ty.tile_shape[0]
+        case _:
+            raise TypeCheckingError(
+                f"Cannot compute {mode.name} transaction bytes from a tiled tensor map"
+            )
+
+    return loosely_typed_const(element_count * map_ty.element_bitwidth // 8)
 
 
 @impl(tensor_map.TensorMap.as_opaque_ptr)
@@ -930,8 +957,8 @@ def tcgen05_shared_memory_descriptor_encode_impl(self: Var) -> Var:
     value = strictly_typed_const(0, uint64_ty)
     for field_name in (
         "matrix_start_address",
-        "leading_dimension_offset",
-        "stride_dimension_offset",
+        "leading_dimension_byte_offset",
+        "stride_dimension_byte_offset",
     ):
         c_0x3ffff = strictly_typed_const(0x3FFFF, uint64_ty)
         c_4 = strictly_typed_const(4, uint64_ty)

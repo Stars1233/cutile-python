@@ -14,7 +14,7 @@ import cuda.lang._mlir as mlir
 
 
 @singledispatch
-def cl_enum_to_mlir_attribute(enum_value):
+def cl_enum_to_mlir_attribute(enum_value) -> mlir.Attribute:
     raise NotImplementedError(
         f"Enum of type {type(enum_value)} does not have a registered "
         "function to build an MLIR attribute from it"

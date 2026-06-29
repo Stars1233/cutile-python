@@ -2,95 +2,233 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
 import torch
 
 import cuda.lang as cl
-from .util import require_hopper_or_newer
+from cuda.lang._exception import TypeCheckingError
+
+from .util import get_ir, make_symbolic_tensor, require_hopper_or_newer
+
+
+def _build_ir(kernel):
+    return get_ir(kernel, [make_symbolic_tensor((1, 1), cl.int32)])
+
+
+def _make_expected_tile(x, row, column, tile_height, tile_width):
+    expected = torch.zeros((tile_height, tile_width), dtype=x.dtype, device=x.device)
+    source = x[row:row + tile_height, column:column + tile_width]
+    expected[:source.shape[0], :source.shape[1]] = source
+    return expected
 
 
 @require_hopper_or_newer()
-def test_mbar_manager():
-    @cl.kernel()
-    def kernel(x, y, i, j, H: cl.Constant[int], W: cl.Constant[int]):
-        x_tm = cl.tensor_map_tiled(x, (W, H), order="F")
-        mbar = cl.shared_array(
-            shape=(), dtype=cl.mbarrier, alignment=8
-        ).get_base_pointer()
-        smem = cl.shared_array(shape=(W * H,), dtype=cl.int32, alignment=512)
+@pytest.mark.parametrize(
+    "row,column",
+    (
+        pytest.param(0, 0, id="in_bounds"),
+        pytest.param(1, 12, id="offset_in_bounds"),
+        pytest.param(20, 44, id="partial_oob"),
+    ),
+)
+def test_transaction_bytes_with_oob_fill(row, column):
+    tma_alignment = 128
+    mbarrier_alignment = 8
+    poll_delay_ns = 10_000
+
+    @cl.kernel
+    def kernel(x, y, row, column, tile_height: cl.Constant[int], tile_width: cl.Constant[int]):
+        tensor_map = cl.tensor_map_tiled(x, (tile_width, tile_height), order="F")
+        smem = cl.shared_array(tile_width * tile_height, cl.int32, alignment=tma_alignment)
+        mbar = cl.shared_array(1, cl.mbarrier, alignment=mbarrier_alignment).get_base_pointer()
 
         if cl.thread_index(0) == 0:
             cl.mbarrier_initialize(mbar, cl.thread_count(0))
+            cl.fence_mbarrier_initialize()
 
         cl.barrier_sync_block()
         if cl.elect_sync():
             cl.copy_async_bulk_tensor_global_to_shared(
-                x_tm, (j, i), smem.get_base_pointer(), mbar
+                tensor_map, (column, row), smem.get_base_pointer(), mbar
             )
-            tok = cl.mbarrier_arrive_expect_transaction(mbar, W * H * 4)
+            token = cl.mbarrier_arrive_expect_transaction(mbar, tensor_map.get_transaction_bytes())
         else:
-            tok = cl.mbarrier_arrive(mbar)
+            token = cl.mbarrier_arrive(mbar)
 
-        while not cl.mbarrier_try_wait(mbar, tok, time_hint=10_000):
-            pass
+        while not cl.mbarrier_try_wait(mbar, token):
+            cl.nanosleep(poll_delay_ns)
 
-        y[cl.thread_index(0)] = smem[cl.thread_index(0)]
+        index = cl.thread_index(0)
+        y[index] = smem[index]
 
-    x = (
-        torch.arange(37 * 48, dtype=torch.int32, device="cuda")
-        .reshape((37, 48))
-        .contiguous()
+    x = torch.arange(37 * 48, dtype=torch.int32, device="cuda").reshape(37, 48)
+    tile_height, tile_width = 32, 8
+    y = torch.empty(tile_height * tile_width, dtype=x.dtype, device=x.device)
+    cl.launch(
+        torch.cuda.current_stream(),
+        (1,),
+        (tile_height * tile_width,),
+        kernel,
+        (x, y, row, column, tile_height, tile_width),
     )
-    H, W = 32, 8
 
-    for i, j in [(0, 0), (1, 12)]:
-        y = torch.zeros(256, dtype=torch.int32, device="cuda")
-        cl.launch(torch.cuda.current_stream(), (1,), (256,), kernel, (x, y, i, j, H, W))
-        y = y.reshape((H, W))
-        ref = x[i:i + H, j:j + W]
-        torch.testing.assert_close(y, ref)
+    expected = _make_expected_tile(x, row, column, tile_height, tile_width)
+    torch.testing.assert_close(y.reshape(tile_height, tile_width), expected)
 
 
 @require_hopper_or_newer()
-def test_tensor_map_tiled():
+def test_transaction_bytes_with_multicast():
+    tma_alignment = 128
+    mbarrier_alignment = 8
+    poll_delay_ns = 10_000
+    multicast_cta_count = 2
+    multicast_mask = (1 << multicast_cta_count) - 1
+
     @cl.kernel
-    def kern(x, y, i, j, H: cl.Constant[int], W: cl.Constant[int]):
-        barrier = cl.shared_array(shape=(), dtype=cl.mbarrier, alignment=8)
-        smem = cl.shared_array(shape=(W * H,), dtype=cl.int32, alignment=512)
-        x_tm = cl.tensor_map_tiled(x, (W, H), order="F")
+    def kernel(x, y, tile_height: cl.Constant[int], tile_width: cl.Constant[int]):
+        rank = cl.block_in_cluster_index(0)
+        tensor_map = cl.tensor_map_tiled(x, (tile_width, tile_height), order="F")
+        smem = cl.shared_array(tile_width * tile_height, cl.int32, alignment=tma_alignment)
+        mbar = cl.shared_array(1, cl.mbarrier, alignment=mbarrier_alignment).get_base_pointer()
 
         if cl.thread_index(0) == 0:
-            cl.mbarrier_initialize(barrier.get_base_pointer(), cl.thread_count(0))
+            cl.mbarrier_initialize(mbar, cl.thread_count(0))
+            cl.fence_mbarrier_initialize()
+
+        cl.barrier_sync_block()
+        cl.barrier_sync_cluster()
+
+        # Each destination CTA establishes its expected transaction count
+        # before rank 0 initiates the multicast load.
+        if cl.elect_sync():
+            token = cl.mbarrier_arrive_expect_transaction(mbar, tensor_map.get_transaction_bytes())
+        else:
+            token = cl.mbarrier_arrive(mbar)
+
+        cl.barrier_sync_cluster()
+        if rank == 0 and cl.elect_sync():
+            destination = cl.map_shared_to_cluster(smem.get_base_pointer(), 0)
+            cl.copy_async_bulk_tensor_global_to_shared(
+                tensor_map,
+                (0, 0),
+                destination,
+                mbar,
+                multicast_mask=multicast_mask,
+            )
+
+        while not cl.mbarrier_try_wait(mbar, token):
+            cl.nanosleep(poll_delay_ns)
+
+        index = cl.thread_index(0)
+        y[rank, index] = smem[index]
+
+    tile_height, tile_width = 32, 8
+    x = torch.arange(tile_height * tile_width, dtype=torch.int32, device="cuda").reshape(
+        tile_height, tile_width
+    )
+    y = torch.empty(
+        (multicast_cta_count, tile_height * tile_width),
+        dtype=x.dtype,
+        device=x.device,
+    )
+    cl.launch(
+        torch.cuda.current_stream(),
+        (multicast_cta_count,),
+        (tile_height * tile_width,),
+        kernel,
+        (x, y, tile_height, tile_width),
+        block_in_cluster_count=(multicast_cta_count, 1, 1),
+    )
+
+    expected = x.reshape(1, -1).broadcast_to(multicast_cta_count, -1)
+    torch.testing.assert_close(y, expected)
+
+
+@require_hopper_or_newer()
+def test_transaction_bytes_with_128b_swizzle():
+    tma_alignment = 128
+    mbarrier_alignment = 8
+    poll_delay_ns = 10_000
+    block_size = 32
+
+    @cl.kernel
+    def kernel(x, y, tile_height: cl.Constant[int], tile_width: cl.Constant[int]):
+        src_map = cl.tensor_map_tiled(
+            x, (tile_width, tile_height), order="F", swizzle=cl.SwizzleMode.SWIZZLE_128B
+        )
+        dst_map = cl.tensor_map_tiled(
+            y, (tile_width, tile_height), order="F", swizzle=cl.SwizzleMode.SWIZZLE_128B
+        )
+        smem = cl.shared_array(tile_width * tile_height, cl.int32, alignment=tma_alignment)
+        mbar = cl.shared_array(1, cl.mbarrier, alignment=mbarrier_alignment).get_base_pointer()
+
+        if cl.thread_index(0) == 0:
+            cl.mbarrier_initialize(mbar, cl.thread_count(0))
+            cl.fence_mbarrier_initialize()
 
         cl.barrier_sync_block()
         if cl.elect_sync():
             cl.copy_async_bulk_tensor_global_to_shared(
-                x_tm,
-                (j, i),
-                smem.get_base_pointer(),
-                barrier.get_base_pointer(),
+                src_map, (0, 0), smem.get_base_pointer(), mbar
             )
-            tok = cl.mbarrier_arrive_expect_transaction(
-                barrier.get_base_pointer(), W * H * 4
-            )
+
+            token = cl.mbarrier_arrive_expect_transaction(mbar, src_map.get_transaction_bytes())
         else:
-            tok = cl.mbarrier_arrive(barrier.get_base_pointer())
+            token = cl.mbarrier_arrive(mbar)
 
-        while not cl.mbarrier_try_wait(barrier.get_base_pointer(), tok):
-            # TODO: back off (see __cccl_thread_poll_with_backoff in CUDA C++ stdlib)
-            cl._nvvm.nanosleep(10000)
+        while not cl.mbarrier_try_wait(mbar, token):
+            cl.nanosleep(poll_delay_ns)
 
-        y[cl.thread_index(0)] = smem[cl.thread_index(0)]
+        # A matching TMA store consumes the swizzled shared-memory layout
+        # without assuming that it is linearly addressable by threads.
+        if cl.elect_sync():
+            cl.copy_async_bulk_tensor_shared_to_global(smem.get_base_pointer(), dst_map, (0, 0))
+            cl.copy_async_bulk_commit_group()
+            cl.copy_async_bulk_wait_group(0)
 
-    x = (
-        torch.arange(37 * 48, dtype=torch.int32, device="cuda")
-        .reshape((37, 48))
-        .contiguous()
+    tile_height, tile_width = 8, 32
+    x = torch.arange(tile_height * tile_width, dtype=torch.int32, device="cuda").reshape(
+        tile_height, tile_width
     )
-    H, W = 32, 8
+    y = torch.empty_like(x)
+    cl.launch(
+        torch.cuda.current_stream(),
+        (1,),
+        (block_size,),
+        kernel,
+        (x, y, tile_height, tile_width),
+    )
 
-    for i, j in [(0, 0), (1, 12)]:
-        y = torch.zeros(256, dtype=torch.int32, device="cuda")
-        cl.launch(torch.cuda.current_stream(), (1,), (256,), kern, (x, y, i, j, H, W))
-        y = y.reshape((H, W))
-        ref = x[i:i + H, j:j + W]
-        torch.testing.assert_close(y, ref)
+    torch.testing.assert_close(y, x)
+
+
+@pytest.mark.parametrize(
+    "mode",
+    (
+        cl.TMALoadMode.IM2COL,
+        cl.TMALoadMode.IM2COL_W,
+        cl.TMALoadMode.IM2COL_W_128,
+    ),
+)
+def test_tiled_map_rejects_im2col_transaction_byte_computation(mode):
+    def kernel(x):
+        tensor_map = cl.tensor_map_tiled(x, (7, 3), order="F")
+        x[0, 0] = tensor_map.get_transaction_bytes(mode=mode)
+
+    with pytest.raises(
+        TypeCheckingError,
+        match=rf"^Cannot compute {mode.name} transaction bytes from a tiled tensor map",
+    ):
+        _build_ir(kernel)
+
+
+def test_invalid_gather4_map_is_rejected():
+    def kernel(x):
+        tensor_map = cl.tensor_map_tiled(x, (7, 2), order="F")
+        x[0, 0] = tensor_map.get_transaction_bytes(mode=cl.TMALoadMode.TILE_GATHER4)
+
+    with pytest.raises(
+        TypeCheckingError,
+        match=r"^TILE_GATHER4 requires a rank-2 tensor map with tile_shape\[1\] == 1",
+    ):
+        _build_ir(kernel)
