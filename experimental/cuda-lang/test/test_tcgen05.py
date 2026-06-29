@@ -7,7 +7,7 @@ import pytest
 import cuda.lang as cl
 from cuda.lang._compile import KernelSignature, get_compute_capability
 from cuda.lang._exception import TileTypeError, TileValueError
-from test.util import make_symbolic_tensor
+from test.util import make_symbolic_tensor, compile_kernel
 
 
 cc = get_compute_capability()
@@ -268,28 +268,37 @@ def test_mma_matrix_a_validation():
 
 
 @pytest.mark.parametrize(
-    "kind,expect",
+    "op,expect",
     (
-        (cl.Tcgen05WaitKind.LOAD, "tcgen05.wait::ld.sync.aligned"),
-        (cl.Tcgen05WaitKind.STORE, "tcgen05.wait::st.sync.aligned"),
+        (cl.tcgen05_wait_load, "tcgen05.wait::ld.sync.aligned"),
+        (cl.tcgen05_wait_store, "tcgen05.wait::st.sync.aligned"),
     ),
 )
-def test_wait(kind, expect):
-    @cl.kernel
+def test_wait(op, expect):
     def kernel():
-        cl.tcgen05_wait(kind)
+        op()
 
-    compiled = cl.compile_simt(kernel, [KernelSignature([])], log_ptx=True)
-    assert expect in compiled.ptx, compiled.ptx
+    compile_kernel(kernel, assert_in_ptx=expect)
 
 
-def test_wait_bad_kind():
-    @cl.kernel
+@pytest.mark.parametrize(
+    "op,expect",
+    (
+        (
+            cl.tcgen05_fence_before_thread_sync,
+            "tcgen05.fence::before_thread_sync",
+        ),
+        (
+            cl.tcgen05_fence_after_thread_sync,
+            "tcgen05.fence::after_thread_sync",
+        ),
+    ),
+)
+def test_fence(op, expect):
     def kernel():
-        cl.tcgen05_wait(0xDEADBEEF)
+        op()
 
-    with pytest.raises(Exception):
-        cl.compile_simt(kernel, [KernelSignature([])], log_ptx=True)
+    compile_kernel(kernel, assert_in_ptx=expect)
 
 
 @pytest.mark.parametrize(

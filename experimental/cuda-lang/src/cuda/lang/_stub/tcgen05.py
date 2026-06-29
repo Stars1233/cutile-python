@@ -16,18 +16,36 @@ from .._enums import (
     Tcgen05MMAKind,
     Tcgen05MMACollectorOp,
     Tcgen05LdStShape,
-    Tcgen05WaitKind,
 )
 from cuda.tile import static_assert
 
 
 @function
-def tcgen05_wait(for_operation_kind: Tcgen05WaitKind) -> None:
-    static_assert(for_operation_kind in (Tcgen05WaitKind.LOAD, Tcgen05WaitKind.STORE))
-    if for_operation_kind == Tcgen05WaitKind.LOAD:
-        _nvvm.tcgen05_wait_ld()
-    else:
-        _nvvm.tcgen05_wait_st()
+def tcgen05_wait_load() -> None:
+    _nvvm.tcgen05_wait_ld()
+
+
+@function
+def tcgen05_wait_store() -> None:
+    _nvvm.tcgen05_wait_st()
+
+
+@function
+def tcgen05_fence_before_thread_sync() -> None:
+    """
+    Orders all prior async tcgen05 operations with respect to the subsequent
+    tcgen05 and execution ordering operations
+    """
+    _nvvm.tcgen05_fence_before_thread_sync()
+
+
+@function
+def tcgen05_fence_after_thread_sync() -> None:
+    """
+    Orders all subsequent async tcgen05 operations with respect to the prior
+    tcgen05 and execution ordering operations
+    """
+    _nvvm.tcgen05_fence_after_thread_sync()
 
 
 @function
@@ -341,7 +359,6 @@ def tcgen05_mma(
 __all__ = (
     "CTAGroup",
     "Tcgen05MMAKind",
-    "Tcgen05WaitKind",
     "Tcgen05MMACollectorOp",
     "Tcgen05LdStShape",
     "Tcgen05InstructionDescriptor",
@@ -353,7 +370,10 @@ __all__ = (
     "tcgen05_commit",
     "tcgen05_ld",
     "tcgen05_mma",
-    "tcgen05_wait",
+    "tcgen05_wait_load",
+    "tcgen05_wait_store",
+    "tcgen05_fence_before_thread_sync",
+    "tcgen05_fence_after_thread_sync",
     "tcgen05_shift_down",
     "tcgen05_relinquish_allocation_permit",
 )
