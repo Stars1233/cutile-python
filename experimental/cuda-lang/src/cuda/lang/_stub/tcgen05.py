@@ -6,13 +6,14 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any, Literal
 
-from .._datatype import uint32, uint64
+from .._datatype import uint32
 from cuda.lang._execution import stub, function
-from .._enums import CTAGroup
-from .bits import set_bit32, set_bit64, set_bits32, set_bits64
+from .bits import set_bit32, set_bits32
 from .nvvm import P3, P6
 from . import nvvm as _nvvm
 from .._enums import (
+    CTAGroup,
+    SwizzleMode,
     Tcgen05MMAKind,
     Tcgen05MMACollectorOp,
     Tcgen05LdStShape,
@@ -325,30 +326,16 @@ class Tcgen05SharedMemoryDescriptor:
         ByteOffsetRelative = 0
         ByteAddressAbsolute = 1
 
-    class SwizzleMode(IntEnum):
-        NoSwizzling = 0
-        Swizzle128B32BAtomic = 1
-        Swizzle128B = 2
-        Swizzle64B = 4
-        Swizzle32B = 6
-
     matrix_start_address: int
     leading_dim_offset: int
     stride_dim_offset: int
     base_offset: int = 0
     leading_dim_mode: LeadingDimMode = LeadingDimMode.ByteOffsetRelative
-    swizzle_mode: SwizzleMode = SwizzleMode.NoSwizzling
+    swizzle_mode: SwizzleMode = SwizzleMode.SWIZZLE_NONE
 
+    @stub
     def encode(self) -> int:
-        desc = uint64(0x0000_0000_0000_0000)
-        desc = set_bits64(desc, (self.matrix_start_address & 0x3FFFF) >> 4, 0, 14)
-        desc = set_bits64(desc, (self.leading_dim_offset & 0x3FFFF) >> 4, 16, 14)
-        desc = set_bits64(desc, (self.stride_dim_offset & 0x3FFFF) >> 4, 32, 14)
-        desc = set_bits64(desc, 0b001, 46, 3)
-        desc = set_bits64(desc, self.base_offset, 49, 3)
-        desc = set_bit64(desc, 52, self.leading_dim_mode)
-        desc = set_bits64(desc, self.swizzle_mode, 61, 3)
-        return desc
+        ...
 
 
 @stub

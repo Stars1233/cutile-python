@@ -7,8 +7,8 @@ from cuda.tile import _cext
 from cuda.tile._memory_model import MemorySpace, MemoryScope, MemoryOrder
 
 
-class TensorMapSwizzle(Enum):
-    """Swizzle modes for tiled tensor map descriptors."""
+class SwizzleMode(Enum):
+    """Shared-memory swizzle modes for tensor operations."""
 
     SWIZZLE_NONE = _cext.CU_TENSOR_MAP_SWIZZLE_NONE
     SWIZZLE_32B = _cext.CU_TENSOR_MAP_SWIZZLE_32B
@@ -98,7 +98,7 @@ __all__ = (
     "MemorySpace",
     "MemoryScope",
     "MemoryOrder",
-    "TensorMapSwizzle",
+    "SwizzleMode",
     "MbarrierScope",
     "TMALoadMode",
     "TMAStoreMode",

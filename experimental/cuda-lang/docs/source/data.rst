@@ -167,7 +167,7 @@ low-level TMA intrinsics.
 
 Create a tensor map from a global :class:`Array` with :func:`tensor_map_tiled`.
 The array must be a kernel parameter so the tensor map descriptor can be encoded
-for launch. The tile shape and :class:`TensorMapSwizzle` are compile-time
+for launch. The tile shape and :class:`SwizzleMode` are compile-time
 constants.
 
 Only tiled tensor map mode is supported today. Other TMA descriptor modes are

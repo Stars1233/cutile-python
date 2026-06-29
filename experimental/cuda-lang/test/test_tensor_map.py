@@ -12,8 +12,10 @@ from .util import require_hopper_or_newer
 def test_mbar_manager():
     @cl.kernel()
     def kernel(x, y, i, j, H: cl.Constant[int], W: cl.Constant[int]):
-        x_tm = cl.tensor_map_tiled(x, (W, H), order='F')
-        mbar = cl.shared_array(shape=(), dtype=cl.mbarrier, alignment=8).get_base_pointer()
+        x_tm = cl.tensor_map_tiled(x, (W, H), order="F")
+        mbar = cl.shared_array(
+            shape=(), dtype=cl.mbarrier, alignment=8
+        ).get_base_pointer()
         smem = cl.shared_array(shape=(W * H,), dtype=cl.int32, alignment=512)
 
         if cl.thread_index(0) == 0:

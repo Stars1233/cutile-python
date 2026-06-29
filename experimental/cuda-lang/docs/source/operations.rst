@@ -157,7 +157,7 @@ TensorMap
    :nosignatures:
    :template: autosummary/class_no_init.rst
 
-    TensorMapSwizzle
+    SwizzleMode
 
 
 Synchronization

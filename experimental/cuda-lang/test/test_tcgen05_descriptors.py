@@ -68,7 +68,7 @@ def encode_tcgen05_shared_memory_descriptor():
         stride_dim_offset=0x34560,
         base_offset=5,
         leading_dim_mode=cl.Tcgen05SharedMemoryDescriptor.LeadingDimMode.ByteAddressAbsolute,
-        swizzle_mode=cl.Tcgen05SharedMemoryDescriptor.SwizzleMode.Swizzle128B,
+        swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
     ).encode()
 
 
@@ -136,3 +136,31 @@ def test_tcgen05_instruction_descriptor_encode_on_gpu(encode_descriptor, expecte
     out = torch.zeros(1, dtype=torch.int64, device="cuda")
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (out,))
     assert out.cpu().item() == expected
+
+
+@pytest.mark.parametrize(
+    "swizzle_mode,expected_encoding",
+    (
+        (cl.SwizzleMode.SWIZZLE_NONE, 0),
+        (cl.SwizzleMode.SWIZZLE_128B_ATOM_32B, 1),
+        (cl.SwizzleMode.SWIZZLE_128B, 2),
+        (cl.SwizzleMode.SWIZZLE_64B, 4),
+        (cl.SwizzleMode.SWIZZLE_32B, 6),
+    ),
+)
+def test_tcgen05_shared_memory_descriptor_swizzle_encoding(
+    swizzle_mode, expected_encoding
+):
+    @cl.kernel
+    def kernel(out):
+        descriptor = cl.Tcgen05SharedMemoryDescriptor(
+            matrix_start_address=0,
+            leading_dim_offset=0,
+            stride_dim_offset=0,
+            swizzle_mode=swizzle_mode,
+        )
+        out[0] = descriptor.encode() >> 61
+
+    out = torch.zeros(1, dtype=torch.int64, device="cuda")
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (out,))
+    assert out.cpu().item() == expected_encoding

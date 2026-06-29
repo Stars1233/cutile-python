@@ -97,7 +97,7 @@ from cuda.lang._stub import libdevice as _libdevice  # noqa: F401
 from cuda.lang._stub import nvvm as _nvvm  # noqa: F401
 
 from cuda.lang._stub.tensor_map import (
-    TensorMapSwizzle,
+    SwizzleMode,
     TensorMap,
     tensor_map_tiled,
 )
@@ -257,7 +257,7 @@ __all__ = (
     "fence_proxy_acquire",
     "fence_proxy_release",
     "compile_simt",
-    "TensorMapSwizzle",
+    "SwizzleMode",
     "TensorMap",
     "tensor_map_tiled",
     "CTAGroup",

@@ -19,13 +19,15 @@ from cuda.tile._ir.op_impl import (
     require_constant_axis_order,
     ImplRegistry,
 )
-from cuda.tile._ir.type import TensorLikeTy
+from cuda.tile._ir.type import DataclassValue, TensorLikeTy
 from cuda.tile._ir.core_ops import (
     TypedConst, core_impl_registry,
 )
 from cuda.tile._ir.arithmetic_ops import (
     binary_arithmetic_tensorlike,
     binary_arithmetic_tensorlike_raw,
+    binary_bitwise_tensorlike,
+    bitwise_shift_tensorlike,
     RawBinaryArithmeticOperation,
     RawComparisonOperation,
     RawBinaryBitwiseOperation,
@@ -69,7 +71,7 @@ from cuda.tile._ir.control_flow_ops import (
     MakeDummy,
 )
 from cuda.tile._ir.ir import MemoryEffect, make_aggregate, add_operation_variadic
-from cuda.lang._exception import TileCompilerError, TileTypeError
+from cuda.lang._exception import TileCompilerError, TileTypeError, TileValueError
 import cuda.lang._datatype as datatype
 from cuda.tile._datatype import (
     is_pointer_dtype,
@@ -137,9 +139,15 @@ from .ir import (
 )
 from .._stub.cluster_launch_control import clusterlaunchcontrol_try_cancel, \
     clusterlaunchcontrol_is_canceled, clusterlaunchcontrol_get_first_block_index
-from .._stub.tensor_map import TensorMapSwizzle
+from .._enums import SwizzleMode
 from .._stub.mbarrier import MbarrierScope
-from .._stub import foreign_function, core_api, mbarrier as mbarrier_stub, tensor_map
+from .._stub import (
+    foreign_function,
+    core_api,
+    mbarrier as mbarrier_stub,
+    tcgen05 as tcgen05_stub,
+    tensor_map,
+)
 from cuda.tile._ir import hir_stubs
 
 from .op_impl.tcgen05_impl import tcgen05_impl_registry
@@ -855,7 +863,7 @@ def tensor_map_tiled_impl(array: Var, tile_shape: Var, order: Var, swizzle: Var)
 
     tile_shape = require_constant_int_tuple(tile_shape, allow_single_int=True)
     order = require_constant_axis_order(order, array_ty.ndim)
-    swizzle = require_constant_enum(swizzle, TensorMapSwizzle)
+    swizzle = require_constant_enum(swizzle, SwizzleMode)
     data_type = dtype_to_tensor_map_type(array_ty.dtype)
     map_ty = TensorMapTy(data_type=data_type,
                          tile_shape=tile_shape,
@@ -871,6 +879,69 @@ def tensor_map_as_opaque_ptr_impl(self: Var):
     require_tensor_map_ty(self)
     result_ty = PointerTy(opaque_pointer_dtype())
     return add_operation(TensorMapAsOpaquePtr, result_ty, tensor_map=self)
+
+
+@impl(tcgen05_stub.Tcgen05SharedMemoryDescriptor.encode)
+def tcgen05_shared_memory_descriptor_encode_impl(self: Var) -> Var:
+    descriptor = self.get_aggregate()
+    assert isinstance(descriptor, DataclassValue)
+
+    uint64_ty = ScalarTy(datatype.uint64)
+
+    def set_bits(value: Var, field: Var, position: int, width: int) -> Var:
+        field_mask = (1 << width) - 1
+        mask = field_mask << position
+        clear_mask = 0xFFFF_FFFF_FFFF_FFFF - mask
+        clear_mask = strictly_typed_const(clear_mask, uint64_ty)
+        field_mask = strictly_typed_const(field_mask, uint64_ty)
+        position = strictly_typed_const(position, uint64_ty)
+        field_and_mask = binary_bitwise_tensorlike("and_", field, field_mask)
+        insert = bitwise_shift_tensorlike("lshift", field_and_mask, position)
+        value_and_clear_mask = binary_bitwise_tensorlike("and_", value, clear_mask)
+        return binary_bitwise_tensorlike("or_", value_and_clear_mask, insert)
+
+    leading_dim_mode = require_constant_int(descriptor.get_field("leading_dim_mode"))
+    swizzle_mode = descriptor.get_field("swizzle_mode")
+    swizzle_mode = require_constant_enum(swizzle_mode, SwizzleMode)
+    swizzle_encoding = {
+        SwizzleMode.SWIZZLE_NONE: 0,
+        SwizzleMode.SWIZZLE_128B_ATOM_32B: 1,
+        SwizzleMode.SWIZZLE_128B: 2,
+        SwizzleMode.SWIZZLE_64B: 4,
+        SwizzleMode.SWIZZLE_32B: 6,
+    }
+    if swizzle_mode not in swizzle_encoding:
+        raise TileValueError(
+            f"Swizzle mode {swizzle_mode.name} is not supported by "
+            "tcgen05 shared-memory descriptors"
+        )
+
+    position = 0
+    value = strictly_typed_const(0, uint64_ty)
+    for field_name in (
+        "matrix_start_address",
+        "leading_dim_offset",
+        "stride_dim_offset",
+    ):
+        c_0x3ffff = strictly_typed_const(0x3FFFF, uint64_ty)
+        c_4 = strictly_typed_const(4, uint64_ty)
+        field = astype(descriptor.get_field(field_name), datatype.uint64)
+        field = binary_bitwise_tensorlike("and_", field, c_0x3ffff)
+        field = bitwise_shift_tensorlike("rshift", field, c_4)
+        value = set_bits(value, field, position, 14)
+        position += 16
+
+    value = set_bits(value, strictly_typed_const(0b001, uint64_ty), 46, 3)
+
+    base_offset = astype(descriptor.get_field("base_offset"), datatype.uint64)
+    value = set_bits(value, base_offset, 49, 3)
+
+    leading_dim_mode = strictly_typed_const(leading_dim_mode, uint64_ty)
+    value = set_bits(value, leading_dim_mode, 52, 1)
+
+    swizzle_value = strictly_typed_const(swizzle_encoding[swizzle_mode], uint64_ty)
+    value = set_bits(value, swizzle_value, 61, 3)
+    return value
 
 
 def require_constant_result_dtype(dtype: Var) -> Type:

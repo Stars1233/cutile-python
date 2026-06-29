@@ -7,7 +7,7 @@ from typing import Sequence
 from typing_extensions import override
 
 from cuda.lang._ir.ir import LocalArrayContextManagerValue
-from cuda.lang._enums import TensorMapSwizzle
+from cuda.lang._enums import SwizzleMode
 from cuda.lang._stub.types import Scalar, Pointer, Vector
 from cuda.tile import TileValueError
 from cuda.tile._ir.type import (
@@ -216,7 +216,7 @@ def dtype_to_tensor_map_type(dtype: datatype.DType) -> str:
 class TensorMapTy(Type):
     data_type: str  # "CU_TENSOR_MAP_DATA_TYPE_*"
     tile_shape: tuple[int, ...]
-    swizzle: TensorMapSwizzle
+    swizzle: SwizzleMode
 
 
 class LangTypingHooks(TypingHooks):

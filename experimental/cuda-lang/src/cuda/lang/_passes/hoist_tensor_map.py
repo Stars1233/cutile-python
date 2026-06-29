@@ -5,7 +5,7 @@
 from dataclasses import dataclass
 from typing import Mapping
 
-from cuda.lang._enums import TensorMapSwizzle
+from cuda.lang._enums import SwizzleMode
 from cuda.lang._ir import ir
 from cuda.lang._ir._host_program import HostProgram
 from cuda.lang._ir.ops import CreateTensorMap
@@ -23,7 +23,7 @@ class HoistedTensorMap:
     base_ptr_param: int
     shape_stride_program: HostProgram
     tile_shape: tuple[int, ...]
-    swizzle: TensorMapSwizzle
+    swizzle: SwizzleMode
 
 
 def hoist_tensor_maps(kernel_body: ir.Block,
