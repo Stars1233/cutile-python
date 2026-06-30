@@ -365,9 +365,6 @@ struct KernelImage {
 
 using KernelMap = HashMap<Vec<int64_t>, TileKernel>;
 
-struct KernelFamily : SimpleRefcount<KernelFamily> {
-    KernelMap kernels_by_constants;
-};
 
 static ArenaOffset arena_alloc_words(Arena& arena, size_t count) {
     ArenaOffset offset = arena.size();
@@ -419,6 +416,8 @@ static LaunchHelperPtr launch_helper_get() {
     if (g_helper_freelist) {
         LaunchHelper* ret = g_helper_freelist;
         g_helper_freelist = ret->next_free;
+        ret->pyarg_types.clear();
+        ret->pyarg_objs.clear();
         return LaunchHelperPtr(ret);
     } else {
         return LaunchHelperPtr(new LaunchHelper());
@@ -435,6 +434,14 @@ enum class ParameterKind {
     TupleEnd,
 };
 
+struct KernelFamily : SimpleRefcount<KernelFamily> {
+    Vec<ParameterKind> param_kinds;
+    KernelMap kernels_by_constants;
+
+    explicit KernelFamily(Vec<ParameterKind>&& param_kinds) : param_kinds(std::move(param_kinds)) {}
+};
+
+
 enum class PythonArgKind {
     // A torch.Tensor that we can access via torch._C._to_dlpack
     TorchTensorDlpack,
@@ -450,9 +457,6 @@ enum class PythonArgKind {
     PyFloat,
     // Python `list`
     PyList,
-    // Python `tuple` open/close brackets
-    PyTupleBegin,
-    PyTupleEnd,
 };
 
 static ParameterKind param_kind_from_pyarg_kind(PythonArgKind k) {
@@ -464,20 +468,13 @@ static ParameterKind param_kind_from_pyarg_kind(PythonArgKind k) {
     case PythonArgKind::PyLong: return ParameterKind::Integer;
     case PythonArgKind::PyFloat: return ParameterKind::Float;
     case PythonArgKind::PyList: return ParameterKind::List;
-    case PythonArgKind::PyTupleBegin: return ParameterKind::TupleBegin;
-    case PythonArgKind::PyTupleEnd: return ParameterKind::TupleEnd;
     }
     CHECK(false);
 }
 
-static constexpr PyObject* kTupleEnd = nullptr;
 static constexpr PyTypeObject* kTupleEndType = nullptr;
 
 static Result<PythonArgKind> classify_arg(PyObject* arg) {
-    if (arg == kTupleEnd)
-        return PythonArgKind::PyTupleEnd;
-    if (PyTuple_CheckExact(arg))
-        return PythonArgKind::PyTupleBegin;
     if (PyType_IsSubtype(Py_TYPE(arg), &PyTuple_Type))
         return raise(PyExc_TypeError,
             "Unsupported argument type '%s': only plain tuple is accepted, not subclasses",
@@ -756,17 +753,29 @@ static ArraySpecializationBits compute_array_specialization_bits(
 }
 
 
-struct ConstantCursor {
-    const int64_t* data;
+template <typename T>
+struct Cursor {
+    const T* data;
     size_t len;
 
-    int64_t next() {
+    explicit Cursor(const Vec<T>& vec)
+        : data(vec.data()), len(vec.size())
+    {}
+
+    const T& peek() const {
         CHECK(len);
-        int64_t ret = *data;
+        return *data;
+    }
+
+    const T& next() {
+        CHECK(len);
+        const T& ret = *data;
         ++data, --len;
         return ret;
     }
 };
+
+using ConstantCursor = Cursor<int64_t>;
 
 static Result<size_t> normalize_dim(int64_t signed_dim, size_t ndim) {
     int64_t ndim_i64 = static_cast<int64_t>(ndim);
@@ -1501,14 +1510,14 @@ static PyPtr parse_list_constraint(ConstantCursor& cursor, const Vec<int64_t>& s
 struct ParameterAnnotationNode : SimpleRefcount<ParameterAnnotationNode> {
     enum Kind { Leaf, HomogeneousTuple, HeterogeneousTuple };
     virtual Kind kind() const = 0;
-    virtual Status flatten_tuple(const PythonArgKind** cursor,
+    virtual Status flatten_tuple(Cursor<ParameterKind>* cursor,
                                  Vec<RefPtr<LeafAnnotationNode>>* out) = 0;
     virtual ~ParameterAnnotationNode() {}
 };
 
 
 static Status flatten_parameter_annotation_node(ParameterAnnotationNode* node,
-                                                const PythonArgKind** cursor,
+                                                Cursor<ParameterKind>* cursor,
                                                 Vec<RefPtr<LeafAnnotationNode>>* out);
 
 
@@ -1519,7 +1528,7 @@ struct LeafAnnotationNode : ParameterAnnotationNode {
 
     virtual Kind kind() const { return Leaf; }
 
-    virtual Status flatten_tuple(const PythonArgKind** cursor,
+    virtual Status flatten_tuple(Cursor<ParameterKind>* cursor,
                                  Vec<RefPtr<LeafAnnotationNode>>* out) override {
         if (array.specified)
             return raise(PyExc_TypeError,
@@ -1528,7 +1537,7 @@ struct LeafAnnotationNode : ParameterAnnotationNode {
             return raise(PyExc_TypeError,
                     "ScalarInt64 annotation cannot be applied to a tuple kernel argument");
 
-        for (size_t item_idx = 0; **cursor != PythonArgKind::PyTupleEnd; ++item_idx) {
+        for (size_t item_idx = 0; cursor->peek() != ParameterKind::TupleEnd; ++item_idx) {
             if (!flatten_parameter_annotation_node(this, cursor, out))
                 return ErrorRaised;
         }
@@ -1542,9 +1551,9 @@ struct HomogeneousTupleNode : ParameterAnnotationNode {
 
     virtual Kind kind() const { return HomogeneousTuple; }
 
-    virtual Status flatten_tuple(const PythonArgKind** cursor,
+    virtual Status flatten_tuple(Cursor<ParameterKind>* cursor,
                                  Vec<RefPtr<LeafAnnotationNode>>* out) override {
-        for (size_t item_idx = 0; **cursor != PythonArgKind::PyTupleEnd; ++item_idx) {
+        for (size_t item_idx = 0; cursor->peek() != ParameterKind::TupleEnd; ++item_idx) {
             if (!flatten_parameter_annotation_node(each.get(), cursor, out))
                 return ErrorRaised;
         }
@@ -1558,12 +1567,12 @@ struct HeterogeneousTupleNode : ParameterAnnotationNode {
 
     virtual Kind kind() const { return HeterogeneousTuple; }
 
-    virtual Status flatten_tuple(const PythonArgKind** cursor,
+    virtual Status flatten_tuple(Cursor<ParameterKind>* cursor,
                                  Vec<RefPtr<LeafAnnotationNode>>* out) override {
         LeafAnnotationNode default_node;
 
         size_t item_idx = 0;
-        while (**cursor != PythonArgKind::PyTupleEnd) {
+        while (cursor->peek() != ParameterKind::TupleEnd) {
             ParameterAnnotationNode* item_node;
             if (item_idx < items.size()) {
                 item_node = items[item_idx].get();
@@ -1586,16 +1595,14 @@ struct HeterogeneousTupleNode : ParameterAnnotationNode {
 };
 
 static Status flatten_parameter_annotation_node(ParameterAnnotationNode* node,
-                                                const PythonArgKind** cursor,
+                                                Cursor<ParameterKind>* cursor,
                                                 Vec<RefPtr<LeafAnnotationNode>>* out) {
-    PythonArgKind kind = **cursor;
-    ++*cursor;
-    if (kind == PythonArgKind::PyTupleBegin) {
-        out->push_back({});  // PyTupleBegin marker
+    ParameterKind kind = cursor->next();
+    if (kind == ParameterKind::TupleBegin) {
         if (!node->flatten_tuple(cursor, out))
             return ErrorRaised;
-        out->push_back({});  // PyTupleEnd marker
-        ++*cursor;  // consume PyTupleEnd
+        ParameterKind tuple_end = cursor->next();
+        CHECK(tuple_end == ParameterKind::TupleEnd);
     } else {
         if (node->kind() != ParameterAnnotationNode::Leaf)
             return raise(PyExc_TypeError,
@@ -1607,35 +1614,27 @@ static Status flatten_parameter_annotation_node(ParameterAnnotationNode* node,
 
 static Result<Vec<RefPtr<LeafAnnotationNode>>>
 flatten_parameter_annotation_nodes(const Vec<RefPtr<ParameterAnnotationNode>>& nodes,
-                                   const Vec<PythonArgKind>& arg_kinds) {
+                                   const Vec<ParameterKind>& param_kinds) {
     Vec<RefPtr<LeafAnnotationNode>> ret;
-    ret.reserve(arg_kinds.size());
-    const PythonArgKind* cursor = arg_kinds.data();
+    ret.reserve(param_kinds.size());
+    Cursor<ParameterKind> cursor(param_kinds);
     for (const RefPtr<ParameterAnnotationNode>& node : nodes) {
         if (!flatten_parameter_annotation_node(node.get(), &cursor, &ret))
             return ErrorRaised;
     }
+    CHECK(!cursor.len);
     return ret;
 }
 
-static Status extract_leaf(const DriverApi* driver, PyObject* obj, PythonArgKind kind,
-                           LeafAnnotationNode* annotation, LaunchHelper& helper) {
+static Status extract_arg(const DriverApi* driver, PyObject* obj, PythonArgKind kind,
+                          LeafAnnotationNode* annotation, LaunchHelper& helper) {
     switch (kind) {
     case PythonArgKind::TorchTensorDlpack:
+        return extract_array<arrayrepr_torch_tensor_dlpack>(driver, obj, annotation->array, helper);
     case PythonArgKind::DlpackArray:
+        return extract_array<arrayrepr_dlpack>(driver, obj, annotation->array, helper);
     case PythonArgKind::CudaArray:
-        // TODO: apply annotation->constant to array args?
-        if (annotation->constant)
-            return raise(PyExc_TypeError,
-                         "ct.Constant[tuple] does not support array elements");
-        if (kind == PythonArgKind::TorchTensorDlpack)
-            return extract_array<arrayrepr_torch_tensor_dlpack>(
-                    driver, obj, annotation->array, helper);
-        if (kind == PythonArgKind::DlpackArray)
-            return extract_array<arrayrepr_dlpack>(
-                    driver, obj, annotation->array, helper);
-        return extract_array<arrayrepr_cuda_array_iface>(
-                driver, obj, annotation->array, helper);
+        return extract_array<arrayrepr_cuda_array_iface>(driver, obj, annotation->array, helper);
     case PythonArgKind::PyBool:
         return extract_py_bool(obj, annotation->constant, helper);
     case PythonArgKind::PyLong:
@@ -1645,14 +1644,10 @@ static Status extract_leaf(const DriverApi* driver, PyObject* obj, PythonArgKind
         return OK;
     case PythonArgKind::PyList:
         return extract_py_list(driver, obj, annotation->array, helper);
-    case PythonArgKind::PyTupleBegin:  // structure markers carry no data (filtered by caller)
-    case PythonArgKind::PyTupleEnd:
-        break;
     }
     // Unsupported types are already rejected by classify_arg, so an unhandled kind here
     // is an internal logic error (a new PythonArgKind, or a tuple kind that leaked through).
     CHECK(false);
-    return ErrorRaised;
 }
 
 static Status extract_cuda_args(const DriverApi* driver,
@@ -1670,9 +1665,7 @@ static Status extract_cuda_args(const DriverApi* driver,
     helper.constants.clear();
     for (size_t i = 0; i < arg_kinds.size(); ++i) {
         PythonArgKind kind = arg_kinds[i];
-        if (kind == PythonArgKind::PyTupleBegin || kind == PythonArgKind::PyTupleEnd)
-            continue;
-        if (!extract_leaf(driver, pyarg_objs[i], kind, flat_param_annotations[i].get(), helper))
+        if (!extract_arg(driver, pyarg_objs[i], kind, flat_param_annotations[i].get(), helper))
             return ErrorRaised;
     }
     return OK;
@@ -1701,56 +1694,48 @@ static PyPtr parse_element_constraint(ConstantCursor& cursor, ParameterKind kind
 }
 
 static PyPtr parse_param_constraint(ConstantCursor& cursor,
-                                    const Vec<ParameterKind>& param_kinds,
-                                    const Vec<RefPtr<LeafAnnotationNode>>& flat_param_annotations,
-                                    size_t& idx);
+                                    Cursor<ParameterKind>* param_cursor,
+                                    Cursor<RefPtr<LeafAnnotationNode>>* annotation_cursor) {
+    ParameterKind pk = param_cursor->next();
+    if (pk == ParameterKind::TupleBegin) {
+        PyPtr elements_list = steal(PyList_New(0));
+        if (!elements_list) return {};
+        while (param_cursor->peek() != ParameterKind::TupleEnd) {
+            PyPtr elem = parse_param_constraint(cursor, param_cursor, annotation_cursor);
+            if (!elem) return {};
+            if (PyList_Append(elements_list.get(), elem.get()) < 0) return {};
+        }
+        ParameterKind tuple_end = param_cursor->next();
+        CHECK(tuple_end == ParameterKind::TupleEnd);
 
-static PyPtr parse_tuple_constraint(ConstantCursor& cursor,
-                                    const Vec<ParameterKind>& param_kinds,
-                                    const Vec<RefPtr<LeafAnnotationNode>>& flat_param_annotations,
-                                    size_t& idx) {
-    PyPtr elements_list = steal(PyList_New(0));
-    if (!elements_list) return {};
-    while (param_kinds[idx] != ParameterKind::TupleEnd) {
-        PyPtr elem = parse_param_constraint(cursor, param_kinds, flat_param_annotations, idx);
-        if (!elem) return {};
-        if (PyList_Append(elements_list.get(), elem.get()) < 0) return {};
+        PyObject* signature_module = get_signature_module();
+        if (!signature_module) return {};
+        PyPtr constraint_class = getattr(signature_module, "TupleConstraint");
+        if (!constraint_class) return {};
+        return steal(PyObject_CallOneArg(constraint_class.get(), elements_list.get()));
     }
-    ++idx;  // consume TupleEnd
-    PyObject* signature_module = get_signature_module();
-    if (!signature_module) return {};
-    PyPtr constraint_class = getattr(signature_module, "TupleConstraint");
-    if (!constraint_class) return {};
-    return steal(PyObject_CallOneArg(constraint_class.get(), elements_list.get()));
-}
-
-static PyPtr parse_param_constraint(ConstantCursor& cursor,
-                                    const Vec<ParameterKind>& param_kinds,
-                                    const Vec<RefPtr<LeafAnnotationNode>>& flat_param_annotations,
-                                    size_t& idx) {
-    ParameterKind pk = param_kinds[idx];
-    size_t pos = idx++;
-    if (pk == ParameterKind::TupleBegin)
-        return parse_tuple_constraint(cursor, param_kinds, flat_param_annotations, idx);
-    return parse_element_constraint(cursor, pk, *flat_param_annotations[pos]);
+    LeafAnnotationNode* annotation = annotation_cursor->next().get();
+    return parse_element_constraint(cursor, pk, *annotation);
 }
 
 static PyPtr parse_parameter_constraints(
         const Vec<int64_t>& constants,
         const Vec<ParameterKind>& param_kinds,
         const Vec<RefPtr<LeafAnnotationNode>>& flat_param_annotations) {
-    CHECK(param_kinds.size() == flat_param_annotations.size());
-    ConstantCursor cursor = {constants.data(), constants.size()};
+    ConstantCursor cursor(constants);
     PyPtr param_constraints = steal(PyList_New(0));
     if (!param_constraints) return {};
-    size_t idx = 0;
-    while (idx < param_kinds.size()) {
-        PyPtr constraint = parse_param_constraint(cursor, param_kinds, flat_param_annotations, idx);
+
+    Cursor<ParameterKind> param_cursor(param_kinds);
+    Cursor<RefPtr<LeafAnnotationNode>> annotation_cursor(flat_param_annotations);
+    while (param_cursor.len) {
+        PyPtr constraint = parse_param_constraint(cursor, &param_cursor, &annotation_cursor);
         if (!constraint) return {};
         if (PyList_Append(param_constraints.get(), constraint.get()))
             return {};
     }
     CHECK(cursor.len == 0);
+    CHECK(annotation_cursor.len == 0);
     return param_constraints;
 }
 
@@ -1811,11 +1796,10 @@ namespace { struct TileContext {
     static PyTypeObject pytype;
 }; }
 
-using FamilyMap = HashMap<Vec<ParameterKind>, RefPtr<KernelFamily>>;
 
 struct TileContextDispatcher {
     ProfileMap arg_profiles;
-    FamilyMap kernel_families;
+    Vec<RefPtr<KernelFamily>> kernel_families;
 };
 
 
@@ -2103,46 +2087,31 @@ namespace { struct TileDispatcher {
     static PyTypeObject pytype;
 }; }
 
-constexpr int kMaxTupleNestingDepth = 64;
 
-static Status flatten_tuple_elems(PyObject* tuple, int depth, Vec<PyTypeObject*>& pyarg_types,
-                                      Vec<PyObject*>& pyarg_objs);
-
-static Status flatten_pyarg(PyObject* obj, int depth, Vec<PyTypeObject*>& pyarg_types,
-                             Vec<PyObject*>& pyarg_objs) {
-    pyarg_types.push_back(Py_TYPE(obj));
-    pyarg_objs.push_back(obj);
-    if (PyTuple_CheckExact(obj))
-        return flatten_tuple_elems(obj, depth, pyarg_types, pyarg_objs);
-    // Tuple subclasses (e.g. namedtuple) are not exact tuples, so they fall through as
-    // ordinary leaf types and are rejected later by classify_arg(). That keeps the more
-    // expensive PyTuple_Check() off this per-argument hot path (run on every dispatch) and
-    // on the cache-miss path instead.
-    return OK;
-}
-
-static Status flatten_tuple_elems(PyObject* tuple, int depth, Vec<PyTypeObject*>& pyarg_types,
-                                      Vec<PyObject*>& pyarg_objs) {
-    if (depth >= kMaxTupleNestingDepth)
-        return raise(PyExc_RecursionError,
-            "tuple argument nesting exceeds maximum depth of %d", kMaxTupleNestingDepth);
-    Py_ssize_t n = PyTuple_GET_SIZE(tuple);
-    for (Py_ssize_t j = 0; j < n; ++j) {
-        if (!flatten_pyarg(PyTuple_GET_ITEM(tuple, j), depth + 1, pyarg_types, pyarg_objs))
-            return ErrorRaised;
-    }
-    pyarg_types.push_back(kTupleEndType);
-    pyarg_objs.push_back(kTupleEnd);
-    return OK;
-}
-
-static Status flatten_pyargs(PyObject* const* pyargs, Py_ssize_t num_pyargs,
-                              Vec<PyTypeObject*>& pyarg_types, Vec<PyObject*>& pyarg_objs) {
-    pyarg_types.clear();
-    pyarg_objs.clear();
+static Status flatten_pyargs(PyObject* const* pyargs, Py_ssize_t num_pyargs, int depth,
+                             Vec<PyTypeObject*>& pyarg_types, Vec<PyObject*>& pyarg_objs) {
     for (Py_ssize_t i = 0; i < num_pyargs; ++i) {
-        if (!flatten_pyarg(pyargs[i], 0, pyarg_types, pyarg_objs))
-            return ErrorRaised;
+        PyTypeObject* ty = Py_TYPE(pyargs[i]);
+        pyarg_types.push_back(ty);
+        if (ty == &PyTuple_Type) {
+            // Tuple subclasses (e.g. namedtuple) are not exact tuples, so they fall through as
+            // ordinary leaf types and are rejected later by classify_arg(). That keeps the more
+            // expensive PyTuple_Check() off this per-argument hot path (run on every dispatch) and
+            // on the cache-miss path instead.
+            constexpr int kMaxTupleNestingDepth = 64;
+            if (depth >= kMaxTupleNestingDepth)
+                return raise(PyExc_RecursionError,
+                             "Tuple argument nesting exceeds maximum depth of %d",
+                             kMaxTupleNestingDepth);
+            if (!flatten_pyargs(reinterpret_cast<PyTupleObject*>(pyargs[i])->ob_item,
+                                PyTuple_GET_SIZE(pyargs[i]),
+                                depth + 1,
+                                pyarg_types, pyarg_objs))
+                return ErrorRaised;
+            pyarg_types.push_back(kTupleEndType);
+        } else {
+            pyarg_objs.push_back(pyargs[i]);
+        }
     }
     return OK;
 }
@@ -2462,6 +2431,40 @@ static Status stage_list_args_on_stream(const DriverApi* driver,
     return OK;
 }
 
+static Status get_parameter_and_pyarg_kinds(const Vec<PyTypeObject*>& pyarg_types,
+                                            const Vec<PyObject*>& pyarg_objs,
+                                            Vec<ParameterKind>* param_kinds,
+                                            Vec<PythonArgKind>* arg_kinds) {
+    arg_kinds->clear();
+    arg_kinds->reserve(pyarg_types.size());
+    param_kinds->clear();
+    param_kinds->reserve(pyarg_types.size());
+    size_t obj_idx = 0;
+    for (PyTypeObject* pyarg_type : pyarg_types) {
+        if (pyarg_type == &PyTuple_Type) {
+            param_kinds->push_back(ParameterKind::TupleBegin);
+        } else if (pyarg_type == kTupleEndType) {
+            param_kinds->push_back(ParameterKind::TupleEnd);
+        } else {
+            Result<PythonArgKind> kind = classify_arg(pyarg_objs[obj_idx++]);
+            if (!kind.is_ok()) return ErrorRaised;
+            arg_kinds->push_back(*kind);
+            param_kinds->push_back(param_kind_from_pyarg_kind(*kind));
+        }
+    }
+    return OK;
+}
+
+static KernelFamily* get_or_create_kernel_family(Vec<RefPtr<KernelFamily>>* families,
+                                                 Vec<ParameterKind>&& param_kinds) {
+    for (const RefPtr<KernelFamily>& fam : *families) {
+        if (fam->param_kinds == param_kinds)
+            return fam.get();
+    }
+    families->push_back(steal(new KernelFamily(std::move(param_kinds))));
+    return families->back().get();
+}
+
 static Result<PreparedLaunch> prepare_launch(
         const DriverApi* driver,
         PyObject* dispatcher_pyobj,
@@ -2478,7 +2481,7 @@ static Result<PreparedLaunch> prepare_launch(
     if (!stream_context.is_ok()) return ErrorRaised;
     helper->cuda_context = *stream_context;
 
-    if (!flatten_pyargs(pyargs, num_pyargs, helper->pyarg_types, helper->pyarg_objs))
+    if (!flatten_pyargs(pyargs, num_pyargs, 0, helper->pyarg_types, helper->pyarg_objs))
         return ErrorRaised;
     TileDispatcher& dispatcher = py_unwrap<TileDispatcher>(dispatcher_pyobj);
     TileContextDispatcher& ctx_dispatcher = dispatcher.default_context_dispatcher;
@@ -2492,26 +2495,18 @@ static Result<PreparedLaunch> prepare_launch(
         }
 
         Vec<PythonArgKind> arg_kinds;
-        arg_kinds.reserve(helper->pyarg_types.size());
         Vec<ParameterKind> param_kinds;
-        param_kinds.reserve(helper->pyarg_types.size());
-        for (size_t i = 0; i < helper->pyarg_objs.size(); ++i) {
-            Result<PythonArgKind> kind = classify_arg(helper->pyarg_objs[i]);
-            if (!kind.is_ok()) return ErrorRaised;
-            arg_kinds.push_back(*kind);
-            param_kinds.push_back(param_kind_from_pyarg_kind(*kind));
-        }
+        if (!get_parameter_and_pyarg_kinds(helper->pyarg_types, helper->pyarg_objs,
+                                           &param_kinds, &arg_kinds))
+            return ErrorRaised;
 
-        FamilyMap::Item* family_item = ctx_dispatcher.kernel_families.find(param_kinds);
-        if (!family_item) {
-            RefPtr<KernelFamily> new_family = steal(new KernelFamily());
-            family_item = ctx_dispatcher.kernel_families.insert(
-                    std::move(param_kinds), std::move(new_family));
-        }
+        KernelFamily* family = get_or_create_kernel_family(
+                &ctx_dispatcher.kernel_families, std::move(param_kinds));
 
         // Flatten the parameter annotations against this argument structure.
         Result<Vec<RefPtr<LeafAnnotationNode>>> flat_param_annotations
-               = flatten_parameter_annotation_nodes(dispatcher.param_annotations, arg_kinds);
+               = flatten_parameter_annotation_nodes(dispatcher.param_annotations,
+                                                    family->param_kinds);
         if (!flat_param_annotations.is_ok())
             return ErrorRaised;
 
@@ -2527,7 +2522,7 @@ static Result<PreparedLaunch> prepare_launch(
 
         profile_item = ctx_dispatcher.arg_profiles.insert(
                     std::move(typeobj_refs),
-                    PythonArgProfile{family_item->value, std::move(arg_kinds),
+                    PythonArgProfile{newref(family), std::move(arg_kinds),
                                      std::move(*flat_param_annotations)});
     }
 
@@ -2540,16 +2535,15 @@ static Result<PreparedLaunch> prepare_launch(
     KernelMap::Item* kernel_item = kernel_map.find(helper->constants);
     std::optional<KernelImage> kernel_image;
     if (!kernel_item || capture_kernel_image) {
-        Vec<ParameterKind> param_kinds;
-        for (PythonArgKind k : profile_item->value.arg_kinds)
-            param_kinds.push_back(param_kind_from_pyarg_kind(k));
-
         PyPtr cconv = get_cconv(minimum_calling_convention(
-                    param_kinds, profile_item->value.flat_param_annotations));
+                    profile_item->value.family->param_kinds,
+                    profile_item->value.flat_param_annotations));
         if (!cconv) return ErrorRaised;
 
-        PyPtr signature = make_signature(
-                helper->constants, param_kinds, profile_item->value.flat_param_annotations, cconv);
+        PyPtr signature = make_signature(helper->constants,
+                                         profile_item->value.family->param_kinds,
+                                         profile_item->value.flat_param_annotations,
+                                         cconv);
         if (!signature) return ErrorRaised;
 
         KernelImage* image = capture_kernel_image ? &kernel_image.emplace() : nullptr;
@@ -3024,25 +3018,20 @@ static PyObject* get_parameter_constraints_from_pyargs(PyObject* self, PyObject*
 
     LaunchHelperPtr helper = launch_helper_get();
 
-    if (!flatten_pyargs(kernel_args, num_kernel_args, helper->pyarg_types, helper->pyarg_objs))
+    if (!flatten_pyargs(kernel_args, num_kernel_args, 0, helper->pyarg_types, helper->pyarg_objs))
         return nullptr;
 
     Vec<PythonArgKind> arg_kinds;
     Vec<ParameterKind> param_kinds;
-    arg_kinds.reserve(helper->pyarg_types.size());
-    param_kinds.reserve(helper->pyarg_types.size());
-    for (size_t i = 0; i < helper->pyarg_types.size(); ++i) {
-        Result<PythonArgKind> kind = classify_arg(helper->pyarg_objs[i]);
-        if (!kind.is_ok()) return nullptr;
-        arg_kinds.push_back(*kind);
-        param_kinds.push_back(param_kind_from_pyarg_kind(*kind));
-    }
+    if (!get_parameter_and_pyarg_kinds(helper->pyarg_types, helper->pyarg_objs,
+                                       &param_kinds, &arg_kinds))
+        return nullptr;
 
     Result<const DriverApi*> driver = get_driver_api();
     if (!driver.is_ok()) return nullptr;
 
     Result<Vec<RefPtr<LeafAnnotationNode>>> flat_param_annotations
-        = flatten_parameter_annotation_nodes(dispatcher.param_annotations, arg_kinds);
+        = flatten_parameter_annotation_nodes(dispatcher.param_annotations, param_kinds);
     if (!flat_param_annotations.is_ok())
         return nullptr;
 
