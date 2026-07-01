@@ -1242,6 +1242,10 @@ struct ArrayAnnotation {
     Vec<int64_t> static_shape_dims; // array shape dims specialized to launch-time values.
 };
 
+struct ListAnnotation {
+    ArrayAnnotation element;
+};
+
 
 typedef Result<ArrayRepr> (*ArrayReprFunc)(PyObject*, unsigned, Arena&);
 
@@ -1395,7 +1399,7 @@ static Result<ArrayRepr> get_array_repr(PythonArgKind kind, PyObject* pyobj,
 }
 
 static Status extract_py_list(const DriverApi* driver, PyObject* pyobj,
-                              const ArrayAnnotation& array_ann, LaunchHelper& helper) {
+                              const ListAnnotation& list_ann, LaunchHelper& helper) {
     size_t len = PyList_GET_SIZE(pyobj);
     if (len > INT32_MAX)
         return raise(PyExc_TypeError, "List is too long");
@@ -1419,7 +1423,8 @@ static Status extract_py_list(const DriverApi* driver, PyObject* pyobj,
     PyTypeObject* first_item_type = first_item->ob_type;
 
     Result<ArrayRepr> first_repr_res = get_array_repr(first_arg_kind, first_item,
-                                                      array_ann.index_bitwidth, helper.arena);
+                                                      list_ann.element.index_bitwidth,
+                                                      helper.arena);
     if (!first_repr_res.is_ok()) return ErrorRaised;
 
     helper.array_ptr_arena_offsets.push_back(first_repr_res->repr);
@@ -1440,7 +1445,7 @@ static Status extract_py_list(const DriverApi* driver, PyObject* pyobj,
     helper.arena[item_offsets].arena_offset = first_repr_res->repr;
 
     ArrayTypeConstantBuilder builder;
-    if (!builder.update(helper.arena, *first_repr_res, array_ann.static_shape_dims))
+    if (!builder.update(helper.arena, *first_repr_res, list_ann.element.static_shape_dims))
         return ErrorRaised;
 
     // Handle the rest of the list
@@ -1455,7 +1460,7 @@ static Status extract_py_list(const DriverApi* driver, PyObject* pyobj,
              kind = *res;
         }
 
-        Result<ArrayRepr> repr_res = get_array_repr(kind, item, array_ann.index_bitwidth,
+        Result<ArrayRepr> repr_res = get_array_repr(kind, item, list_ann.element.index_bitwidth,
                                                     helper.arena);
         if (!repr_res.is_ok()) return ErrorRaised;
         helper.array_ptr_arena_offsets.push_back(repr_res->repr);
@@ -1467,13 +1472,13 @@ static Status extract_py_list(const DriverApi* driver, PyObject* pyobj,
         if (first_repr_res->arrty.ndim != repr_res->arrty.ndim)
             return raise(PyExc_TypeError, "Arrays in list vary in rank");
 
-        if (!builder.update(helper.arena, *repr_res, array_ann.static_shape_dims))
+        if (!builder.update(helper.arena, *repr_res, list_ann.element.static_shape_dims))
             return ErrorRaised;
     }
 
     // TODO: If we accept lists of things other than arrays, then to disambiguate,
     //       we need to push another constant here that specifies the type of the list element .
-    builder.finalize(driver, first_repr_res->arrty, array_ann.static_shape_dims, helper);
+    builder.finalize(driver, first_repr_res->arrty, list_ann.element.static_shape_dims, helper);
     return OK;
 }
 
@@ -1519,6 +1524,7 @@ struct LeafAnnotationNode : ParameterAnnotationNode {
     bool constant = false;
     ScalarAnnotation scalar;
     ArrayAnnotation array;
+    ListAnnotation list;
 
     virtual Kind kind() const { return Leaf; }
 
@@ -1630,7 +1636,7 @@ static Status extract_arg(const DriverApi* driver, PyObject* obj, PythonArgKind 
         extract_py_float(obj, annotation->constant, helper);
         return OK;
     case PythonArgKind::PyList:
-        return extract_py_list(driver, obj, annotation->array, helper);
+        return extract_py_list(driver, obj, annotation->list, helper);
     }
     // Unsupported types are already rejected by classify_arg, so an unhandled kind here
     // is an internal logic error (a new PythonArgKind, or a tuple kind that leaked through).
@@ -1670,7 +1676,7 @@ static PyPtr parse_element_constraint(ConstantCursor& cursor, ParameterKind kind
     case ParameterKind::Float:
         return parse_pyfloat_constraint(cursor, annotation.constant);
     case ParameterKind::List:
-        return parse_list_constraint(cursor, annotation.array.static_shape_dims);
+        return parse_list_constraint(cursor, annotation.list.element.static_shape_dims);
     case ParameterKind::TupleBegin:
     case ParameterKind::TupleEnd:
         CHECK(false);  // Should be handled before parse_element_constraint
@@ -1734,7 +1740,7 @@ static CallConvVersion minimum_calling_convention(
             return CallConvVersion::CutilePython_V2;
     }
     for (const RefPtr<LeafAnnotationNode>& f : flat_param_annotations) {
-        if (!f->array.static_shape_dims.empty())
+        if (!f->array.static_shape_dims.empty() || !f->list.element.static_shape_dims.empty())
             return CallConvVersion::CutilePython_V2;
     }
     return CallConvVersion::CutilePython_V1;
@@ -2809,6 +2815,18 @@ static Status parse_array_annotation(PyObject* py_array_annotation, ArrayAnnotat
     return OK;
 }
 
+// Parse a Python ListAnnotation into its C++ equivalent.
+static Status parse_list_annotation(PyObject* py_list_annotation, ListAnnotation* dst) {
+    if (py_list_annotation == Py_None)
+        return OK;
+
+    PyPtr element = getattr(py_list_annotation, "element");
+    if (!element) return ErrorRaised;
+
+    return parse_array_annotation(element.get(), &dst->element);
+}
+
+
 // Parse one Python ParameterAnnotationNode into its C++ equivalent.
 static RefPtr<ParameterAnnotationNode> parse_parameter_annotation_node(PyObject* obj) {
     PyPtr kind = getattr(obj, "KIND");
@@ -2822,7 +2840,8 @@ static RefPtr<ParameterAnnotationNode> parse_parameter_annotation_node(PyObject*
         PyPtr constant = getattr(obj, "constant");
         PyPtr scalar = getattr(obj, "scalar");
         PyPtr array = getattr(obj, "array");
-        if (!constant || !scalar || !array) return {};
+        PyPtr list = getattr(obj, "list");
+        if (!constant || !scalar || !array || !list) return {};
 
         RefPtr<LeafAnnotationNode> node = steal(new LeafAnnotationNode);
         node->constant = (constant.get() == Py_True);
@@ -2830,6 +2849,8 @@ static RefPtr<ParameterAnnotationNode> parse_parameter_annotation_node(PyObject*
         if (!parse_scalar_annotation(scalar.get(), &node->scalar))
             return {};
         if (!parse_array_annotation(array.get(), &node->array))
+            return {};
+        if (!parse_list_annotation(list.get(), &node->list))
             return {};
 
         return node;

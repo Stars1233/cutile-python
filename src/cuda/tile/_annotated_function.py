@@ -6,7 +6,7 @@ import inspect
 import typing
 from dataclasses import dataclass
 from types import FunctionType
-from typing import (get_origin, get_args, Annotated, Any, Sequence)
+from typing import (get_origin, get_args, Annotated, Any, Sequence, TypeVar)
 
 from cuda.tile._stub import ConstantAnnotation, ArrayAnnotation, ScalarAnnotation, ListAnnotation
 
@@ -18,19 +18,21 @@ class LeafAnnotationNode:
     constant: bool  # ct.Constant: compile-time constant parameter.
     scalar: ScalarAnnotation | None = None
     array: ArrayAnnotation | None = None
+    list: ListAnnotation | None = None
 
     def validate(self):
+        given = []
         if self.constant:
-            if self.scalar is not None:
-                raise TypeError("Constant annotation cannot be combined"
-                                " with ScalarAnnotation/ScalarInt64")
-            if self.array is not None:
-                raise TypeError("Constant annotation cannot be combined"
-                                " with ArrayAnnotation/IndexedWithInt64")
+            given.append("Constant annotation")
+        if self.scalar is not None:
+            given.append("ScalarAnnotation/ScalarInt64")
+        if self.array is not None:
+            given.append("ArrayAnnotation/IndexedWithInt64")
+        if self.list is not None:
+            given.append("ListAnnotation")
 
-        if self.scalar is not None and self.array is not None:
-            raise TypeError("ScalarAnnotation/ScalarInt64 cannot be combined"
-                            " with ArrayAnnotation/IndexedWithInt64")
+        if len(given) > 1:
+            raise TypeError(f"{given[0]} cannot be combined with {given[1]}")
 
 
 @dataclass(frozen=True)
@@ -84,35 +86,19 @@ def _build_annotation_node(annotation: Any,
         if get_origin(inner) is tuple:
             return _build_tuple_node(inner, is_constant)
         return LeafAnnotationNode(constant=is_constant,
-                                  array=_get_array_annotation(metadata),
-                                  scalar=_get_scalar_annotation(metadata))
+                                  array=_get_annotation(metadata, ArrayAnnotation),
+                                  scalar=_get_annotation(metadata, ScalarAnnotation),
+                                  list=_get_annotation(metadata, ListAnnotation))
     if get_origin(annotation) is tuple:
         return _build_tuple_node(annotation, outer_constant)
     return LeafAnnotationNode(constant=outer_constant)
 
 
-def _get_array_annotation(metadata: Sequence[Any]) -> ArrayAnnotation | None:
-    for m in metadata:
-        if isinstance(m, ArrayAnnotation):
-            return m
-        if isinstance(m, ListAnnotation) and isinstance(m.element, ArrayAnnotation):
-            return m.element
-    return None
+T = TypeVar("T")
 
 
-def _get_scalar_annotation(metadata: Sequence[Any]) -> ScalarAnnotation | None:
+def _get_annotation(metadata: Sequence[Any], cls: type[T]) -> T | None:
     for m in metadata:
-        if isinstance(m, ScalarAnnotation):
+        if isinstance(m, cls):
             return m
     return None
-
-
-def _get_static_shape_annotation(metadata: Sequence[Any]) -> tuple[int, ...]:
-    for m in metadata:
-        if isinstance(m, ArrayAnnotation) and m.static_shape_dims:
-            return m.static_shape_dims
-        if (isinstance(m, ListAnnotation)
-                and isinstance(m.element, ArrayAnnotation)
-                and m.element.static_shape_dims):
-            return m.element.static_shape_dims
-    return ()

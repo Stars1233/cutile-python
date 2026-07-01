@@ -162,10 +162,11 @@ def _create_parameter(
     if isinstance(annotation, LeafAnnotationNode):
         annotation.validate()
 
-        if (annotation.array is not None
-                and not isinstance(constraint, ArrayConstraint)
-                and not (isinstance(constraint, ListConstraint)
-                         and isinstance(constraint.element, ArrayConstraint))):
+        if annotation.array is not None and not isinstance(constraint, ArrayConstraint):
+            raise _make_constraint_error("ArrayAnnotation/IndexedWithInt64 can only be applied"
+                                         " to an array or a list-of-array parameter.", path)
+
+        if annotation.list is not None and not isinstance(constraint, ListConstraint):
             raise _make_constraint_error("ArrayAnnotation/IndexedWithInt64 can only be applied"
                                          " to an array or a list-of-array parameter.", path)
 
@@ -221,7 +222,8 @@ def _create_parameter(
         ty = _get_array_ty(constraint, annotation.array, path, var.ctx.typing_hooks)
     elif isinstance(constraint, ListConstraint):
         assert isinstance(constraint.element, ArrayConstraint)
-        array_ty = _get_array_ty(constraint.element, annotation.array, path, var.ctx.typing_hooks)
+        array_ann = None if annotation.list is None else annotation.list.element
+        array_ty = _get_array_ty(constraint.element, array_ann, path, var.ctx.typing_hooks)
         ty = ListTy(array_ty)
     else:
         raise _make_constraint_error(f"Unsupported constraint type"
