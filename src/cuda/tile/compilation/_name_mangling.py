@@ -16,20 +16,6 @@ from cuda.tile._datatype import DType, bool_, uint8, uint16, uint32, uint64, int
 from .._cext import CallingConvention
 
 
-def cconv_require_tuple_constraint(cconv: CallingConvention, cursor: "_Cursor | None" = None):
-    if cconv.version < 2:
-        msg = (f"Tuple parameters ('T' constraint) are not supported by calling convention"
-               f" {cconv.name}; version >= 2 is required")
-        raise cursor.make_error(msg) if cursor is not None else ValueError(msg)
-
-
-def cconv_require_static_shape(cconv: CallingConvention, cursor: "_Cursor | None" = None):
-    if cconv.version < 2:
-        msg = (f"Static array shapes ('s' predicate) are not supported by calling convention"
-               f" {cconv.name}; version >= 2 is required")
-        raise cursor.make_error(msg) if cursor is not None else ValueError(msg)
-
-
 def mangle_kernel_name(function_name: str,
                        kernel_signature: KernelSignature) -> str:
     alias_group_map, alias_group_names = _map_alias_groups(kernel_signature.parameters)
@@ -158,7 +144,6 @@ def _mangle_constraint(p: ParameterConstraint, alias_group_map: dict[str, int],
         assert isinstance(p.element, ArrayConstraint)
         return "L" + _mangle_list_constraint(p, alias_group_map, cconv)
     elif isinstance(p, TupleConstraint):
-        cconv_require_tuple_constraint(cconv)
         return "T" + _mangle_tuple_constraint(p, alias_group_map, cconv)
     elif isinstance(p, ScalarConstraint):
         return "S" + _mangle_dtype(p.dtype)
@@ -186,7 +171,6 @@ def _demangle_constraint(cursor: _Cursor,
     elif c == "L":
         return _demangle_list_constraint(cursor, alias_group_demangler, cconv)
     elif c == "T":
-        cconv_require_tuple_constraint(cconv, orig_cursor)
         return _demangle_tuple_constraint(cursor, alias_group_demangler, cconv)
     elif c == "S":
         dtype = _demangle_dtype(cursor)
@@ -206,8 +190,6 @@ def _demangle_constraint(cursor: _Cursor,
 def _mangle_array_constraint(a: ArrayConstraint,
                              alias_group_map: dict[str, int],
                              cconv: CallingConvention) -> str:
-    if any(v is not None for v in a.shape_constant):
-        cconv_require_static_shape(cconv)
     ret = f"{a.ndim}{_mangle_dtype(a.dtype)}"
 
     # NOTE: since we encode axis masks as hex, letters a-f can't be used for predicates
@@ -273,10 +255,8 @@ def _demangle_array_constraint(cursor: _Cursor,
             raise mask_cursor.make_error(f"Axis mask {axis_mask:x} has more bits"
                                          f" ({axis_mask.bit_length()}) than array ndim ({ndim})")
 
-        s_cursor = cursor.clone()
         axis_shape_constant = None
         if cursor.read("s") is not None:
-            cconv_require_static_shape(cconv, s_cursor)
             axis_shape_constant = _demangle_signed_int(cursor)
 
         axis_shape_div_by = 1

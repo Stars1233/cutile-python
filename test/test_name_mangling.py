@@ -269,28 +269,10 @@ def test_name_mangling_cutile_python_v2(parameters, expected_suffix):
     assert demangled_name == func_name
 
 
-def test_mangle_tuple_with_v1_raises():
-    cconv = CallingConvention.cutile_python_v1()
-    sig = KernelSignature([TupleConstraint([ScalarConstraint(int32)])], cconv)
-    with pytest.raises(ValueError, match="version >= 2"):
-        mangle_kernel_name("my_kernel", sig)
-
-
 def test_demangle_tuple_with_v1_raises():
     symbol = "my_kernel_Kt1_T1Si32"
     with pytest.raises(ValueError, match="version >= 2"):
         demangle_kernel_name(symbol)
-
-
-def test_mangle_static_shape_with_v1_raises():
-    cconv = CallingConvention.cutile_python_v1()
-    sig = KernelSignature(
-        [ArrayConstraint(float32, 1, index_dtype=int32, stride_lower_bound_incl=0,
-                         alias_groups=(), may_alias_internally=False,
-                         shape_constant=(8,))],
-        cconv)
-    with pytest.raises(ValueError, match="version >= 2"):
-        mangle_kernel_name("my_kernel", sig)
 
 
 def test_demangle_static_shape_with_v1_raises():

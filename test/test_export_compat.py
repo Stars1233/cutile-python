@@ -3,10 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import ctypes
+import re
 from ctypes import (c_char_p, POINTER, c_void_p, c_int, c_uint64, pointer, CFUNCTYPE, c_uint,
                     c_int32, c_float, byref)
 from io import BytesIO
 
+import pytest
 import torch.cuda
 
 import cuda.tile as ct
@@ -201,3 +203,24 @@ def test_export_compat_cutile_python_v2():
     out = torch.zeros((), dtype=torch.int32, device="cuda")
     _call_kernel(io.getvalue(), "kernel_2_Kt2_T2Si32Si32_T1I10_A0i32", ((3, 7), out), is_v2=True)
     assert out.item() == 20
+
+
+def test_static_shape_with_v1_raises():
+    cconv = ct.compilation.CallingConvention.cutile_python_v1()
+    expected_message = re.escape("Static array shapes are not supported by calling convention"
+                                 " cutile_python_v1; version >= 2 is required")
+    with pytest.raises(ValueError, match=expected_message):
+        ct.compilation.KernelSignature(
+            [ct.compilation.ArrayConstraint(
+                ct.float32, 1, index_dtype=ct.int32, stride_lower_bound_incl=0,
+                alias_groups=(), may_alias_internally=False,
+                shape_constant=(8,))],
+            cconv)
+
+
+def test_tuple_with_v1_raises():
+    cconv = ct.compilation.CallingConvention.cutile_python_v1()
+    expected_message = re.escape("Tuple parameters are not supported by calling convention"
+                                 " cutile_python_v1; version >= 2 is required")
+    with pytest.raises(ValueError, match=expected_message):
+        ct.compilation.KernelSignature([(ct.compilation.ScalarConstraint(ct.int32),)], cconv)

@@ -330,6 +330,8 @@ class KernelSignature:
 
         parameters = tuple(_to_constraint(c) for c in parameters)
         _validate_alias_groups(parameters)
+        for x in parameters:
+            _validate_constraint_support(x, calling_convention)
 
         object.__setattr__(self, "parameters", parameters)
         object.__setattr__(self, "calling_convention", calling_convention)
@@ -504,3 +506,24 @@ def _remove_redundant_divisibility_constraints(static_values: tuple[int, ...],
                                  f" which is not divisible by {ret[i]}")
             ret[i] = 1
     return tuple(ret)
+
+
+def _validate_constraint_support(constraint: ParameterConstraint, cconv: CallingConvention):
+    if isinstance(constraint, ScalarConstraint):
+        pass
+    elif isinstance(constraint, ArrayConstraint):
+        if any(x is not None for x in constraint.shape_constant) and cconv.version < 2:
+            raise ValueError(f"Static array shapes are not supported by calling convention"
+                             f" {cconv.name}; version >= 2 is required")
+    elif isinstance(constraint, ListConstraint):
+        _validate_constraint_support(constraint.element, cconv)
+    elif isinstance(constraint, TupleConstraint):
+        if cconv.version < 2:
+            raise ValueError(f"Tuple parameters are not supported by calling convention"
+                             f" {cconv.name}; version >= 2 is required")
+        for x in constraint.items:
+            _validate_constraint_support(x, cconv)
+    elif isinstance(constraint, ConstantConstraint):
+        pass
+    else:
+        raise TypeError(f"Unexpected constraint type: {type(constraint)}")
