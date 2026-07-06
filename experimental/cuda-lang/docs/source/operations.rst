@@ -109,6 +109,16 @@ Math
    :toctree: generated
    :nosignatures:
 
+    add
+    sub
+    mul
+    truediv
+    floordiv
+    mod
+    pow
+    minimum
+    maximum
+    negative
     abs
     ceil
     floor

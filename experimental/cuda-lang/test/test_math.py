@@ -6,6 +6,7 @@ import cuda.lang as cl
 import cuda.lang._datatype as datatype
 import builtins
 import math as host_math
+import operator
 import sys
 import torch
 import pytest
@@ -51,6 +52,15 @@ UNARY_FLOAT_OPS = (
 )
 
 BINARY_FLOAT_OPS = ((device_math.atan2, host_math.atan2),)
+
+OPERATOR_ALIAS_BINARY_OPS = (
+    (device_math.add, operator.add, cl.float32),
+    (device_math.sub, operator.sub, cl.float32),
+    (device_math.mul, operator.mul, cl.float32),
+    (device_math.truediv, operator.truediv, cl.float32),
+    (device_math.floordiv, operator.floordiv, cl.int32),
+    (device_math.mod, operator.mod, cl.int32),
+)
 
 FPCLASS_OPS = (
     (device_math.isinf, host_math.isinf),
@@ -165,15 +175,18 @@ def _pow_test_values(dtype):
 @pytest.mark.parametrize("vector", (False, True))
 def test_pow(lhs_dt, rhs_dt, result_dt, vector):
     @cl.kernel
-    def kernel(lhs, rhs, out):
+    def kernel(lhs, rhs, out, operator_out):
         if vector:
             lhs_v = lhs.get_base_pointer().load(count=4)
             rhs_v = rhs.get_base_pointer().load(count=4)
             v = device_math.pow(lhs_v, rhs_v)
+            operator_v = lhs_v ** rhs_v
             for i in range(4):
                 out[i] = out.dtype(v[i])
+                operator_out[i] = operator_out.dtype(operator_v[i])
         else:
             out[0] = out.dtype(device_math.pow(lhs[0], rhs[0]))
+            operator_out[0] = operator_out.dtype(lhs[0] ** rhs[0])
 
     lhs_torch_dt = datatype.to_torch_dtype(lhs_dt)
     rhs_torch_dt = datatype.to_torch_dtype(rhs_dt)
@@ -182,8 +195,15 @@ def test_pow(lhs_dt, rhs_dt, result_dt, vector):
     lhs = torch.tensor(_pow_test_values(lhs_dt)[:count], dtype=lhs_torch_dt).cuda()
     rhs = torch.tensor(_pow_test_values(rhs_dt)[:count], dtype=rhs_torch_dt).cuda()
     out = torch.zeros(count, dtype=result_torch_dt).cuda()
+    operator_out = torch.zeros(count, dtype=result_torch_dt).cuda()
 
-    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (lhs, rhs, out))
+    cl.launch(
+        torch.cuda.current_stream(),
+        (1,),
+        (1,),
+        kernel,
+        (lhs, rhs, out, operator_out),
+    )
 
     lhs_values = lhs.cpu().tolist()
     rhs_values = rhs.cpu().tolist()
@@ -191,8 +211,62 @@ def test_pow(lhs_dt, rhs_dt, result_dt, vector):
     expected = torch.tensor(expected_values, dtype=result_torch_dt)
     if datatype.is_float(result_dt):
         assert_close_float(out.cpu(), expected, result_dt)
+        assert_close_float(operator_out.cpu(), expected, result_dt)
     else:
         torch.testing.assert_close(out.cpu(), expected, rtol=0, atol=0)
+        torch.testing.assert_close(operator_out.cpu(), expected, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize(
+    "lhs_dt,rhs_dt,result_dt,vector_side",
+    (
+        (cl.float32, cl.int32, cl.float32, "lhs"),
+        (cl.float64, cl.int32, cl.float64, "lhs"),
+        (cl.int32, cl.float32, cl.float32, "rhs"),
+        (cl.int32, cl.float64, cl.float64, "rhs"),
+    ),
+)
+def test_pow_scalar_vector_broadcast(lhs_dt, rhs_dt, result_dt, vector_side):
+    lhs_vector = vector_side == "lhs"
+
+    @cl.kernel
+    def kernel(lhs, rhs, out, operator_out):
+        if lhs_vector:
+            lhs_value = lhs.get_base_pointer().load(count=4)
+            rhs_value = rhs[0]
+        else:
+            lhs_value = lhs[0]
+            rhs_value = rhs.get_base_pointer().load(count=4)
+        out.get_base_pointer().store(device_math.pow(lhs_value, rhs_value))
+        operator_out.get_base_pointer().store(lhs_value ** rhs_value)
+
+    lhs_count = 4 if lhs_vector else 1
+    rhs_count = 1 if lhs_vector else 4
+    lhs_torch_dt = datatype.to_torch_dtype(lhs_dt)
+    rhs_torch_dt = datatype.to_torch_dtype(rhs_dt)
+    result_torch_dt = datatype.to_torch_dtype(result_dt)
+    lhs = torch.tensor(_pow_test_values(lhs_dt)[:lhs_count], dtype=lhs_torch_dt).cuda()
+    rhs = torch.tensor(_pow_test_values(rhs_dt)[:rhs_count], dtype=rhs_torch_dt).cuda()
+    out = torch.zeros(4, dtype=result_torch_dt).cuda()
+    operator_out = torch.zeros(4, dtype=result_torch_dt).cuda()
+
+    cl.launch(
+        torch.cuda.current_stream(),
+        (1,),
+        (1,),
+        kernel,
+        (lhs, rhs, out, operator_out),
+    )
+
+    lhs_values = lhs.cpu().tolist()
+    rhs_values = rhs.cpu().tolist()
+    if lhs_vector:
+        expected_values = [value ** rhs_values[0] for value in lhs_values]
+    else:
+        expected_values = [lhs_values[0] ** value for value in rhs_values]
+    expected = torch.tensor(expected_values, dtype=result_torch_dt)
+    assert_close_float(out.cpu(), expected, result_dt)
+    assert_close_float(operator_out.cpu(), expected, result_dt)
 
 
 @pytest.mark.parametrize(
@@ -314,6 +388,83 @@ def test_math_binary_float_promotion():
     expected = host_math.atan2(lhs.cpu().item(), rhs.cpu().item())
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (lhs, rhs, out))
     assert out[0].item() == approx_float(expected, dt2)
+
+
+@pytest.mark.parametrize("device_op,python_op,dtype", OPERATOR_ALIAS_BINARY_OPS)
+@pytest.mark.parametrize("vector", (False, True))
+def test_operator_alias_binary_math(device_op, python_op, dtype, vector):
+    lhs_values = (-7, 9, 5, -1)
+    rhs_values = (3, 2, -2, -4)
+    count = 4 if vector else 1
+
+    @cl.kernel
+    def kernel(lhs, rhs, out, operator_out):
+        if vector:
+            lhs_value = lhs.get_base_pointer().load(count=4)
+            rhs_value = rhs.get_base_pointer().load(count=4)
+            out.get_base_pointer().store(device_op(lhs_value, rhs_value))
+            operator_out.get_base_pointer().store(python_op(lhs_value, rhs_value))
+        else:
+            out[0] = device_op(lhs[0], rhs[0])
+            operator_out[0] = python_op(lhs[0], rhs[0])
+
+    torch_dtype = datatype.to_torch_dtype(dtype)
+    lhs = torch.tensor(lhs_values[:count], dtype=torch_dtype, device="cuda")
+    rhs = torch.tensor(rhs_values[:count], dtype=torch_dtype, device="cuda")
+    out = torch.zeros(count, dtype=torch_dtype, device="cuda")
+    operator_out = torch.zeros(count, dtype=torch_dtype, device="cuda")
+    expected = torch.tensor(
+        [
+            python_op(lhs_value, rhs_value)
+            for lhs_value, rhs_value in zip(
+                lhs_values[:count], rhs_values[:count], strict=True
+            )
+        ],
+        dtype=torch_dtype,
+    )
+
+    cl.launch(
+        torch.cuda.current_stream(),
+        (1,),
+        (1,),
+        kernel,
+        (lhs, rhs, out, operator_out),
+    )
+    torch.testing.assert_close(out.cpu(), expected)
+    torch.testing.assert_close(operator_out.cpu(), expected)
+
+
+@pytest.mark.parametrize("dtype", (cl.int32, cl.float32))
+@pytest.mark.parametrize("vector", (False, True))
+def test_operator_alias_negative(dtype, vector):
+    input_values = (-7, 9, 5, -1)
+    count = 4 if vector else 1
+
+    @cl.kernel
+    def kernel(inp, out, operator_out):
+        if vector:
+            value = inp.get_base_pointer().load(count=4)
+            out.get_base_pointer().store(device_math.negative(value))
+            operator_out.get_base_pointer().store(-value)
+        else:
+            out[0] = device_math.negative(inp[0])
+            operator_out[0] = -inp[0]
+
+    torch_dtype = datatype.to_torch_dtype(dtype)
+    inp = torch.tensor(input_values[:count], dtype=torch_dtype, device="cuda")
+    out = torch.zeros(count, dtype=torch_dtype, device="cuda")
+    operator_out = torch.zeros(count, dtype=torch_dtype, device="cuda")
+    expected = -torch.tensor(input_values[:count], dtype=torch_dtype)
+
+    cl.launch(
+        torch.cuda.current_stream(),
+        (1,),
+        (1,),
+        kernel,
+        (inp, out, operator_out),
+    )
+    torch.testing.assert_close(out.cpu(), expected)
+    torch.testing.assert_close(operator_out.cpu(), expected)
 
 
 @pytest.mark.parametrize("dtype", SIGNED_INT_TYPES)

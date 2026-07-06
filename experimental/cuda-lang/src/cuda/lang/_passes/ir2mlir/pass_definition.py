@@ -612,7 +612,7 @@ class IR2MLIR:
                 | ir_type.EnumTy()
             ):
                 return [value]
-            case ir_type.ScalarTy():
+            case ir_type.ScalarTy() | ir_type.VectorTy():
                 mlir_type = ir_type_to_mlir_type(target_type)
                 cst = mlir_constant_of_type(mlir_type, value)
                 return [cst]

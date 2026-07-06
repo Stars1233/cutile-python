@@ -132,6 +132,7 @@ Math
    floordiv
    cdiv
    pow
+   atan2
    mod
    minimum
    maximum

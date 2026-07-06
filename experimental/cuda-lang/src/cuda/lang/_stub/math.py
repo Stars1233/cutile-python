@@ -7,6 +7,48 @@ from cuda.lang._execution import stub
 
 
 @stub
+def add(x, y, /):
+    """Compute ``x + y``."""
+    ...
+
+
+@stub
+def sub(x, y, /):
+    """Compute ``x - y``."""
+    ...
+
+
+@stub
+def mul(x, y, /):
+    """Compute ``x * y``."""
+    ...
+
+
+@stub
+def truediv(x, y, /):
+    """Compute ``x / y``."""
+    ...
+
+
+@stub
+def floordiv(x, y, /):
+    """Compute ``x // y``."""
+    ...
+
+
+@stub
+def mod(x, y, /):
+    """Compute ``x % y``."""
+    ...
+
+
+@stub
+def negative(x, /):
+    """Compute ``-x``."""
+    ...
+
+
+@stub
 def ceil(x, /):
     """Round ``x`` toward positive infinity."""
     ...
@@ -161,6 +203,13 @@ def minimum(x, y, /, *, propagate_nan=False):
 
 
 __all__ = (
+    "add",
+    "sub",
+    "mul",
+    "truediv",
+    "floordiv",
+    "mod",
+    "negative",
     "ceil",
     "exp",
     "exp2",

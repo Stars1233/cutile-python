@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import operator
+
 from cuda.tile._ir.ops_utils import promote_dtypes
 
 import cuda.lang._datatype as datatype
@@ -10,6 +12,7 @@ from cuda.lang._ir.ir import Var, add_operation
 from .vector_impl import vector_elementwise_apply
 from cuda.lang._ir.type import (
     ScalarTy,
+    TensorLikeTy,
     VectorTy,
 )
 from cuda.lang._ir.op_defs import (
@@ -24,7 +27,14 @@ from cuda.lang._ir.type_checking_helpers import (
     require_scalar_or_vector_type,
 )
 from cuda.tile._datatype import is_float, is_integral
-from cuda.tile._ir.arithmetic_ops import astype, promote_and_broadcast_to
+from cuda.tile._ir.arithmetic_ops import (
+    UNARY_INT_FLOAT,
+    astype,
+    binary_arithmetic_tensorlike,
+    mod_tensorlike,
+    promote_and_broadcast_to,
+    unary,
+)
 from cuda.tile._ir.core_ops import strictly_typed_const
 from cuda.tile._ir.op_impl import (
     ImplRegistry,
@@ -39,6 +49,25 @@ impl = _registry.impl
 
 def math_impl_registry() -> ImplRegistry:
     return _registry
+
+
+@impl(cl_math.add, fixed_args=["add"])
+@impl(cl_math.sub, fixed_args=["sub"])
+@impl(cl_math.mul, fixed_args=["mul"])
+@impl(cl_math.truediv, fixed_args=["truediv"])
+@impl(cl_math.floordiv, fixed_args=["floordiv"])
+def math_binary_arithmetic_impl(fn: str, x: Var, y: Var):
+    return binary_arithmetic_tensorlike(fn, x, y)
+
+
+@impl(cl_math.mod)
+def math_mod_impl(x: Var, y: Var):
+    return mod_tensorlike(x, y)
+
+
+@impl(cl_math.negative)
+def math_negative_impl(x: Var):
+    return unary("neg", UNARY_INT_FLOAT, x)
 
 
 @impl(cl_math.ceil, fixed_args=["math.ceil"])
@@ -127,6 +156,7 @@ def get_libdevice_pow_function(base_dt, exp_dt):
     )
 
 
+@impl(operator.pow, overload=(TensorLikeTy, TensorLikeTy))
 @impl(cl_math.pow)
 def math_pow_impl(x: Var, y: Var):
     x_ty, y_ty = x.get_type(), y.get_type()
