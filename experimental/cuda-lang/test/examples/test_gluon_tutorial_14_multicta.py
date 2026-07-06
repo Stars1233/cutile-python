@@ -24,7 +24,7 @@ Users must handle these themselves in cuda.lang at the time of writing.
 """
 
 cc = get_compute_capability()
-if cc != (10, 0):
+if tuple(cc) != (10, 0):
     pytest.skip("Requires blackwell", True)
 
 WARP_SIZE = 32
@@ -220,8 +220,8 @@ def tma_multicast_copy_kernel(
         cl.copy_async_bulk_tensor_shared_to_global(
             smem.get_base_pointer(), out_tmap, (0, 0)
         )
-        cl._nvvm.cp_async_bulk_commit_group()
-        cl._nvvm.cp_async_bulk_wait_group(0)
+        cl.copy_async_bulk_commit_group()
+        cl.copy_async_bulk_wait_group(0)
 
 
 def test_tma_multicast_copy():
@@ -392,8 +392,8 @@ def two_cta_tcgen05_kernel(a, b, c):
         cl.copy_async_bulk_tensor_shared_to_global(
             c_smem.get_base_pointer(), c_tmap, (0, rank * cta_m)
         )
-        cl._nvvm.cp_async_bulk_commit_group()
-        cl._nvvm.cp_async_bulk_wait_group(0)
+        cl.copy_async_bulk_commit_group()
+        cl.copy_async_bulk_wait_group(0)
 
     cl.barrier_sync_cluster(aligned=True)
     if warp == 0:
@@ -546,8 +546,8 @@ def tma_tcgen05_kernel(a, b, c):
         cl.copy_async_bulk_tensor_shared_to_global(
             c_smem.get_base_pointer(), c_tmap, (0, rank * cta_m)
         )
-        cl._nvvm.cp_async_bulk_commit_group()
-        cl._nvvm.cp_async_bulk_wait_group(0)
+        cl.copy_async_bulk_commit_group()
+        cl.copy_async_bulk_wait_group(0)
 
     cl.barrier_sync_cluster(aligned=True)
     if warp == 0:
@@ -647,7 +647,7 @@ def store_matmul_partition(
         stage = subtile % subtile_stages
         stage_smem = c_smem.get_element_pointer((stage, 0))
         if warp == 0 and cl.elect_sync():
-            cl._nvvm.cp_async_bulk_wait_group_read(subtile_stages - 1)
+            cl.copy_async_bulk_wait_group(subtile_stages - 1, read=True)
         cl.barrier_sync_block()
 
         if valid_tile:
@@ -677,7 +677,7 @@ def store_matmul_partition(
                 ),
                 predicate=valid_tile,
             )
-            cl._nvvm.cp_async_bulk_commit_group()
+            cl.copy_async_bulk_commit_group()
     if cl.elect_sync():
         empty_bar = cl.map_shared_to_cluster(acc_empty, 0)
         cl.mbarrier_arrive(empty_bar, scope=cl.MbarrierScope.BLOCK)
@@ -1013,7 +1013,7 @@ def matmul_multicta_kernel(
             )
 
     if warp == 0 and cl.elect_sync():
-        cl._nvvm.cp_async_bulk_wait_group(0)
+        cl.copy_async_bulk_wait_group(0)
     cl.barrier_sync_cluster(aligned=True)
 
 

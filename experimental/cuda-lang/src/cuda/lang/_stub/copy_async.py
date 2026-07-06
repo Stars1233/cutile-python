@@ -2,8 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from cuda.lang._execution import stub
-from .._enums import TMALoadMode, TMAStoreMode, CTAGroup
+from cuda.lang._execution import stub, function
+from .._enums import TMALoadMode, TMAStoreMode, CTAGroup  # noqa: F401
+from . import nvvm as _nvvm
+from .static_requirements import require_constant_bool, require_constant_int
 
 
 @stub
@@ -58,10 +60,30 @@ def copy_async_bulk_tensor_shared_to_global(
     """
 
 
-__all__ = (
-    "TMALoadMode",
-    "TMAStoreMode",
-    "CTAGroup",
-    "copy_async_bulk_tensor_global_to_shared",
-    "copy_async_bulk_tensor_shared_to_global",
-)
+@function()
+def copy_async_bulk_commit_group():
+    """
+    Commit all prior initiated but uncommitted cp.async.bulk instructions into
+    a group of cp.async.bulk instructions.
+    """
+    _nvvm.cp_async_bulk_commit_group()
+
+
+@function()
+def copy_async_bulk_wait_group(number_of_groups, *, read=False):
+    """Wait for completion of the most recent bulk async-groups.
+
+    Args:
+        number_of_groups (32-bit integer): How many of the prior async-bulk
+            operation groups should be waited on.
+        read (bool): Indicates that executing thread should wait until the bulk
+            async operations in the specified bulk async-group must complete
+            reading from the tensor map and reading from their source
+            locations.
+    """
+    require_constant_int(number_of_groups)
+    require_constant_bool(read)
+    if read:
+        _nvvm.cp_async_bulk_wait_group_read(number_of_groups)
+    else:
+        _nvvm.cp_async_bulk_wait_group(number_of_groups)

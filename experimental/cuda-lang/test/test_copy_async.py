@@ -9,6 +9,7 @@ from cuda.lang._exception import TileTypeError
 from cuda.lang.compilation import KernelSignature
 
 from .util import (
+    compile_kernel,
     make_symbolic_scalar,
     make_symbolic_tensor,
     require_blackwell_cc100,
@@ -469,3 +470,69 @@ class TestS2G(CopyAsyncPtxTestBase):
         )
         assert compiled.ptx is not None
         assert "cp.async.bulk.tensor.3d.global.shared::cta.im2col" in compiled.ptx
+
+
+@require_hopper_or_newer()
+def test_copy_async_bulk_wait_group_read():
+    def k():
+        cl.copy_async_bulk_wait_group(0, read=False)
+        cl.copy_async_bulk_wait_group(1, read=False)
+
+    compile_kernel(
+        k,
+        filecheck_ptx="""
+        CHECK-NOT: cp.async.bulk.wait_group.read
+        CHECK: cp.async.bulk.wait_group 0
+        CHECK-NEXT: cp.async.bulk.wait_group 1
+        """,
+    )
+
+
+@require_hopper_or_newer()
+def test_copy_async_bulk_wait_group():
+    def k():
+        cl.copy_async_bulk_wait_group(0, read=True)
+        cl.copy_async_bulk_wait_group(1, read=True)
+
+    compile_kernel(
+        k,
+        filecheck_ptx="""
+        CHECK: cp.async.bulk.wait_group.read 0
+        CHECK-NEXT: cp.async.bulk.wait_group.read 1
+        """,
+    )
+
+
+@require_hopper_or_newer()
+def test_copy_async_bulk_commit_group():
+    def k():
+        cl.copy_async_bulk_commit_group()
+
+    compile_kernel(
+        k,
+        assert_in_ptx="cp.async.bulk.commit_group",
+    )
+
+
+@require_hopper_or_newer()
+def test_copy_async_bulk_wait_group_non_immediate_group():
+    def k(input):
+        cl.copy_async_bulk_wait_group(input[0])
+
+    compile_kernel(
+        k,
+        signature=KernelSignature([make_symbolic_tensor(1, dtype=cl.int32)]),
+        raises=pytest.raises(Exception, match="Expected constant of type int"),
+    )
+
+
+@require_hopper_or_newer()
+def test_copy_async_bulk_wait_group_non_immediate_read():
+    def k(input):
+        cl.copy_async_bulk_wait_group(0, read=input[0] > 0)
+
+    compile_kernel(
+        k,
+        signature=KernelSignature([make_symbolic_tensor(1, dtype=cl.int32)]),
+        raises=pytest.raises(Exception, match="Expected constant of type bool"),
+    )

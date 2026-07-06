@@ -42,6 +42,8 @@ from ._stub.copy_async import (
     TMAStoreMode,
     copy_async_bulk_tensor_shared_to_global,
     copy_async_bulk_tensor_global_to_shared,
+    copy_async_bulk_commit_group,
+    copy_async_bulk_wait_group,
 )
 from ._stub.core_api import (
     dtype_of,
@@ -326,4 +328,6 @@ __all__ = (
     "bitcast",
     "copy_async_bulk_tensor_shared_to_global",
     "copy_async_bulk_tensor_global_to_shared",
+    "copy_async_bulk_commit_group",
+    "copy_async_bulk_wait_group",
 )

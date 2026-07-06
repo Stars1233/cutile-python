@@ -4,26 +4,11 @@
 
 from typing import Literal
 
-from cuda.tile import static_assert
-
 from cuda.lang._execution import function, stub
 from .._enums import BarrierReductionKind, MemoryOrder
 from .core_api import FULL_MASK
 from . import nvvm as _nvvm
-
-
-def _require_constant_bool(var):
-    static_assert(
-        var in (True, False),
-        f"Expected constant of type bool but got {var}",
-    )
-
-
-def _require_constant_enum(var, enum):
-    static_assert(
-        var in tuple(enum),
-        f"Expected enum constant of type {enum.__name__} but got {var}",
-    )
+from .static_requirements import require_constant_bool, require_constant_enum
 
 
 @function()
@@ -43,7 +28,7 @@ def barrier_sync_block(
         aligned: Requires every thread in the block to reach this same barrier
              instruction, otherwise the behavior is undefined.
     """
-    _require_constant_bool(aligned)
+    require_constant_bool(aligned)
     if number_of_threads is None:
         if aligned:
             _nvvm.barrier_cta_sync_aligned_all(barrier_id)
@@ -73,7 +58,7 @@ def barrier_arrive_block(
         aligned: Requires every thread in the block to reach this same barrier
              instruction, otherwise the behavior is undefined.
     """
-    _require_constant_bool(aligned)
+    require_constant_bool(aligned)
     if aligned:
         _nvvm.barrier_cta_arrive_aligned_count(barrier_id, number_of_threads)
     else:
@@ -116,8 +101,8 @@ def barrier_arrive_cluster(
             instruction, otherwise the behavior is undefined.
         memory_order:
     """
-    _require_constant_bool(aligned)
-    _require_constant_enum(memory_order, MemoryOrder)
+    require_constant_bool(aligned)
+    require_constant_enum(memory_order, MemoryOrder)
     if memory_order == MemoryOrder.RELAXED:
         if aligned:
             _nvvm.barrier_cluster_arrive_relaxed_aligned()
@@ -137,7 +122,7 @@ def barrier_wait_cluster(*, aligned: bool = True) -> None:
         aligned: Requires every thread in the block to reach this same barrier
             instruction, otherwise the behavior is undefined.
     """
-    _require_constant_bool(aligned)
+    require_constant_bool(aligned)
     if aligned:
         _nvvm.barrier_cluster_wait_aligned()
     else:
