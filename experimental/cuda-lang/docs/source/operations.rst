@@ -9,6 +9,16 @@ Operations
 ==========
 
 
+Execution
+---------
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   kernel
+   launch
+
+
 .. _operations-array-creation:
 
 Array Creation
@@ -33,6 +43,7 @@ Pointer Utilities
    pointer_dtype
    opaque_pointer_dtype
    address_space_cast
+   bitcast
    map_shared_to_cluster
    map_shared_to_leader_block
    shared_cluster_leader_bit_mask
@@ -178,6 +189,18 @@ TensorMap
     SwizzleMode
 
 
+TensorMap Async Copy
+--------------------
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+    copy_async_bulk_tensor_global_to_shared
+    copy_async_bulk_tensor_shared_to_global
+    copy_async_bulk_commit_group
+    copy_async_bulk_wait_group
+
+
 Synchronization
 ---------------
 .. autosummary::
@@ -219,6 +242,13 @@ Memory Fence
    :nosignatures:
 
     memory_barrier
+    fence_sc_cluster
+    fence_mbarrier_initialize
+    fence_sync_restrict
+    fence_proxy
+    fence_proxy_acquire
+    fence_proxy_release
+    fence_proxy_sync_restrict
 
 
 TensorCore (Gen5)
@@ -231,7 +261,15 @@ TensorCore (Gen5)
     tcgen05_deallocate
     tcgen05_commit
     tcgen05_load
+    tcgen05_copy
     tcgen05_store
+    tcgen05_mma
+    tcgen05_wait_load
+    tcgen05_wait_store
+    tcgen05_fence_before_thread_sync
+    tcgen05_fence_after_thread_sync
+    tcgen05_shift_down
+    tcgen05_relinquish_allocation_permit
 
 .. autosummary::
    :toctree: generated
@@ -251,6 +289,16 @@ Cluster Launch Control
     clusterlaunchcontrol_try_cancel
     clusterlaunchcontrol_is_canceled
     clusterlaunchcontrol_get_first_block_index
+
+Programmatic Dependent Launch
+-----------------------------
+To use Programmatic Dependent Launch (PDL), launch the dependent kernel with
+the ``pdl=True`` keyword argument to :func:`launch`.
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
     griddepcontrol_wait
     griddepcontrol_launch_dependents
 
