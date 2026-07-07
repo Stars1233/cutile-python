@@ -18,8 +18,6 @@ class Scalar(Generic[T]):
 class Vector(Generic[T]):
     """Fixed-size collection returned by vectorized pointer operations."""
 
-    _cutile_is_builtin = True
-
     @stub
     def __init__(self, *elements: T, dtype: DType | None = None) -> None:
         """Constructs a vector from scalar elements, optionally with an explicit dtype."""

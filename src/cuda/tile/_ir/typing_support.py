@@ -6,7 +6,7 @@ import operator
 import dataclasses
 from enum import Enum
 from functools import lru_cache
-from types import ModuleType, FunctionType
+from types import ModuleType, FunctionType, BuiltinFunctionType
 from typing import Any, Callable, Mapping, Union
 
 from cuda.tile import _datatype as datatype, DType
@@ -81,7 +81,7 @@ class TypeHandlerTable(dict[TypeKey, TypeHandler]):
         raise KeyError
 
 
-BUILTIN_FUNCS = {
+BUILTIN_FUNC_SIGNATURES = {
     abs: lambda x: None,
     len: lambda x, /: None,
     max: lambda x, y, /: None,
@@ -120,13 +120,11 @@ BUILTIN_FUNCS = {
     int: lambda x=0, /: None,
     bool: lambda x=False, /: None,
     print: lambda *args, sep=' ', end='\n': None,
-    dataclasses.replace: dataclasses.replace,
-    dict.get: dict.get,
 }
 
 
 def get_signature(f) -> inspect.Signature:
-    if stub := BUILTIN_FUNCS.get(f):
+    if stub := BUILTIN_FUNC_SIGNATURES.get(f):
         f = stub
     elif is_dtype_constructor(f):
         # Data type constructors
@@ -138,10 +136,6 @@ def get_signature(f) -> inspect.Signature:
     while is_function_wrapper(f):
         f = f.__wrapped__
     return inspect.signature(f, follow_wrapped=False)
-
-
-def is_supported_builtin_func(x: Any) -> bool:
-    return _safe_get(BUILTIN_FUNCS, x) is not None or getattr(x, '_cutile_is_builtin', False)
 
 
 def dtype_of_constant_scalar(val: bool | int | float) -> DType:
@@ -178,9 +172,7 @@ def type_of_constant_python_value(val, typing_hooks: TypingHooks) -> Type:
         return SLICE
     if isinstance(val, ModuleType):
         return ModuleTy(val)
-    if isinstance(val, FunctionType):
-        return FunctionTy(val)
-    if is_supported_builtin_func(val):
+    if isinstance(val, FunctionType | BuiltinFunctionType):
         return FunctionTy(val)
     if isinstance(val, datatype.DType):
         if _is_dtype_allowed_as_constructor(val):

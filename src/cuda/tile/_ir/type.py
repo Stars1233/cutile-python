@@ -906,7 +906,7 @@ class TypeTy(Type):
 
 @dataclass(frozen=True)
 class FunctionTy(Type):
-    func: FunctionType
+    func: FunctionType | BuiltinFunctionType
 
     def __str__(self):
         return str(self.func)

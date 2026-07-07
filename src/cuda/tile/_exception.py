@@ -202,6 +202,10 @@ class StaticAssertionError(TileError):
 TileStaticAssertionError = StaticAssertionError
 
 
+class UnsupportedCallError(TileError):
+    """Raised when an unsupported function or type is called from device code."""
+
+
 class ConstantNotFoundError(Exception):
     pass
 

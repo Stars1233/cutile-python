@@ -960,8 +960,6 @@ class Slice:
         length: Length in elements.
     """
 
-    _cutile_is_builtin = True
-
     @stub
     def __init__(self, start, length, /):
         pass  # implemented via @impl(ct.Slice) in ops.py

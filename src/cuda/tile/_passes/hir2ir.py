@@ -7,14 +7,14 @@ from contextlib import contextmanager
 import dataclasses
 
 from enum import Enum
+from types import BuiltinFunctionType
 from typing import Sequence, Mapping, Callable
 
 from .ast2hir import get_function_hir
 from .. import TileTypeError
 from .._coroutine_util import resume_after, run_coroutine
-from .._datatype import PointerInfo
 from .._exception import Loc, FunctionDesc, TileInternalError, TileError, TileRecursionError, \
-    TileValueError
+    TileValueError, UnsupportedCallError
 from .._execution import is_stub
 from .._ir import hir, ir
 from .._ir.ir import Var, IRContext
@@ -28,8 +28,7 @@ from .._ir.scope import Scope, LocalScope, IntMap
 from .._ir.type import FunctionTy, BoundMethodTy, DTypeConstructor, ClosureTy, \
     ClosureDefaultPlaceholder, StringFormat, TypeTy, TupleTy, BoundMethodValue, TupleValue, \
     ClosureValue, DictTy, DictValue
-from .._ir.typing_support import get_signature, is_supported_builtin_func, \
-    get_dataclass_info
+from .._ir.typing_support import get_signature, get_dataclass_info
 
 
 MAX_RECURSION_DEPTH = 1000
@@ -231,24 +230,21 @@ async def _call_function(callee: Callable,
                          args: Sequence[Var],
                          kwargs: Mapping[str, Var],
                          builder: ir.Builder):
-    sig = get_signature(callee)
-    arg_list = _bind_args(sig, callee.__name__, args, kwargs)
-    if is_stub(callee) or is_supported_builtin_func(callee):
-        return await _call_builtin(callee, arg_list, builder)
+    impl = _try_find_function_impl(callee)
+    if impl is not None or is_stub(callee) or isinstance(callee, BuiltinFunctionType):
+        if impl is None:
+            raise UnsupportedCallError(f"{callee.__name__}() is not supported in device code")
+        return await _call_builtin(callee, impl, args, kwargs, builder)
     else:
         callee_hir = get_function_hir(callee, entry_point=False)
+        sig = get_signature(callee)
+        arg_list = _bind_args(sig, callee.__name__, args, kwargs)
         return await _call_user_defined(callee_hir, arg_list, builder)
 
 
-async def _call_builtin(callee, arg_list: list[Var | tuple[Var, ...]], builder: ir.Builder):
-    impl_registry = ImplRegistry.get_current()
-    try:
-        impl = impl_registry.op_implementations[callee]
-    except KeyError:
-        impl = getattr(callee, "_cutile_custom_implementation_handler", None)
-        if impl is None:
-            raise NotImplementedError(f"Missing implementation for {callee}")
-        arg_list = [callee, *arg_list]
+async def _call_builtin(callee, impl, args, kwargs, builder: ir.Builder):
+    sig = get_signature(callee)
+    arg_list = _bind_args(sig, callee.__name__, args, kwargs)
 
     result = impl(*arg_list)
     if impl._is_coroutine:
@@ -266,8 +262,27 @@ async def _call_builtin(callee, arg_list: list[Var | tuple[Var, ...]], builder: 
     return result
 
 
+def _try_find_function_impl(callee):
+    impl_registry = ImplRegistry.get_current()
+    try:
+        return impl_registry.op_implementations[callee]
+    except KeyError:
+        custom_handler = getattr(callee, "_cutile_custom_implementation_handler", None)
+        if custom_handler is None:
+            return None
+
+        if custom_handler._is_coroutine:
+            async def custom_impl_wrapper(*args):
+                return await custom_handler(callee, *args)
+        else:
+            def custom_impl_wrapper(*args):
+                return custom_handler(callee, *args)
+
+        custom_impl_wrapper._is_coroutine = custom_handler._is_coroutine
+        return custom_impl_wrapper
+
+
 _DTYPE_CONSTRUCTOR_SIGNATURE = inspect.signature(lambda x=0, /: None)
-_POINTER_INFO_SIGNATURE = inspect.signature(PointerInfo)
 
 
 async def call(callee_var: Var, args, kwargs) -> Var | None:
@@ -284,6 +299,8 @@ async def call(callee_var: Var, args, kwargs) -> Var | None:
         arg_list = _bind_args(_DTYPE_CONSTRUCTOR_SIGNATURE, callee_ty.dtype.name, args, kwargs)
         [x] = arg_list
         return dtype_constructor(callee_ty.dtype, x)
+    elif isinstance(callee_ty, TypeTy):
+        return await _call_constructor(callee_ty.ty, args, kwargs, builder)
     elif isinstance(callee_ty, ClosureTy):
         func_name = callee_ty.func_hir.desc.name
         if func_name is None:
@@ -293,19 +310,20 @@ async def call(callee_var: Var, args, kwargs) -> Var | None:
         parent_scopes = _get_closure_parent_scopes(callee_ty, callee_var.get_aggregate(),
                                                    builder.ir_ctx)
         return await _call_user_defined(callee_ty.func_hir, arg_list, builder, parent_scopes)
-    elif isinstance(callee_ty, TypeTy) and dataclasses.is_dataclass(callee_ty.ty):
-        dataclass_info = get_dataclass_info(callee_ty.ty)
+    else:
+        raise TileTypeError(f"Cannot call an object of type {callee_ty}")
+
+
+async def _call_constructor(ty, args, kwargs, builder):
+    if dataclasses.is_dataclass(ty):
+        dataclass_info = get_dataclass_info(ty)
         param_names = tuple(dataclass_info.init_signature.parameters)
         # Add an extra `None` to args for the `self` parameter
-        arg_list = _bind_args(dataclass_info.init_signature, callee_ty.ty.__name__,
-                              (None, *args), kwargs)
+        arg_list = _bind_args(dataclass_info.init_signature, ty.__name__, (None, *args), kwargs)
         assert len(dataclass_info.field_names) + 1 == len(arg_list)
         items = tuple(arg_list[param_names.index(name)] for name in dataclass_info.field_names)
         return build_dataclass_instance(items, dataclass_info)
-    elif isinstance(callee_ty, TypeTy) and callee_ty.ty is PointerInfo:
-        arg_list = _bind_args(_POINTER_INFO_SIGNATURE, "PointerInfo", args, kwargs)
-        return await _call_builtin(PointerInfo, arg_list, builder)
-    elif isinstance(callee_ty, TypeTy) and issubclass(callee_ty.ty, Enum):
+    elif issubclass(ty, Enum):
         if len(args) != 1 or kwargs:
             raise TileTypeError("Enum constructor takes exactly one positional argument")
         arg = args[0]
@@ -313,11 +331,15 @@ async def call(callee_var: Var, args, kwargs) -> Var | None:
             raise TileTypeError("Enum constructor argument must be a constant")
         val = arg.get_constant()
         try:
-            return loosely_typed_const(callee_ty.ty(val))
+            return loosely_typed_const(ty(val))
         except ValueError:
-            raise TileValueError(f"{val!r} is not a valid {callee_ty.ty.__name__}")
+            raise TileValueError(f"{val!r} is not a valid {ty.__name__}")
     else:
-        raise TileTypeError(f"Cannot call an object of type {callee_ty}")
+        impl = _try_find_function_impl(ty)
+        if impl is None:
+            raise UnsupportedCallError(f'Creating instances of type "{ty.__name__}"'
+                                       f' is not supported in device code')
+        return await _call_builtin(ty, impl, args, kwargs, builder)
 
 
 def _get_closure_parent_scopes(ty: ClosureTy, val: ClosureValue,
