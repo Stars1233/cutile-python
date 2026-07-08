@@ -15,7 +15,7 @@ def test_pdl():
         a[tx] = tx * 2.0
 
         cl.memory_barrier(scope=cl.MemoryScope.DEVICE)
-        cl.griddepcontrol_launch_dependents()
+        cl.grid_dependency_control_launch_dependents()
 
     @cl.kernel
     def dependent(a, b):
@@ -25,12 +25,19 @@ def test_pdl():
         val = tx * 4.0 + b[tx]
         # ---
 
-        cl.griddepcontrol_wait()
+        cl.grid_dependency_control_wait()
         a[tx] = val + a[tx]
 
     a = torch.zeros(32, dtype=torch.float32).cuda()
     b = torch.ones(32, dtype=torch.float32).cuda()
     cl.launch(torch.cuda.current_stream(), (1,), (32,), dependee, (a,))
-    cl.launch(torch.cuda.current_stream(), (1,), (32,), dependent, (a, b), pdl=True)
+    cl.launch(
+        torch.cuda.current_stream(),
+        (1,),
+        (32,),
+        dependent,
+        (a, b),
+        programmatic_dependent_launch=True,
+    )
     torch.cuda.synchronize()
     assert a.cpu().tolist() == list(i * 2 + i * 4 + 1 for i in range(32))

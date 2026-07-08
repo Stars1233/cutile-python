@@ -14,5 +14,5 @@ def test_too_many_kwargs():
 
     bad_kwargs = {f"kw{i}": i for i in range(20)}
 
-    with pytest.raises(RuntimeError, match="Unexpected keyword argument"):
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
         cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (), **bad_kwargs)

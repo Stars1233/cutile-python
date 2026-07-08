@@ -27,7 +27,7 @@ def launch_extended(stream,
                     cooperative: bool = False,
                     block_in_cluster_count: Dim3 | None = None,
                     preferred_block_in_cluster_count: Dim3 | None = None,
-                    pdl: bool = False
+                    programmatic_dependent_launch: bool = False
                     ):
     ...
 

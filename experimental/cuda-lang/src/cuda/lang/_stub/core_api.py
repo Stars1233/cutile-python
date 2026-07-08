@@ -1098,14 +1098,14 @@ def memory_barrier(scope: MemoryScope) -> None:
     return nvvm_mlir_interfaces.memory_barrier(scope=scope)
 
 
-def griddepcontrol_wait() -> None:
+def grid_dependency_control_wait() -> None:
     """Wait for prerequisite grids in a programmatic dependent launch."""
     nvvm_mlir_interfaces.griddepcontrol(
         kind=nvvm_mlir_interfaces.GridDepActionKind.wait
     )
 
 
-def griddepcontrol_launch_dependents() -> None:
+def grid_dependency_control_launch_dependents() -> None:
     """Launch dependent grids in a programmatic dependent launch."""
     nvvm_mlir_interfaces.griddepcontrol(
         kind=nvvm_mlir_interfaces.GridDepActionKind.launch_dependents

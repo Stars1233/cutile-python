@@ -299,8 +299,8 @@ the ``pdl=True`` keyword argument to :func:`launch`.
    :toctree: generated
    :nosignatures:
 
-    griddepcontrol_wait
-    griddepcontrol_launch_dependents
+    grid_dependency_control_wait
+    grid_dependency_control_launch_dependents
 
 
 Utility

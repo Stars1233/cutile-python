@@ -36,7 +36,7 @@ static PyObject* g_dynamic_shared_memory_bytes_pyunicode;
 static PyObject* g_cooperative_pyunicode;
 static PyObject* g_block_in_cluster_count_pyunicode;
 static PyObject* g_preferred_block_in_cluster_count_pyunicode;
-static PyObject* g_pdl_pyunicode;
+static PyObject* g_programmatic_dependent_launch_pyunicode;
 
 static PyTypeObject* g_torch_Tensor_type;
 static PyTypeObject* g_torch_cuda_Stream_type;
@@ -3112,7 +3112,7 @@ static Result<unsigned> parse_launch_kwargs(PyObject *const *args,
             CUlaunchAttribute *attr = &launch_attrs[num_attrs++];
             attr->id = CU_LAUNCH_ATTRIBUTE_COOPERATIVE;
             attr->value.cooperative = Py_IsTrue(kwarg);
-        } else if (PyUnicode_Compare(keyword, g_pdl_pyunicode) == 0) {
+        } else if (PyUnicode_Compare(keyword, g_programmatic_dependent_launch_pyunicode) == 0) {
             if (!PyBool_Check(kwarg))
                 return raise(PyExc_TypeError,
                              "expected argument %U to have type bool", keyword);
@@ -3241,10 +3241,10 @@ static PyObject* cuda_tile_launch(PyObject*, PyObject* const* args, Py_ssize_t n
                      /*with_block=*/false);
 }
 
-#define LAUNCH_EXTENDED_SIGNATURE                                                         \
-  "launch(stream, block_count, thread_count, kernel, kernel_args, /, *, "                 \
-  "cooperative=False, block_in_cluster_count=None, preferred_block_in_cluster_count=None" \
-  "pdl=False)"
+#define LAUNCH_EXTENDED_SIGNATURE                                                           \
+  "launch(stream, block_count, thread_count, kernel, kernel_args, /, *, "                   \
+  "cooperative=False, block_in_cluster_count=None, preferred_block_in_cluster_count=None, " \
+  "programmatic_dependent_launch=False)"
 
 static PyObject *launch_extended(PyObject *, PyObject *const *args,
                                  Py_ssize_t nargs, PyObject *kwargs) {
@@ -3676,7 +3676,7 @@ Status tile_kernel_init(PyObject* m) {
     INIT_STRING_CONSTANT(cooperative);
     INIT_STRING_CONSTANT(block_in_cluster_count);
     INIT_STRING_CONSTANT(preferred_block_in_cluster_count);
-    INIT_STRING_CONSTANT(pdl);
+    INIT_STRING_CONSTANT(programmatic_dependent_launch);
 
     g_stream_buffer_pool_by_ctx_id = new StreamBufferPoolMap();
 
