@@ -9,7 +9,7 @@ from cuda.lang._execution import stub, function
 from cuda.lang._exception import TypeCheckingError
 from cuda.tile._stub import Array as TileArray, cdiv as tile_cdiv
 from cuda.tile._memory_model import MemoryOrder, MemoryScope, MemorySpace
-from cuda.lang._datatype import DType, int32
+from cuda.lang._datatype import DType
 from .types import Pointer, Scalar, Vector
 
 T = TypeVar("T")
@@ -385,14 +385,26 @@ def local_array(
     """
 
 
-@function()
-def setmaxregister_increase(value: int32):
-    nvvm.setmaxnreg_inc_sync_aligned_u32(int32(value))
+@stub
+def setmaxregister_increase(number_of_registers):
+    """Hint to change the number of registers owned by the warp.
+
+    Args:
+        number_of_registers: Number of registers requested for this warp.
+            Must be in the range [24, 256] and a multiple of 8.
+    """
+    pass
 
 
-@function()
-def setmaxregister_decrease(value: int32):
-    nvvm.setmaxnreg_dec_sync_aligned_u32(int32(value))
+@stub
+def setmaxregister_decrease(number_of_registers):
+    """Hint to change the number of registers owned by the warp.
+
+    Args:
+        number_of_registers: Number of registers requested for this warp.
+            Must be in the range [24, 256] and a multiple of 8.
+    """
+    pass
 
 
 @stub

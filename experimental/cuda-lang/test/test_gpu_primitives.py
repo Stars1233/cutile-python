@@ -192,6 +192,19 @@ def test_setmaxregister():
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, ())
 
 
+@require_hopper_or_newer()
+def test_setmaxregister_prevent_invariant_code_motion_phi():
+
+    @cl.kernel
+    def kernel(cond):
+        if cond:
+            cl.setmaxregister_increase(64)
+        else:
+            cl.setmaxregister_increase(32)
+
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (True,))
+
+
 def test_tid():
     @cl.kernel
     def kernel(A):

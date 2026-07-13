@@ -1425,6 +1425,32 @@ def bitcast_impl(x: Var[ScalarTy | PointerTy | VectorTy], dtype: Var[DTypeConstr
     return bitcast(x, dtype)
 
 
+@impl(core_api.setmaxregister_decrease)
+def impl_setmaxregister_decrease(number_of_registers: Var[ScalarTy]):
+    value = require_constant_int(number_of_registers)
+    add_operation_variadic(
+        InlinePTX,
+        (),
+        ptx_code=f"setmaxnreg.dec.sync.aligned.u32 {value};",
+        read_only_operands=(),
+        write_only_operands=(),
+        read_write_operands=(),
+    )
+
+
+@impl(core_api.setmaxregister_increase)
+def impl_setmaxregister_increase(number_of_registers: Var[ScalarTy]):
+    value = require_constant_int(number_of_registers)
+    add_operation_variadic(
+        InlinePTX,
+        (),
+        ptx_code=f"setmaxnreg.inc.sync.aligned.u32 {value};",
+        read_only_operands=(),
+        write_only_operands=(),
+        read_write_operands=(),
+    )
+
+
 __all__ = (
     "AddrSpaceCast",
     "AtomicCAS",
