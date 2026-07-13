@@ -428,24 +428,78 @@ def test_jit_sharding(n):
 
 
 @ct.kernel
-def _tuple_param_heterogeneous(x, y, addends: tuple[ct.Constant[int], int]):
-    bid = ct.bid(0)
-    ct.store(y, bid, ct.load(x, bid, 1) + addends[0] + addends[1])
-
-
-@ct.kernel
-def _tuple_param_homogeneous(x, y, addends: tuple[int, ...]):
+def _tuple_param_variadic_scalars(x, y, addends: tuple[int, ...]):
     bid = ct.bid(0)
     ct.store(y, bid, ct.load(x, bid, 1) + addends[0])
 
 
-@pytest.mark.parametrize("kernel, tuple_arg", [
-    (_tuple_param_heterogeneous, (3, 4)),
-    (_tuple_param_homogeneous, (3,)),
-])
-def test_tuple_parameter_rejected(kernel, tuple_arg):
+@pytest.mark.parametrize("addends", [(3,), (3, 5)])
+def test_tuple_variadic_scalars(addends):
     x = _f32(10)
     ph = OutputPlaceholder(x.shape, x.dtype)
-    with pytest.raises(NotImplementedError,
-                       match="tuple parameters are not supported via the JAX/FFI integration"):
-        cutile_call((10,), kernel, (x, ph, tuple_arg))
+    y = cutile_call((10,), _tuple_param_variadic_scalars, (x, ph, addends))
+    np.testing.assert_array_equal(y, x + addends[0])
+
+
+@ct.kernel
+def _tuple_param_arrays(out, pair: tuple[jax.Array, jax.Array]):
+    bid = ct.bid(0)
+    ct.store(out, bid, ct.load(pair[0], bid, 1) + ct.load(pair[1], bid, 1))
+
+
+def test_tuple_of_arrays():
+    a = _f32(10)
+    b = _f32(10) * 2
+    ph = OutputPlaceholder(a.shape, a.dtype)
+    y = cutile_call((10,), _tuple_param_arrays, (ph, (a, b)))
+    np.testing.assert_array_equal(y, a + b)
+
+
+@ct.kernel
+def _tuple_param_nested(x, y, params: tuple[tuple[ct.Constant[int], int], int]):
+    bid = ct.bid(0)
+    v = ct.load(x, bid, 1) + params[0][0] + params[0][1] + params[1]
+    ct.store(y, bid, v)
+
+
+def test_tuple_nested():
+    x = _f32(10)
+    ph = OutputPlaceholder(x.shape, x.dtype)
+    y = cutile_call((10,), _tuple_param_nested, (x, ph, ((3, 4), 5)))
+    np.testing.assert_array_equal(y, x + 12)
+
+
+@ct.kernel
+def _tuple_param_const_scalar(x, y, addends: tuple[ct.Constant[int], int]):
+    bid = ct.bid(0)
+    ct.store(y, bid, ct.load(x, bid, 1) + addends[0] + addends[1])
+
+
+def test_tuple_constant_element_drives_recompilation():
+    """The constant element of a tuple is part of the compile cache key while a
+    runtime-scalar element is not: changing the constant recompiles, changing
+    the runtime scalar reuses the cubin."""
+    from cuda.tile.jax import _jax as _jax_mod
+
+    _jax_mod._COMPILE_CACHE.clear()
+    x = _f32(10)
+    ph = OutputPlaceholder(x.shape, x.dtype)
+
+    # Same constant (3), different runtime scalar -> one cubin.
+    np.testing.assert_array_equal(
+        cutile_call((10,), _tuple_param_const_scalar, (x, ph, (3, 4))), x + 7)
+    np.testing.assert_array_equal(
+        cutile_call((10,), _tuple_param_const_scalar, (x, ph, (3, 9))), x + 12)
+    assert len(_jax_mod._COMPILE_CACHE) == 1
+
+    # Different constant (7) -> distinct cubin.
+    np.testing.assert_array_equal(
+        cutile_call((10,), _tuple_param_const_scalar, (x, ph, (7, 4))), x + 11)
+    assert len(_jax_mod._COMPILE_CACHE) == 2
+
+
+def test_tuple_wrong_length_rejected():
+    x = _f32(10)
+    ph = OutputPlaceholder(x.shape, x.dtype)
+    with pytest.raises(TypeError, match="expects a tuple of length 2, got 3"):
+        cutile_call((10,), _tuple_param_const_scalar, (x, ph, (3, 4, 5)))

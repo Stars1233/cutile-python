@@ -37,9 +37,9 @@ JAX FFI
 -------
 
 cuTile kernels can be launched from JAX-traced graphs via
-:func:`cuda.tile.jax.cutile_call`, which threads buffers and scalar
-arguments through the JAX FFI call site so the kernel runs as a regular
-op inside a ``jax.jit``\-compiled graph.
+:func:`cuda.tile.jax.cutile_call`, which threads buffers, scalar, and
+tuple arguments through the JAX FFI call site so the kernel runs as a
+regular op inside a ``jax.jit``\-compiled graph.
 
 See :func:`cuda.tile.jax.cutile_call` for the full argument convention,
 along with :class:`cuda.tile.jax.OutputPlaceholder` and

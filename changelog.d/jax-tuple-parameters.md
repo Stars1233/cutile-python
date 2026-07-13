@@ -1,0 +1,1 @@
+- Added support for tuple parameters in JAX FFI.

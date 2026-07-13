@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import io
-import inspect
 import struct
 import hashlib
 from functools import partial
@@ -13,10 +12,12 @@ from collections import defaultdict
 
 import cuda.tile as ct
 import cuda.tile._cext as cext
-from cuda.tile._annotated_function import LeafAnnotationNode
+from cuda.tile._annotated_function import (
+    LeafAnnotationNode, HomogeneousTupleNode, HeterogeneousTupleNode)
 from cuda.tile._datatype import DType
 from cuda.tile.compilation._signature import (
-    ArrayConstraint, ConstantConstraint, ScalarConstraint, ParameterConstraint)
+    ArrayConstraint, ConstantConstraint, ScalarConstraint, TupleConstraint,
+    ParameterConstraint)
 from cuda.tile.compilation import (KernelSignature, CallingConvention, export_kernel)
 import cuda.tile._compile as ct_compile
 
@@ -71,6 +72,11 @@ def cutile_call(grid: tuple[int, ...],
               Because JAX treats scalar as 0D Array, to pass a scalar argument,
               it must be a static argument of the JAX function using
               ``static_argnums`` or ``static_argnames``.
+            - ``tuple``: A tuple parameter (the kernel parameter is annotated
+              as ``tuple[...]``). Each element is recursively one of the above
+              and tuples may be nested. Elements that are runtime scalars are
+              subject to the same ``static_argnums`` requirement as top-level
+              scalars.
 
     Returns:
         For a kernel with one output, the output array. For multiple
@@ -137,7 +143,6 @@ def cutile_call(grid: tuple[int, ...],
     scalars: list[bool | int | float] = []
     input_arrays: list[jax.Array] = []
     alias_group: list[str | None] = []
-    roles: list[str] = []
     grid = grid + (1,) * (3 - len(grid))
     alias_map = defaultdict(list)
 
@@ -150,40 +155,62 @@ def cutile_call(grid: tuple[int, ...],
             f"{kernel_name} expects {len(params)} arguments, got {len(args)}"
         )
 
-    # The JAX/FFI integration is one-arg-one-role and treats every annotation as a flat
-    # leaf (it reads `.constant`/`.array`/`.scalar` directly). Tuple parameters
-    # produce non-leaf annotation nodes, which it cannot flatten into buffers/constraints.
-    for i, ann_node in enumerate(annotations):
-        if not isinstance(ann_node, LeafAnnotationNode):
-            raise NotImplementedError(
-                f"{kernel_name}: argument {i} ('{params[i]}') is a tuple parameter; "
-                f"tuple parameters are not supported via the JAX/FFI integration"
-            )
-
-    for (i, (x, ann_node)) in enumerate(zip(args, annotations)):
+    def leaf_role(x, ann_node, path):
         if isinstance(x, OutputPlaceholder):
-            roles.append('o')
             outputs.append(jax.ShapeDtypeStruct(x.shape, x.dtype))
+            role = 'o'
         elif isinstance(x, jax.Array):
-            roles.append('i')
             alias_map[id(x)].append(len(input_arrays))
             input_arrays.append(x)
+            role = 'i'
         elif isinstance(x, InputOutput):
-            roles.append('io')
             alias_map[id(x.array)].append(len(input_arrays))
             input_arrays.append(x.array)
             outputs.append(jax.ShapeDtypeStruct(x.array.shape, x.array.dtype))
+            role = 'io'
         elif isinstance(x, (bool, int, float)):
             if ann_node.constant:
-                roles.append('c')
                 constants.append(x)
+                role = 'c'
             else:
-                roles.append('s')
                 scalars.append(x)
+                role = 's'
         else:
-            raise TypeError(f"Unexpected type for argument[{i}]: {type(x)}")
+            raise TypeError(f"Unexpected type for argument {path}: {type(x)}")
 
-    _check_roles(kernel_name, params, annotations, roles)
+        if ann_node.constant and role != 'c':
+            raise TypeError(
+                f"{kernel_name}: argument {path} is annotated ct.Constant; "
+                f"expected a static scalar argument"
+            )
+        return role
+
+    def flatten_arg(x, ann_node, path):
+        if isinstance(ann_node, LeafAnnotationNode):
+            return leaf_role(x, ann_node, path)
+        if not isinstance(x, tuple):
+            raise TypeError(
+                f"{kernel_name}: argument {path} is a tuple parameter; "
+                f"expected a tuple, got {type(x).__name__}"
+            )
+        if isinstance(ann_node, HomogeneousTupleNode):
+            sub_nodes = [ann_node.each] * len(x)
+        elif isinstance(ann_node, HeterogeneousTupleNode):
+            if len(x) != len(ann_node.items):
+                raise TypeError(
+                    f"{kernel_name}: argument {path} expects a tuple of length "
+                    f"{len(ann_node.items)}, got {len(x)}"
+                )
+            sub_nodes = ann_node.items
+        else:
+            raise TypeError(
+                f"{kernel_name}: unsupported annotation for argument {path}"
+            )
+        return tuple(flatten_arg(el, node, f"{path}[{i}]")
+                     for i, (el, node) in enumerate(zip(x, sub_nodes)))
+
+    roles = [flatten_arg(x, ann_node, f"{i} ('{params[i]}')")
+             for i, (x, ann_node) in enumerate(zip(args, annotations))]
 
     for i, x in enumerate(input_arrays):
         aliases = alias_map[id(x)]
@@ -208,17 +235,6 @@ def cutile_call(grid: tuple[int, ...],
 
     return wrapper(*input_arrays)
 
-
-def _check_roles(kernel_name: str,
-                 params: Sequence[inspect.Parameter],
-                 annotations: Sequence[Any],
-                 roles: Sequence[str]):
-    for i, (role, ann_node, pname) in enumerate(zip(roles, annotations, params)):
-        if ann_node.constant and role != 'c':
-            raise TypeError(
-                f"{kernel_name}: argument {i} ('{pname}') is annotated ct.Constant; "
-                f"expected a static scalar argument"
-            )
 
 # =========================== FFI registration ===========================
 
@@ -287,13 +303,12 @@ def _cutile_call_ffi_p_lower(
     output_shape_dtypes: tuple["jax.ShapeDtypeStruct", ...],
     constants: tuple[bool | int | float, ...],
     scalars: tuple[bool | int | float, ...],
-    roles: tuple[str, ...],
+    roles: tuple[Any, ...],
     alias_group: tuple[str | None, ...]
 ):
     num_inputs = len(input_args)
     num_outputs = len(output_shape_dtypes)
 
-    constraints: list[ParameterConstraint] = []
     # launch argument id to buffer id, input buffers followed by output_buffers
     buffer_ids: list[int] = []
     # Parallel to `buffer_ids`: index width (32 or 64) the kernel was
@@ -301,45 +316,64 @@ def _cutile_call_ffi_p_lower(
     # passing oversize shape/stride to an i32-indexed kernel.
     index_bitwidths: list[int] = []
     input_output_aliases: dict[int, int] = {}
-
-    ann_func = kernel._annotated_function
-    annotations = ann_func.parameter_annotations
     scalar_packed: list[int] = []
 
+    annotations = kernel._annotated_function.parameter_annotations
     ni, no, nc, ns = 0, 0, 0, 0
-    for pos, role in enumerate(roles):
-        is_i64_index = (annotations[pos].array is not None
-                        and annotations[pos].array.index_dtype == ct.int64)
+
+    def build_constraint(role, ann_node) -> ParameterConstraint:
+        nonlocal ni, no, nc, ns
+        if isinstance(role, tuple):
+            if isinstance(ann_node, HomogeneousTupleNode):
+                sub_nodes = [ann_node.each] * len(role)
+            elif isinstance(ann_node, HeterogeneousTupleNode):
+                sub_nodes = ann_node.items
+            else:
+                sub_nodes = [ann_node] * len(role)
+            return TupleConstraint([build_constraint(r, n)
+                                    for r, n in zip(role, sub_nodes)])
+
+        is_i64_index = (ann_node.array is not None
+                        and ann_node.array.index_dtype == ct.int64)
         idx_dtype = ct.int64 if is_i64_index else ct.int32
         if role == 'i':
             buffer_ids.append(ni)
             index_bitwidths.append(64 if is_i64_index else 32)
-            constraints.append(_array_constraint(ctx.avals_in[ni], idx_dtype, alias_group[ni]))
+            c = _array_constraint(ctx.avals_in[ni], idx_dtype, alias_group[ni])
             ni += 1
+            return c
         elif role == 'o':
             buffer_ids.append(no + num_inputs)
             index_bitwidths.append(64 if is_i64_index else 32)
-            constraints.append(_array_constraint(ctx.avals_out[no], idx_dtype, None))
+            c = _array_constraint(ctx.avals_out[no], idx_dtype, None)
             no += 1
+            return c
         elif role == 'io':
             buffer_ids.append(ni)
             index_bitwidths.append(64 if is_i64_index else 32)
-            constraints.append(_array_constraint(ctx.avals_in[ni], idx_dtype, alias_group[ni]))
+            c = _array_constraint(ctx.avals_in[ni], idx_dtype, alias_group[ni])
             input_output_aliases[ni] = no
             ni += 1
             no += 1
+            return c
         elif role == 's':
             buffer_ids.append(ns + num_inputs + num_outputs)
             index_bitwidths.append(0)  # unused for scalar slot
-            dtype, packed = pack_scalar(scalars[ns],
-                                        want_int64=(annotations[pos].scalar is not None
-                                                    and annotations[pos].scalar.dtype == ct.int64))
-            constraints.append(ScalarConstraint(dtype))
+            dtype, packed = pack_scalar(
+                scalars[ns],
+                want_int64=(ann_node.scalar is not None
+                            and ann_node.scalar.dtype == ct.int64))
             scalar_packed.append(packed)
             ns += 1
+            return ScalarConstraint(dtype)
         elif role == 'c':
-            constraints.append(ConstantConstraint(constants[nc]))
+            c = ConstantConstraint(constants[nc])
             nc += 1
+            return c
+        raise AssertionError(f"unexpected role {role!r}")
+
+    constraints = [build_constraint(role, annotations[pos])
+                   for pos, role in enumerate(roles)]
 
     symbol, cubin_bytes, cubin_id = compile_kernel_cached(kernel, constraints)
 
@@ -372,12 +406,19 @@ def _cutile_call_ffi_p_lower(
 _COMPILE_CACHE = {}
 
 
+def _calling_convention_for(constraints: Sequence[ParameterConstraint]
+                            ) -> CallingConvention:
+    if any(isinstance(c, TupleConstraint) for c in constraints):
+        return CallingConvention.cutile_python_v2()
+    return CallingConvention.cutile_python_v1()
+
+
 def compile_kernel(kernel: ct.kernel,
                    constraints: Sequence[ParameterConstraint]
                    ) -> tuple[str, bytes]:
     pyfunc = kernel._annotated_function.pyfunc
     signature = KernelSignature(
-        constraints, CallingConvention.cutile_python_v1(),
+        constraints, _calling_convention_for(constraints),
     ).with_mangled_symbol(pyfunc.__name__)
     function_name = signature.symbol
     buf = io.BytesIO()
@@ -392,6 +433,8 @@ def compile_kernel(kernel: ct.kernel,
 def _constraint_cache_key(c: ParameterConstraint) -> Any:
     if isinstance(c, ConstantConstraint):
         return ("const", type(c.value).__name__, c.value)
+    if isinstance(c, TupleConstraint):
+        return ("tuple", tuple(_constraint_cache_key(x) for x in c.items))
     return c
 
 
