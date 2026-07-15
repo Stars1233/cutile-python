@@ -16,7 +16,7 @@ from typing_extensions import override
 
 from cuda.tile import _datatype as datatype
 from cuda.tile._datatype import numeric_dtype_category, DType, bool_, is_integral, is_boolean, \
-    int8, get_signedness, is_float, is_arithmetic
+    int8, get_signedness, is_float, is_unrestricted_float, is_arithmetic
 from cuda.tile._exception import TileTypeError, TypeCheckingError
 from cuda.tile._numeric_semantics import RoundingMode
 from cuda.tile._ir.core_ops import loosely_typed_const, strictly_typed_const, \
@@ -24,7 +24,7 @@ from cuda.tile._ir.core_ops import loosely_typed_const, strictly_typed_const, \
 from cuda.tile._ir.ir import operand, Operation, Var, add_operation, Builder, attribute
 from cuda.tile._ir.op_impl import ImplRegistry, ensure_scalar
 from cuda.tile._ir.ops_utils import is_shape_broadcastable_to, promote_types, \
-    get_dtype, get_default_rounding_mode, rounding_mode_to_bytecode, \
+    broadcast_shapes2, get_dtype, get_default_rounding_mode, rounding_mode_to_bytecode, \
     reraise_tile_exception, check_rd_and_ftz, BINOP_REGISTRY, UNARYOP_REGISTRY
 from cuda.tile._ir.type import TensorLikeTy, LooselyTypedScalar, Type
 from cuda.tile._ir2bytecode import BytecodeContext, convert_dtype, typeid
@@ -489,12 +489,55 @@ def binary_arithmetic_tensorlike(fn: str, x: Var[TensorLikeTy], y: Var[TensorLik
                                             propagate_nan=propagate_nan)
 
 
+@dataclass(eq=False)
+class RawFPowIOperation(Operation, opcode="raw_fpowi"):
+    base: Var[TensorLikeTy] = operand()
+    exponent: Var[TensorLikeTy] = operand()
+
+    @override
+    def generate_bytecode(self, ctx: BytecodeContext) -> bc.Value:
+        res_typeid = ctx.typeid_of(self.result_var)
+        base = ctx.get_value(self.base)
+        exponent = ctx.get_value(self.exponent)
+        return bc.encode_FPowIOp(ctx.builder, res_typeid, base, exponent)
+
+
+def _fpowi_exponent_dtype(dtype: DType) -> DType | None:
+    if not is_integral(dtype):
+        return None
+    info = datatype.IntegerInfo(dtype)
+    for candidate in (datatype.int8, datatype.int16, datatype.int32):
+        cinfo = datatype.IntegerInfo(candidate)
+        if cinfo.min <= info.min and info.max <= cinfo.max:
+            return candidate
+    return None
+
+
+def pow_tensorlike(x: Var[TensorLikeTy], y: Var[TensorLikeTy]) -> Var[TensorLikeTy]:
+    x_ty = x.get_loose_type()
+    y_ty = y.get_loose_type()
+
+    both_constant = isinstance(x_ty, LooselyTypedScalar) and isinstance(y_ty, LooselyTypedScalar)
+    exp_dtype = _fpowi_exponent_dtype(y_ty.tensor_dtype())
+    if not both_constant and is_unrestricted_float(x_ty.tensor_dtype()) \
+            and exp_dtype is not None \
+            and Builder.get_current().ir_ctx.tileiras_version >= bc.BytecodeVersion.V_13_4:
+        hooks = x.ctx.typing_hooks
+        shape = broadcast_shapes2(x_ty.tensor_shape(), y_ty.tensor_shape())
+        base_ty = hooks.get_tensor_like_type(x_ty.tensor_dtype(), shape)
+        exp_ty = hooks.get_tensor_like_type(exp_dtype, shape)
+        base = promote_and_broadcast_to(x, base_ty)
+        exponent = promote_and_broadcast_to(y, exp_ty)
+        return add_operation(RawFPowIOperation, base_ty, base=base, exponent=exponent)
+
+    return binary_arithmetic_tensorlike("pow", x, y)
+
+
 @impl(operator.add, fixed_args=["add"], overload=(TensorLikeTy, TensorLikeTy))
 @impl(operator.sub, fixed_args=["sub"], overload=(TensorLikeTy, TensorLikeTy))
 @impl(operator.mul, fixed_args=["mul"], overload=(TensorLikeTy, TensorLikeTy))
 @impl(operator.floordiv, fixed_args=["floordiv"], overload=(TensorLikeTy, TensorLikeTy))
 @impl(operator.truediv, fixed_args=["truediv"], overload=(TensorLikeTy, TensorLikeTy))
-@impl(operator.pow, fixed_args=["pow"], overload=(TensorLikeTy, TensorLikeTy))
 @impl(min, fixed_args=["min"], overload=(TensorLikeTy, TensorLikeTy))
 @impl(max, fixed_args=["max"], overload=(TensorLikeTy, TensorLikeTy))
 def _binary_arithmetic_tensorlike_impl(fn: str, x: Var[TensorLikeTy], y: Var[TensorLikeTy]):
@@ -518,6 +561,11 @@ def mod_tensorlike_raw(x: Var[TensorLikeTy], y: Var[TensorLikeTy]):
 
     fixed_value = binary_arithmetic_tensorlike("add", value, y)
     return where(need_fix, fixed_value, value)
+
+
+@impl(operator.pow, overload=(TensorLikeTy, TensorLikeTy))
+def _pow_tensorlike_impl(x: Var[TensorLikeTy], y: Var[TensorLikeTy]):
+    return pow_tensorlike(x, y)
 
 
 def mod_tensorlike(x: Var[TensorLikeTy], y: Var[TensorLikeTy]) -> Var[TensorLikeTy]:

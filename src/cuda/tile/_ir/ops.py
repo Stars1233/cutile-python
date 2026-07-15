@@ -25,7 +25,7 @@ from .aggregate_support import unflatten_aggregates
 from .arithmetic_ops import reshape, broadcast_to, astype, compare_tensorlike, \
     binary_bitwise_tensorlike, bitwise_shift_tensorlike, binary_arithmetic_tensorlike, \
     compare_tensorlike_raw, where, binary_bitwise_tensorlike_raw, where_raw, TileReshape, \
-    mod_tensorlike, promote_and_broadcast_to, arithmetic_impl_registry, \
+    mod_tensorlike, pow_tensorlike, promote_and_broadcast_to, arithmetic_impl_registry, \
     unary, UnaryBehavior, UNARY_INT_FLOAT, UNARY_ANYTHING, UNARY_BOOL_INT, \
     UNARY_STRICT_FLOAT, UNARY_FLOAT, divmod_tensorlike
 from .cast_ops import implicit_cast
@@ -153,9 +153,13 @@ def tile_bitwise_shift_function_impl(fn: str, x: Var, y: Var):
 
 @impl(ct.floordiv, fixed_args=["floordiv"])
 @impl(ct.cdiv, fixed_args=["cdiv"])
-@impl(ct.pow, fixed_args=["pow"])
 def tile_binary_arithmetic_function_impl(fn: str, x: Var, y: Var) -> Var:
     return binary_arithmetic_tensorlike(fn, ensure_tile(x), ensure_tile(y))
+
+
+@impl(ct.pow)
+def tile_pow_function_impl(x: Var, y: Var) -> Var:
+    return pow_tensorlike(ensure_tile(x), ensure_tile(y))
 
 
 @impl(ct.atan2, min_version=BytecodeVersion.V_13_2)

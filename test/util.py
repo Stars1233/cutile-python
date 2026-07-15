@@ -36,7 +36,8 @@ Scalar = Union[int, float]
 def get_bytecode(
     kernel, kernel_args,
     sm_arch_func=get_sm_arch,
-    cconv=CallingConvention.cutile_python_v1()
+    cconv=CallingConvention.cutile_python_v1(),
+    bytecode_version: Optional[str] = None,
 ) -> bytes:
     if not isinstance(kernel, ct.kernel):
         kernel = ct.kernel(kernel)
@@ -44,7 +45,8 @@ def get_bytecode(
     sig = KernelSignature.from_kernel_args(kernel, kernel_args, cconv)
     io = BytesIO()
     ct.compilation.export_kernel(kernel, [sig], io,
-                                 gpu_code=sm_arch_func(), output_format="tileir_bytecode")
+                                 gpu_code=sm_arch_func(), output_format="tileir_bytecode",
+                                 bytecode_version=bytecode_version)
     return io.getvalue()
 
 

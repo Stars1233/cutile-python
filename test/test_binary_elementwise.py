@@ -742,6 +742,43 @@ def test_array_scalar_pow(shape, tile, float_dtype, tmp_path):
     torch.testing.assert_close(z, (x.to(res_dtype) ** y))
 
 
+@pytest.mark.use_mlir
+@pytest.mark.parametrize("x_dtype,version,expect_op", [
+    (torch.float16, BytecodeVersion.V_13_4, "fpowi"),
+    (torch.bfloat16, BytecodeVersion.V_13_4, "fpowi"),
+    (torch.float32, BytecodeVersion.V_13_4, "fpowi"),
+    (torch.float64, BytecodeVersion.V_13_4, "fpowi"),
+    (torch.float32, BytecodeVersion.V_13_3, "fpowf"),
+], ids=["f16-v13.4", "bf16-v13.4", "f32-v13.4", "f64-v13.4", "f32-v13.3"])
+def test_pow_int_exponent_lowering(shape, tile, x_dtype, version, expect_op, tmp_path):
+    x = torch.rand(shape, dtype=x_dtype, device='cuda')
+    y = torch.randint(0, 5, shape, dtype=torch.int32, device='cuda')
+    z = torch.zeros_like(x)
+    kernel = array_kernel('pow_int_exp', 'tz = tx ** ty', tmp_path)
+    bytecode = get_bytecode(kernel, (x, y, z, tile), bytecode_version=version.as_string())
+    filecheck(bytecode, f"// CHECK: {expect_op} ")
+
+
+@pytest.mark.use_mlir
+@pytest.mark.parametrize("y_dtype,check", [
+    (torch.int8, "// CHECK: fpowi {{.*}}, tile<{{[0-9]+}}xi8>"),
+    (torch.int16, "// CHECK: fpowi {{.*}}, tile<{{[0-9]+}}xi16>"),
+    (torch.int32, "// CHECK: fpowi {{.*}}, tile<{{[0-9]+}}xi32>"),
+    (torch.uint8, "// CHECK: fpowi {{.*}}, tile<{{[0-9]+}}xi16>"),
+    (torch.uint16, "// CHECK: fpowi {{.*}}, tile<{{[0-9]+}}xi32>"),
+    (torch.int64, "// CHECK: fpowf "),
+    (torch.uint32, "// CHECK: fpowf "),
+    (torch.uint64, "// CHECK: fpowf "),
+], ids=["i8", "i16", "i32", "u8", "u16", "i64", "u32", "u64"])
+def test_pow_int_exponent_dtype_restriction(shape, tile, y_dtype, check, tmp_path):
+    x = torch.rand(shape, dtype=torch.float32, device='cuda') + 0.5
+    y = torch.randint(0, 5, shape, device='cuda').to(y_dtype)
+    z = torch.zeros_like(x)
+    kernel = array_kernel('pow_int_exp', 'tz = tx ** ty', tmp_path)
+    bytecode = get_bytecode(kernel, (x, y, z, tile), bytecode_version="13.4")
+    filecheck(bytecode, check)
+
+
 def bitwise_reference(op_symbol: str, x: torch.Tensor, y: torch.Tensor | int):
     res_dtype = torch.promote_types(x.dtype,
                                     y.dtype if isinstance(y, torch.Tensor) else torch.int32)
