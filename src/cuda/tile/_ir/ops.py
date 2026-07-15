@@ -27,7 +27,7 @@ from .arithmetic_ops import reshape, broadcast_to, astype, compare_tensorlike, \
     compare_tensorlike_raw, where, binary_bitwise_tensorlike_raw, where_raw, TileReshape, \
     mod_tensorlike, promote_and_broadcast_to, arithmetic_impl_registry, \
     unary, UnaryBehavior, UNARY_INT_FLOAT, UNARY_ANYTHING, UNARY_BOOL_INT, \
-    UNARY_STRICT_FLOAT, UNARY_FLOAT
+    UNARY_STRICT_FLOAT, UNARY_FLOAT, divmod_tensorlike
 from .cast_ops import implicit_cast
 from .control_flow_ops import Loop, IfElse, control_flow_impl_registry, EndBranch
 from .core_ops import loosely_typed_const, strictly_typed_const, build_tuple, bind_method, \
@@ -187,6 +187,11 @@ def binary_arithmetic_impl_with_rd_and_ftz(fn: str, x: Var, y: Var,
 @impl(ct.mod)
 def tile_mod_function_impl(x: Var, y: Var):
     return mod_tensorlike(ensure_tile(x), ensure_tile(y))
+
+
+@impl(ct.divmod)
+def tile_divmod_function_impl(x: Var, y: Var):
+    return divmod_tensorlike(ensure_tile(x), ensure_tile(y))
 
 
 @impl(slice)

@@ -135,6 +135,7 @@ Math
    pow
    atan2
    mod
+   divmod
    minimum
    maximum
    negative

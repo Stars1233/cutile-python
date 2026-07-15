@@ -43,6 +43,11 @@ def mod(x, y, /):
 
 
 @stub
+def divmod(x, y, /):
+    """Compute divmod(x, y)."""
+
+
+@stub
 def negative(x, /):
     """Compute ``-x``."""
     ...

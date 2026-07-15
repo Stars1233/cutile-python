@@ -1,0 +1,1 @@
+- Add ``ct.divmod()``, as well as support for builtin ``divmod()``, for integer inputs only.

@@ -98,6 +98,12 @@ class Scalar(Generic[T]):
     def __invert__(self):
         return cl_math.bitwise_not(self)
 
+    def __divmod__(self, other):
+        return cl_math.divmod(self, other)
+
+    def __rdivmod__(self, other):
+        return cl_math.divmod(other, self)
+
 
 class Vector(Generic[T]):
     """Fixed-size collection returned by vectorized pointer operations."""

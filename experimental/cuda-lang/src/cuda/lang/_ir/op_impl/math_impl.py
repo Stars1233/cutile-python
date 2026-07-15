@@ -37,7 +37,7 @@ from cuda.tile._ir.arithmetic_ops import (
     mod_tensorlike,
     promote_and_broadcast_to,
     unary,
-    where, invert_tensorlike,
+    where, invert_tensorlike, divmod_tensorlike,
 )
 from cuda.tile._ir.core_ops import strictly_typed_const
 from cuda.tile._ir.op_impl import (
@@ -161,6 +161,13 @@ def math_mod_impl(x: Var, y: Var):
         value = vector_elementwise_apply(scalar_fn, call_x, call_y)
     value = astype(value, dtype)
     return float_modulo_with_corrected_sign(value, y)
+
+
+@impl(cl_math.divmod)
+def math_divmod_impl(x: Var, y: Var):
+    require_scalar_or_vector_type(x)
+    require_scalar_or_vector_type(y)
+    return divmod_tensorlike(x, y)
 
 
 @impl(cl_math.negative)

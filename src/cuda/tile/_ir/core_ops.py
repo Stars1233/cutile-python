@@ -71,6 +71,7 @@ def core_impl_registry() -> ImplRegistry:
 @overload_dispatcher(hir_stubs.is_contained_in, fixed_args=["'in'"])
 @overload_dispatcher(min, fixed_args=["min"])
 @overload_dispatcher(max, fixed_args=["max"])
+@overload_dispatcher(divmod, fixed_args=["divmod"])
 def binop_overload_dispatcher(name: str, x: Var, y: Var):
     x_ty = x.get_type()
     y_ty = y.get_type()

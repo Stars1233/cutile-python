@@ -820,3 +820,23 @@ def test_bitwise_not():
     output = torch.zeros_like(input)
     cl.launch(torch.cuda.current_stream(), (1,), (len(input),), kernel, (input, output))
     assert expected.tolist() == output.tolist()
+
+
+@pytest.mark.parametrize("divmod_func", [divmod, cl.divmod])
+def test_divmod(divmod_func):
+    @cl.kernel
+    def kernel(lhs, rhs, out_q, out_r):
+        i = cl.block_index(0)
+        j = cl.thread_index(0)
+        out_q[i, j], out_r[i, j] = divmod_func(lhs[i], rhs[j])
+
+    lhs = torch.arange(-64, 64, dtype=torch.int32, device="cuda")
+    rhs = torch.arange(-8, 8, dtype=torch.int32, device="cuda")
+    rhs = torch.where(rhs == 0, 1, rhs)  # avoid division by zero
+
+    expected_q, expected_r = lhs[:, None] // rhs, lhs[:, None] % rhs
+    output_q, output_r = torch.zeros_like(expected_q), torch.zeros_like(expected_r)
+    cl.launch(torch.cuda.current_stream(), (len(lhs),), (len(rhs),), kernel,
+              (lhs, rhs, output_q, output_r))
+    assert expected_q.tolist() == output_q.tolist()
+    assert expected_r.tolist() == output_r.tolist()

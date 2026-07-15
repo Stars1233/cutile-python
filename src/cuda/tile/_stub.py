@@ -707,6 +707,12 @@ class Tile:
     def __rmatmul__(self, other) -> "Tile":
         return matmul(other, self)
 
+    def __divmod__(self, other):
+        return divmod(self, other)
+
+    def __rdivmod__(self, other):
+        return divmod(other, self)
+
 
 TileOrScalar = Union[Tile, Scalar]
 
@@ -3340,6 +3346,40 @@ def mod(x, y, /) -> TileOrScalar:
             [0, 1, 2, 0]
     """
     pass
+
+
+@stub
+def divmod(x, y, /) -> tuple[TileOrScalar, TileOrScalar]:
+    """
+    Elementwise ``divmod()`` on two tiles.
+
+    For integer inputs, returns ``(x // y, x % y)``.
+    For floating-point inputs, not yet implemented.
+
+    Can also use the builtin operation `divmod(x, y)`.
+
+    Args:
+        x (Tile): dividend tile.
+        y (Tile): divisor tile.
+
+    The `shape` of `x` and `y` will be broadcasted and
+    `dtype` promoted to common dtype.
+
+    Returns:
+        Tuple of two tiles (quotient and remainder).
+
+    Examples:
+
+        .. testcode::
+            :template: kernel_wrapper.py
+
+            tx = ct.arange(4, dtype=ct.int32)
+            print(divmod(tx, 3))
+
+        .. testoutput::
+
+            ([0, 0, 0, 1], [0, 1, 2, 0])
+    """
 
 
 @_doc_binary_op('&')

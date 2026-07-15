@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) <2025> NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # SPDX-License-Identifier: Apache-2.0
+import re
 
 import pytest
 from math import ceil
@@ -15,7 +16,7 @@ from util import (
 )
 from conftest import float_dtypes, int_dtypes, bool_dtypes, dtype_id, requires_tileiras
 from cuda.tile._bytecode.version import BytecodeVersion
-from cuda.tile._exception import TileTypeError
+from cuda.tile._exception import TileTypeError, TypeCheckingError
 from cuda.tile._ir.typing_support import to_dtype
 from cuda.tile._numeric_semantics import RoundingMode as RMd
 
@@ -477,6 +478,47 @@ def test_array_mod(shape, tile, x_dtype, y_dtype, tmp_path, mod_func):
     else:
         launch_binary(kernel, x, y, z, tile)
         assert_equal(z, ref)
+
+
+@pytest.mark.parametrize("divmod_func", [divmod, ct.divmod])
+@pytest.mark.parametrize("x_dtype", int_dtypes, ids=dtype_id)
+@pytest.mark.parametrize("y_dtype", int_dtypes, ids=dtype_id)
+def test_divmod(shape, tile, x_dtype, y_dtype, divmod_func):
+    x = (torch.rand(*shape, device="cuda") * 100).to(x_dtype)
+    y = (torch.rand(*shape, device="cuda") * 100 + 1).to(y_dtype)
+    result_type = torch.promote_types(x_dtype, y_dtype)
+    q = torch.zeros_like(x, device="cuda").to(result_type)
+    r = torch.zeros_like(x, device="cuda").to(result_type)
+    ref_q, ref_r = x // y, x % y
+
+    @ct.kernel
+    def kern(x, y, q, r):
+        bid = ct.bid(0)
+        tx = ct.load(x, index=(bid,), shape=(tile,))
+        ty = ct.load(y, index=(bid,), shape=(tile,))
+        tq, tr = divmod_func(tx, ty)
+        ct.store(q, index=(bid,), tile=tq)
+        ct.store(r, index=(bid,), tile=tr)
+
+    grid = tuple(map(lambda d: ceil(d / tile), q.shape))
+    ct.launch(torch.cuda.current_stream(), grid, kern, (x, y, q, r))
+    assert_equal(q, ref_q)
+    assert_equal(r, ref_r)
+
+
+@pytest.mark.parametrize("divmod_func", [divmod, ct.divmod])
+def test_divmod_unsupported_for_floats(divmod_func):
+    @ct.kernel
+    def kern(x, y):
+        tx = ct.load(x, index=(0,), shape=(16,))
+        ty = ct.load(y, index=(0,), shape=(16,))
+        divmod_func(tx, ty)
+
+    x = (torch.ones(16, device="cuda") * 100).to(torch.float32)
+    y = (torch.ones(16, device="cuda") * 100 + 1).to(torch.float32)
+    with pytest.raises(TypeCheckingError,
+                       match=re.escape("divmod() is not implemented for floating point values")):
+        ct.launch(torch.cuda.current_stream(), (1,), kern, (x, y))
 
 
 @pytest.mark.parametrize("is_constant", [False, True])

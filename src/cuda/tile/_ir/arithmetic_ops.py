@@ -17,10 +17,10 @@ from typing_extensions import override
 from cuda.tile import _datatype as datatype
 from cuda.tile._datatype import numeric_dtype_category, DType, bool_, is_integral, is_boolean, \
     int8, get_signedness, is_float, is_arithmetic
-from cuda.tile._exception import TileTypeError
+from cuda.tile._exception import TileTypeError, TypeCheckingError
 from cuda.tile._numeric_semantics import RoundingMode
 from cuda.tile._ir.core_ops import loosely_typed_const, strictly_typed_const, \
-    comparison_operator_impl
+    comparison_operator_impl, build_tuple
 from cuda.tile._ir.ir import operand, Operation, Var, add_operation, Builder, attribute
 from cuda.tile._ir.op_impl import ImplRegistry, ensure_scalar
 from cuda.tile._ir.ops_utils import is_shape_broadcastable_to, promote_types, \
@@ -501,6 +501,25 @@ def _binary_arithmetic_tensorlike_impl(fn: str, x: Var[TensorLikeTy], y: Var[Ten
     return binary_arithmetic_tensorlike(fn, x, y)
 
 
+def mod_tensorlike_raw(x: Var[TensorLikeTy], y: Var[TensorLikeTy]):
+    # TileIR rem follows the C behavior while Python's mod behavior differs.
+    # So we generate the C-style mod first and then apply a correction.
+    value = binary_arithmetic_tensorlike_raw("c_mod", x, y)
+
+    # If the sign of `value` does not match the sign of `y`, apply a correction.
+    zero = strictly_typed_const(0, value.get_type())
+    value_sign = compare_tensorlike("lt", value, zero)
+    y_sign = compare_tensorlike("lt", y, zero)
+
+    # need_fix = (value_sign ^ y_sign) & (value != 0)
+    sign_mismatch = binary_bitwise_tensorlike("xor", value_sign, y_sign)
+    value_not_zero = compare_tensorlike("ne", value, zero)
+    need_fix = binary_bitwise_tensorlike("and_", sign_mismatch, value_not_zero)
+
+    fixed_value = binary_arithmetic_tensorlike("add", value, y)
+    return where(need_fix, fixed_value, value)
+
+
 def mod_tensorlike(x: Var[TensorLikeTy], y: Var[TensorLikeTy]) -> Var[TensorLikeTy]:
     x_ty = x.get_loose_type()
     y_ty = y.get_loose_type()
@@ -522,27 +541,46 @@ def mod_tensorlike(x: Var[TensorLikeTy], y: Var[TensorLikeTy]) -> Var[TensorLike
             res = x.get_constant() % y.get_constant()
         return strictly_typed_const(res, common_ty)
 
-    # TileOR rem follows the C behavior while Python's mod behavior differs.
-    # So we generate the C-style mod first and then apply a correction.
-    value = binary_arithmetic_tensorlike_raw("c_mod", x, y)
-
-    # If the sign of `value` does not match the sign of `y`, apply a correction.
-    zero = strictly_typed_const(0, common_ty)
-    value_sign = compare_tensorlike("lt", value, zero)
-    y_sign = compare_tensorlike("lt", y, zero)
-
-    # need_fix = (value_sign ^ y_sign) & (value != 0)
-    sign_mismatch = binary_bitwise_tensorlike("xor", value_sign, y_sign)
-    value_not_zero = compare_tensorlike("ne", value, zero)
-    need_fix = binary_bitwise_tensorlike("and_", sign_mismatch, value_not_zero)
-
-    fixed_value = binary_arithmetic_tensorlike("add", value, y)
-    return where(need_fix, fixed_value, value)
+    return mod_tensorlike_raw(x, y)
 
 
 @impl(operator.mod, overload=(TensorLikeTy, TensorLikeTy))
 def _mod_tensorlike_impl(x: Var[TensorLikeTy], y: Var[TensorLikeTy]) -> Var[TensorLikeTy]:
     return mod_tensorlike(x, y)
+
+
+def divmod_tensorlike(x: Var[TensorLikeTy], y: Var[TensorLikeTy]):
+    x_ty = x.get_loose_type()
+    y_ty = y.get_loose_type()
+    if x_ty.tensor_dtype() == y_ty.tensor_dtype() == bool_:
+        raise TileTypeError('divmod() operation does not support bool')
+
+    if isinstance(x_ty, LooselyTypedScalar) and isinstance(y_ty, LooselyTypedScalar):
+        with reraise_tile_exception():
+            q, r = divmod(x_ty.value, y_ty.value)
+        return build_tuple((loosely_typed_const(q), loosely_typed_const(r)))
+
+    # Usual promote & broadcast logic
+    common_ty = promote_types(x_ty, y_ty, x.ctx.typing_hooks)
+    x = promote_and_broadcast_to(x, common_ty)
+    y = promote_and_broadcast_to(y, common_ty)
+
+    if x.is_constant() and y.is_constant():
+        with reraise_tile_exception():
+            q, r = divmod(x.get_constant(), y.get_constant())
+        return build_tuple((strictly_typed_const(q, common_ty), strictly_typed_const(r, common_ty)))
+
+    if is_float(common_ty.tensor_dtype()):
+        raise TypeCheckingError("divmod() is not implemented for floating point values")
+
+    q = binary_arithmetic_tensorlike_raw("floordiv", x, y)
+    r = mod_tensorlike_raw(x, y)
+    return build_tuple((q, r))
+
+
+@impl(divmod, overload=(TensorLikeTy, TensorLikeTy))
+def _divmod_tensorlike_impl(x: Var[TensorLikeTy], y: Var[TensorLikeTy]) -> Var[TensorLikeTy]:
+    return divmod_tensorlike(x, y)
 
 
 # Does not support broadcasting or type promotion
