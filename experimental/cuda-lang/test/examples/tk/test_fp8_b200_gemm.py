@@ -2,8 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""CTA2 FP8 GEMM port of ThunderKittens' ``fp8_b200_gemm.cu``.
-"""
+"""CTA2 FP8 GEMM port of ThunderKittens' ``fp8_b200_gemm.cu``."""
 
 from dataclasses import dataclass
 

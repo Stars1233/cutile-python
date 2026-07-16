@@ -4,7 +4,7 @@
 
 """
 Two-CTA, four-warpgroup pipeline and fixed 192/128 head dimensions.
-See thunderkittens bf16_b300_mha_noncausal.cu for reference.
+Port of ThunderKittens' ``bf16_b300_mha_noncausal.cu``.
 """
 
 import math
