@@ -71,9 +71,9 @@ class StorePointer(Operation, opcode="store_pointer", memory_effect=MemoryEffect
     value: Var = operand()
     alignment: Optional[int] = attribute()
     volatile: bool = attribute(default=False)
-    ordering: Optional[MemoryOrder] = attribute(default=None)
+    memory_order: Optional[MemoryOrder] = attribute(default=None)
 
-    valid_orderings = (
+    valid_memory_orders = (
         None,
         MemoryOrder.WEAK,
         MemoryOrder.RELAXED,
@@ -86,9 +86,9 @@ class LoadPointer(Operation, opcode="load_pointer", memory_effect=MemoryEffect.L
     pointer: Var = operand()
     alignment: Optional[int] = attribute()
     volatile: bool = attribute(default=False)
-    ordering: Optional[MemoryOrder] = attribute(default=None)
+    memory_order: Optional[MemoryOrder] = attribute(default=None)
 
-    valid_orderings = (
+    valid_memory_orders = (
         None,
         MemoryOrder.WEAK,
         MemoryOrder.RELAXED,

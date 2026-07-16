@@ -93,16 +93,16 @@ def test_initialize_and_invalidate():
     assert "llvm.nvvm.mbarrier.inval.shared" in names
 
 
-ARRIVE_ORDERINGS = [cl.MemoryOrder.RELEASE, cl.MemoryOrder.RELAXED]
-WAIT_ORDERINGS = [cl.MemoryOrder.ACQUIRE, cl.MemoryOrder.RELAXED]
+ARRIVE_MEMORY_ORDERS = [cl.MemoryOrder.RELEASE, cl.MemoryOrder.RELAXED]
+WAIT_MEMORY_ORDERS = [cl.MemoryOrder.ACQUIRE, cl.MemoryOrder.RELAXED]
 
 
 @require_hopper_or_newer()
 @pytest.mark.parametrize("scope", SCOPES)
-@pytest.mark.parametrize("ordering", ARRIVE_ORDERINGS)
+@pytest.mark.parametrize("memory_order", ARRIVE_MEMORY_ORDERS)
 @pytest.mark.parametrize("drop", [False, True])
 @pytest.mark.parametrize("expect_transaction", [False, True])
-def test_arrive_intrinsic_name(expect_transaction, drop, ordering, scope):
+def test_arrive_intrinsic_name(expect_transaction, drop, memory_order, scope):
     @cl.kernel
     def kernel():
         mbar = cl.shared_array(
@@ -110,17 +110,17 @@ def test_arrive_intrinsic_name(expect_transaction, drop, ordering, scope):
         ).get_base_pointer()
         if expect_transaction:
             cl.mbarrier_arrive_expect_transaction(
-                mbar, 128, drop=drop, scope=scope, memory_order=ordering
+                mbar, 128, drop=drop, scope=scope, memory_order=memory_order
             )
         else:
-            cl.mbarrier_arrive(mbar, 1, drop=drop, scope=scope, memory_order=ordering)
+            cl.mbarrier_arrive(mbar, 1, drop=drop, scope=scope, memory_order=memory_order)
 
     expected = "llvm.nvvm.mbarrier.arrive"
     if drop:
         expected += ".drop"
     if expect_transaction:
         expected += ".expect.tx"
-    if ordering is cl.MemoryOrder.RELAXED:
+    if memory_order is cl.MemoryOrder.RELAXED:
         expected += ".relaxed"
     expected += f".scope.{scope.value}.space.cta"
     assert expected in _get_intrinsics(kernel)
@@ -150,23 +150,23 @@ def test_expect_complete_transaction_intrinsic_name(operation, intrinsic, scope)
 
 @require_hopper_or_newer()
 @pytest.mark.parametrize("scope", SCOPES)
-@pytest.mark.parametrize("ordering", WAIT_ORDERINGS)
+@pytest.mark.parametrize("memory_order", WAIT_MEMORY_ORDERS)
 @pytest.mark.parametrize("parity", [False, True])
-def test_test_wait_intrinsic_name(parity, ordering, scope):
+def test_test_wait_intrinsic_name(parity, memory_order, scope):
     @cl.kernel
     def kernel():
         mbar = cl.shared_array(
             shape=(1,), dtype=cl.mbarrier, alignment=8
         ).get_base_pointer()
         if parity:
-            cl.mbarrier_test_wait_parity(mbar, 0, scope=scope, memory_order=ordering)
+            cl.mbarrier_test_wait_parity(mbar, 0, scope=scope, memory_order=memory_order)
         else:
-            cl.mbarrier_test_wait(mbar, cl.uint64(0), scope=scope, memory_order=ordering)
+            cl.mbarrier_test_wait(mbar, cl.uint64(0), scope=scope, memory_order=memory_order)
 
     expected = "llvm.nvvm.mbarrier.test.wait"
     if parity:
         expected += ".parity"
-    if ordering is cl.MemoryOrder.RELAXED:
+    if memory_order is cl.MemoryOrder.RELAXED:
         expected += ".relaxed"
     expected += f".scope.{scope.value}.space.cta"
     assert expected in _get_intrinsics(kernel)
@@ -175,9 +175,9 @@ def test_test_wait_intrinsic_name(parity, ordering, scope):
 @require_hopper_or_newer()
 @pytest.mark.parametrize("scope", SCOPES)
 @pytest.mark.parametrize("time_hint", [None, 1000])
-@pytest.mark.parametrize("ordering", WAIT_ORDERINGS)
+@pytest.mark.parametrize("memory_order", WAIT_MEMORY_ORDERS)
 @pytest.mark.parametrize("parity", [False, True])
-def test_try_wait_intrinsic_name(parity, ordering, time_hint, scope):
+def test_try_wait_intrinsic_name(parity, memory_order, time_hint, scope):
     @cl.kernel
     def kernel():
         mbar = cl.shared_array(
@@ -185,11 +185,11 @@ def test_try_wait_intrinsic_name(parity, ordering, time_hint, scope):
         ).get_base_pointer()
         if parity:
             cl.mbarrier_try_wait_parity(
-                mbar, 0, time_hint=time_hint, scope=scope, memory_order=ordering
+                mbar, 0, time_hint=time_hint, scope=scope, memory_order=memory_order
             )
         else:
             cl.mbarrier_try_wait(
-                mbar, cl.uint64(0), time_hint=time_hint, scope=scope, memory_order=ordering
+                mbar, cl.uint64(0), time_hint=time_hint, scope=scope, memory_order=memory_order
             )
 
     expected = "llvm.nvvm.mbarrier.try.wait"
@@ -197,7 +197,7 @@ def test_try_wait_intrinsic_name(parity, ordering, time_hint, scope):
         expected += ".parity"
     if time_hint is not None:
         expected += ".tl"
-    if ordering is cl.MemoryOrder.RELAXED:
+    if memory_order is cl.MemoryOrder.RELAXED:
         expected += ".relaxed"
     expected += f".scope.{scope.value}.space.cta"
     assert expected in _get_intrinsics(kernel)

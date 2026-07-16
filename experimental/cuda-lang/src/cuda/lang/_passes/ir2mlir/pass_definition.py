@@ -834,7 +834,7 @@ class IR2MLIR:
     @lower_operation.register
     def lower_load_pointer(self, operation: ops.LoadPointer) -> Sequence[mlir.Value]:
         ptr_dtype = operation.pointer.get_type().pointer_dtype
-        ordering = _get_llvm_memory_ordering(operation.ordering)
+        ordering = _get_llvm_memory_ordering(operation.memory_order)
         info = PointerInfo(ptr_dtype)
         assert not info.opaque, f"Expected a typed pointer, got {ptr_dtype}"
         result_type = ir_type_to_mlir_type(operation.result_var.get_type())
@@ -851,7 +851,7 @@ class IR2MLIR:
     @lower_operation.register
     def lower_store_pointer(self, operation: ops.StorePointer) -> Sequence[mlir.Value]:
         pointer = self.get_var(operation.pointer)
-        ordering = _get_llvm_memory_ordering(operation.ordering)
+        ordering = _get_llvm_memory_ordering(operation.memory_order)
         value = self.get_var(operation.value)
         mlir.llvm.add_StoreOp(
             value=value,

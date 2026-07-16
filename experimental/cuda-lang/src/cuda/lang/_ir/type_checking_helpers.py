@@ -235,19 +235,19 @@ def require_optional_alignment(alignment: Var) -> int | None:
 
 def require_pointer_memory_order(
     operation: type[LoadPointer] | type[StorePointer],
-    ordering_var: Var,
+    memory_order_var: Var,
 ):
-    ordering = require_optional_constant_enum(ordering_var, MemoryOrder)
-    if ordering in operation.valid_orderings:
-        return ordering
+    memory_order = require_optional_constant_enum(memory_order_var, MemoryOrder)
+    if memory_order in operation.valid_memory_orders:
+        return memory_order
 
     formatted_expected = ", ".join(
-        "None" if order is None else str(order) for order in operation.valid_orderings
+        "None" if order is None else str(order) for order in operation.valid_memory_orders
     )
     operation_name = "load" if operation is LoadPointer else "store"
     raise make_type_checking_error(
         f"Invalid memory order for Pointer.{operation_name}. "
-        f"Got {ordering}, expected one of {formatted_expected}"
+        f"Got {memory_order}, expected one of {formatted_expected}"
     )
 
 

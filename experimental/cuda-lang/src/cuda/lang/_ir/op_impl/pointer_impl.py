@@ -210,7 +210,7 @@ def pointer_getitem(object: Var[PointerTy], key: Var[Type]):
         pointer=pointer,
         volatile=False,
         alignment=None,
-        ordering=None,
+        memory_order=None,
     )
 
 
@@ -226,7 +226,7 @@ def pointer_setitem(object: Var[PointerTy], key: Var[Type], value: Var[Type]):
         value=value,
         alignment=None,
         volatile=False,
-        ordering=None,
+        memory_order=None,
     )
 
 
@@ -258,7 +258,7 @@ def array_setitem(object: Var, key: Var, value: Var):
         value=value,
         alignment=None,
         volatile=False,
-        ordering=None,
+        memory_order=None,
     )
 
 
@@ -277,14 +277,14 @@ def pointer_load(
     count: Var,
     alignment: Var,
     volatile: Var,
-    ordering: Var,
+    memory_order: Var,
 ) -> Var:
     pointee_dtype = require_pointer_type(pointer).pointee_dtype
     count = require_optional_constant_int(count)
     volatile = require_constant_bool(volatile)
     alignment = require_optional_alignment(alignment)
-    ordering = require_pointer_memory_order(LoadPointer, ordering)
-    is_atomic = ordering not in (None, MemoryOrder.WEAK)
+    memory_order = require_pointer_memory_order(LoadPointer, memory_order)
+    is_atomic = memory_order not in (None, MemoryOrder.WEAK)
     if count is None or count == 1:
         if is_atomic:
             _require_atomic_scalar_dtype(pointee_dtype, "load")
@@ -303,7 +303,7 @@ def pointer_load(
         pointer=pointer,
         volatile=volatile,
         alignment=alignment,
-        ordering=ordering,
+        memory_order=memory_order,
     )
 
 
@@ -312,18 +312,18 @@ def pointer_store(
     value: Var,
     alignment: Var,
     volatile: Var,
-    ordering: Var,
+    memory_order: Var,
 ) -> None:
     pointer_ty = require_pointer_type(pointer)
     volatile = require_constant_bool(volatile)
     alignment = require_optional_alignment(alignment)
-    ordering = require_pointer_memory_order(StorePointer, ordering)
+    memory_order = require_pointer_memory_order(StorePointer, memory_order)
 
     pointee_dtype = pointer_ty.pointee_dtype
     value = implicit_cast(value, pointee_dtype,
                           "Stored value type is incompatible with pointer type")
 
-    is_atomic = ordering not in (None, MemoryOrder.WEAK)
+    is_atomic = memory_order not in (None, MemoryOrder.WEAK)
     if is_atomic:
         if isinstance(value.get_type(), VectorTy):
             raise TypeCheckingError(
@@ -340,7 +340,7 @@ def pointer_store(
         value=value,
         volatile=volatile,
         alignment=alignment,
-        ordering=ordering,
+        memory_order=memory_order,
     )
 
 

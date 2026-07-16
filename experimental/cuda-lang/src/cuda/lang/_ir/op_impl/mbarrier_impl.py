@@ -61,21 +61,21 @@ def _mbar_space_scope_suffix(scope: MbarrierScope, space: MemorySpace) -> str:
     return ".scope." + scope.value + ".space." + space_str
 
 
-def require_mbarrier_ordering(
-    ordering_var: Var,
-    valid_orderings: tuple[MemoryOrder, ...],
+def require_mbarrier_memory_order(
+    memory_order_var: Var,
+    valid_memory_orders: tuple[MemoryOrder, ...],
 ) -> MemoryOrder:
-    ordering = require_constant_enum(ordering_var, MemoryOrder)
-    if ordering not in valid_orderings:
-        formatted = ", ".join(str(o) for o in valid_orderings)
+    memory_order = require_constant_enum(memory_order_var, MemoryOrder)
+    if memory_order not in valid_memory_orders:
+        formatted = ", ".join(str(o) for o in valid_memory_orders)
         raise TypeCheckingError(
-            f"Invalid mbarrier memory order {ordering}, expected one of {formatted}"
+            f"Invalid mbarrier memory order {memory_order}, expected one of {formatted}"
         )
-    return ordering
+    return memory_order
 
 
-ARRIVE_ORDERINGS = (MemoryOrder.RELEASE, MemoryOrder.RELAXED)
-WAIT_ORDERINGS = (MemoryOrder.ACQUIRE, MemoryOrder.RELAXED)
+ARRIVE_MEMORY_ORDERS = (MemoryOrder.RELEASE, MemoryOrder.RELAXED)
+WAIT_MEMORY_ORDERS = (MemoryOrder.ACQUIRE, MemoryOrder.RELAXED)
 
 
 @impl(mbarrier.mbarrier_arrive)
@@ -89,7 +89,7 @@ def mbarrier_arrive_impl(
     count = astype(count, datatype.int32)
     drop = require_constant_bool(drop)
     scope = require_constant_enum(scope, MbarrierScope)
-    memory_order = require_mbarrier_ordering(memory_order, ARRIVE_ORDERINGS)
+    memory_order = require_mbarrier_memory_order(memory_order, ARRIVE_MEMORY_ORDERS)
     space = require_mbarrier_ptr(mbar).memory_space
     intrinsic = "llvm.nvvm.mbarrier.arrive"
     if drop:
@@ -119,7 +119,7 @@ def mbarrier_arrive_expect_transaction_impl(
     bytes = astype(bytes, datatype.int32)
     drop = require_constant_bool(drop)
     scope = require_constant_enum(scope, MbarrierScope)
-    memory_order = require_mbarrier_ordering(memory_order, ARRIVE_ORDERINGS)
+    memory_order = require_mbarrier_memory_order(memory_order, ARRIVE_MEMORY_ORDERS)
     space = require_mbarrier_ptr(mbar).memory_space
     intrinsic = "llvm.nvvm.mbarrier.arrive"
     if drop:
@@ -176,7 +176,7 @@ def mbarrier_test_wait_impl(
     scope = require_constant_enum(scope, MbarrierScope)
     state = astype(state, datatype.int64)
     require_mbarrier_ptr(mbar, (MemorySpace.SHARED,))
-    memory_order = require_mbarrier_ordering(memory_order, WAIT_ORDERINGS)
+    memory_order = require_mbarrier_memory_order(memory_order, WAIT_MEMORY_ORDERS)
     intrinsic = "llvm.nvvm.mbarrier.test.wait"
     if memory_order is MemoryOrder.RELAXED:
         intrinsic += ".relaxed"
@@ -196,7 +196,7 @@ def mbarrier_test_wait_parity_impl(
     require_mbarrier_ptr(mbar, (MemorySpace.SHARED,))
     parity = astype(parity, datatype.int32)
     scope = require_constant_enum(scope, MbarrierScope)
-    memory_order = require_mbarrier_ordering(memory_order, WAIT_ORDERINGS)
+    memory_order = require_mbarrier_memory_order(memory_order, WAIT_MEMORY_ORDERS)
     intrinsic = "llvm.nvvm.mbarrier.test.wait.parity"
     if memory_order is MemoryOrder.RELAXED:
         intrinsic += ".relaxed"
@@ -220,7 +220,7 @@ def mbarrier_try_wait_impl(
     require_mbarrier_ptr(mbar, (MemorySpace.SHARED,))
     state = astype(state, datatype.int64)
     scope = require_constant_enum(scope, MbarrierScope)
-    memory_order = require_mbarrier_ordering(memory_order, WAIT_ORDERINGS)
+    memory_order = require_mbarrier_memory_order(memory_order, WAIT_MEMORY_ORDERS)
     intrinsic = "llvm.nvvm.mbarrier.try.wait"
     args = (mbar, state)
     if not is_none(time_hint):
@@ -249,7 +249,7 @@ def mbarrier_try_wait_parity_impl(
     require_mbarrier_ptr(mbar, (MemorySpace.SHARED,))
     parity = astype(parity, datatype.int32)
     scope = require_constant_enum(scope, MbarrierScope)
-    memory_order = require_mbarrier_ordering(memory_order, WAIT_ORDERINGS)
+    memory_order = require_mbarrier_memory_order(memory_order, WAIT_MEMORY_ORDERS)
     intrinsic = "llvm.nvvm.mbarrier.try.wait.parity"
     args = (mbar, parity)
     if not is_none(time_hint):
