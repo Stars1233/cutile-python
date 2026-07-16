@@ -2,11 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from cuda.lang.compilation import KernelSignature
 import pytest
 import torch
 
 import cuda.lang as cl
 from cuda.lang._exception import TypeCheckingError
+from cuda.tile import _cext
 
 from .util import get_ir, make_symbolic_tensor, require_hopper_or_newer
 
@@ -20,6 +22,29 @@ def _make_expected_tile(x, row, column, tile_height, tile_width):
     source = x[row:row + tile_height, column:column + tile_width]
     expected[:source.shape[0], :source.shape[1]] = source
     return expected
+
+
+@require_hopper_or_newer()
+@pytest.mark.parametrize(
+    'dtype',
+    (
+        cl.uint8,
+        cl.int8,
+        cl.float8_e4m3fn,
+        cl.float8_e5m2,
+        cl.float8_e8m0fnu,
+    ),
+)
+def test_tmadesc_byte_types(dtype):
+    @cl.kernel()
+    def kernel(x):
+        tmap = cl.tensor_map_tiled(x, (16, 16), order="F")
+        cl.prefetch_tensor_map(tmap)
+
+    sig = KernelSignature([make_symbolic_tensor(1, dtype)])
+    cres = cl.compile_simt(kernel, [sig], gpu_name='sm_100a', arch='compute_100a')
+    assert len(cres.hoisted_tensor_maps) == 1
+    assert cres.hoisted_tensor_maps[0].data_type == _cext.CU_TENSOR_MAP_DATA_TYPE_UINT8
 
 
 @require_hopper_or_newer()

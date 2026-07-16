@@ -233,18 +233,37 @@ class LocalArrayContextManagerTy(ContextManagerTy):
 
 
 def dtype_to_tensor_map_type(dtype: datatype.DType) -> str:
+    # NOTE: <8b floats will need an explicit encoding argument since they could
+    # map to 16U4_ALIGN8B or 16U4_ALIGN16B
     match dtype:
-        case datatype.uint8: return "CU_TENSOR_MAP_DATA_TYPE_UINT8"
-        case datatype.uint16: return "CU_TENSOR_MAP_DATA_TYPE_UINT16"
-        case datatype.uint32: return "CU_TENSOR_MAP_DATA_TYPE_UINT32"
-        case datatype.int32: return "CU_TENSOR_MAP_DATA_TYPE_INT32"
-        case datatype.uint64: return "CU_TENSOR_MAP_DATA_TYPE_UINT64"
-        case datatype.int64: return "CU_TENSOR_MAP_DATA_TYPE_INT64"
-        case datatype.float16: return "CU_TENSOR_MAP_DATA_TYPE_FLOAT16"
-        case datatype.float32: return "CU_TENSOR_MAP_DATA_TYPE_FLOAT32"
-        case datatype.float64: return "CU_TENSOR_MAP_DATA_TYPE_FLOAT64"
-        case datatype.bfloat16: return "CU_TENSOR_MAP_DATA_TYPE_BFLOAT16"
-        case datatype.tfloat32: return "CU_TENSOR_MAP_DATA_TYPE_TFLOAT32"
+        case (
+            datatype.uint8
+            | datatype.int8
+            | datatype.float8_e4m3fn
+            | datatype.float8_e5m2
+            | datatype.float8_e8m0fnu
+        ):
+            return "CU_TENSOR_MAP_DATA_TYPE_UINT8"
+        case datatype.uint16:
+            return "CU_TENSOR_MAP_DATA_TYPE_UINT16"
+        case datatype.uint32:
+            return "CU_TENSOR_MAP_DATA_TYPE_UINT32"
+        case datatype.int32:
+            return "CU_TENSOR_MAP_DATA_TYPE_INT32"
+        case datatype.uint64:
+            return "CU_TENSOR_MAP_DATA_TYPE_UINT64"
+        case datatype.int64:
+            return "CU_TENSOR_MAP_DATA_TYPE_INT64"
+        case datatype.float16:
+            return "CU_TENSOR_MAP_DATA_TYPE_FLOAT16"
+        case datatype.float32:
+            return "CU_TENSOR_MAP_DATA_TYPE_FLOAT32"
+        case datatype.float64:
+            return "CU_TENSOR_MAP_DATA_TYPE_FLOAT64"
+        case datatype.bfloat16:
+            return "CU_TENSOR_MAP_DATA_TYPE_BFLOAT16"
+        case datatype.tfloat32:
+            return "CU_TENSOR_MAP_DATA_TYPE_TFLOAT32"
         case _:
             raise TypeCheckingError(f"Data type {dtype} is not supported by tensor map")
 
@@ -261,10 +280,14 @@ class LangTypingHooks(TypingHooks):
     @override
     def get_tensor_like_type(self, dtype: DType, shape: Sequence[int]) -> TensorLikeTy:
         match tuple(shape):
-            case () if datatype.is_pointer_dtype(dtype): return PointerTy(dtype)
-            case (): return ScalarTy(dtype)
-            case (length,): return VectorTy(dtype, length)
-            case _: assert False, "cuda.lang does not support N-dimensional tensors"
+            case () if datatype.is_pointer_dtype(dtype):
+                return PointerTy(dtype)
+            case ():
+                return ScalarTy(dtype)
+            case (length,):
+                return VectorTy(dtype, length)
+            case _:
+                assert False, "cuda.lang does not support N-dimensional tensors"
 
 
 def type_bitwidth(x: Type):
