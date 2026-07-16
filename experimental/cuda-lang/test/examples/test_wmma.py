@@ -123,7 +123,7 @@ WMMA_DESCRIPTORS = (
 )
 
 
-@cl.function
+@cl.metafunction
 def fragment(use, m: int, n: int, k: int, dtype, layout=Layout.NO_LAYOUT):
     return FragmentDescriptor(use, m, n, k, dtype, layout)
 
@@ -206,7 +206,16 @@ def _find_mma_intrinsic(a_spec, b_spec, c_spec, satf):
     name = f"wmma_{op.shape_name}_mma_{a_layout}_{b_layout}_{op.mma_suffix}"
     if satf:
         name += "_satfinite"
-    return getattr(cl._nvvm, name), (op.a_regs, op.b_regs, op.c_regs)
+    return getattr(cl._nvvm, name), op
+
+
+def _find_store_intrinsic(spec, memory_layout):
+    op = _find_fragment_descriptor(spec)
+    name = (
+        f"wmma_{op.shape_name}_store_d_{memory_layout.value}_stride_"
+        f"{_dtype_name(spec.dtype)}"
+    )
+    return getattr(cl._nvvm, name), op
 
 
 def _to_tuple(v):
@@ -217,43 +226,38 @@ def _to_tuple(v):
     return v if isinstance(v, tuple) else (v,)
 
 
-@cl.function
-def load_matrix_sync(spec, ptr, ldm, layout=Layout.NO_LAYOUT):
-    fn = cl.static_eval(_find_load_intrinsic(spec, layout))
-    regs = fn(ptr, ldm)
-    regs = cl.static_eval(_to_tuple(regs))
-    return Fragment(spec, regs)
-
-
-@cl.function
-def mma_sync(a, b, c, satf=False):
-    fn, reg_counts = cl.static_eval(_find_mma_intrinsic(a.spec, b.spec, c.spec, satf))
-    regs = (*a.regs, *b.regs, *c.regs)
-    expected_regs = cl.static_eval(sum(reg_counts))
-    cl.static_assert(len(regs) == expected_regs, "mma_sync register count mismatch")
-    results = fn(*regs)
-    return dataclasses.replace(c, regs=results)
-
-
-@cl.function
-def store_matrix_sync(ptr, frag, ldm, layout):
-    cl.static_assert(
-        frag.spec.use == FragmentUse.ACCUMULATOR,
-        "store_matrix_sync expects an accumulator fragment",
-    )
-
-    op = cl.static_eval(_find_fragment_descriptor(frag.spec))
-    dtype_name = cl.static_eval(_dtype_name(frag.spec.dtype))
-    layout_name = cl.static_eval(layout.value)
-    fn = cl.static_eval(
-        getattr(
-            cl._nvvm, f"wmma_{op.shape_name}_store_d_{layout_name}_stride_{dtype_name}"
+def _check_register_count(name, fragment, expected):
+    actual = len(fragment.regs)
+    if actual != expected:
+        raise TypeError(
+            f"{name} fragment has {actual} registers, expected {expected}"
         )
-    )
-    cl.static_assert(
-        len(frag.regs) == op.c_regs,
-        f"store_matrix_sync expected {op.c_regs} registers",
-    )
+
+
+@cl.metafunction
+def load_matrix_sync(spec, ptr, ldm, layout=Layout.NO_LAYOUT):
+    fn = _find_load_intrinsic(spec, layout)
+    return Fragment(spec, _to_tuple(fn(ptr, ldm)))
+
+
+@cl.metafunction
+def mma_sync(a, b, c, satf=False):
+    fn, op = _find_mma_intrinsic(a.spec, b.spec, c.spec, satf)
+    _check_register_count("matrix_a", a, op.a_regs)
+    _check_register_count("matrix_b", b, op.b_regs)
+    _check_register_count("accumulator", c, op.c_regs)
+
+    results = fn(*a.regs, *b.regs, *c.regs)
+    return dataclasses.replace(c, regs=_to_tuple(results))
+
+
+@cl.metafunction
+def store_matrix_sync(ptr, frag, ldm, layout):
+    if frag.spec.use != FragmentUse.ACCUMULATOR:
+        raise TypeError("store_matrix_sync expects an accumulator fragment")
+
+    fn, op = _find_store_intrinsic(frag.spec, layout)
+    _check_register_count("accumulator", frag, op.c_regs)
     fn(ptr, *frag.regs, ldm)
 
 
@@ -351,7 +355,7 @@ def wmma_gemm_kernel(cfg: WmmaConfig) -> cl.kernel:
             config.acc_layout,
         )
 
-        for kk in range(0, global_k, wmma_k):
+        for kk in cl.static_iter(range(0, global_k, wmma_k)):
             if config.a_layout == wmma.Layout.COL_MAJOR:
                 a_ptr = a.get_element_pointer((kk, tile_row))
                 a_ldm = global_m
@@ -369,7 +373,7 @@ def wmma_gemm_kernel(cfg: WmmaConfig) -> cl.kernel:
             acc = wmma.mma_sync(
                 wmma.load_matrix_sync(a_frag_t, a_ptr, a_ldm),
                 wmma.load_matrix_sync(b_frag_t, b_ptr, b_ldm),
-                Fragment(acc_frag_t, acc.regs),
+                acc,
                 config.satf,
             )
 
@@ -380,7 +384,7 @@ def wmma_gemm_kernel(cfg: WmmaConfig) -> cl.kernel:
 
         wmma.store_matrix_sync(
             d_ptr,
-            Fragment(acc_frag_t, acc.regs),
+            acc,
             acc_ldm,
             config.acc_layout,
         )
@@ -473,7 +477,7 @@ def all_test_cases():
         for a_layout in (Layout.ROW_MAJOR, Layout.COL_MAJOR):
             for b_layout in (Layout.ROW_MAJOR, Layout.COL_MAJOR):
                 for acc_layout in (Layout.ROW_MAJOR, Layout.COL_MAJOR):
-                    # These tolerances were roughly taken from these samples
+                    # These tolerances were roughly taken from these samples:
                     # cuda-samples/Samples/3_CUDA_Features/bf16TensorCoreGemm/
                     # cuda-samples/Samples/3_CUDA_Features/cudaTensorCoreGemm/
                     # cuda-samples/Samples/3_CUDA_Features/dmmaTensorCoreGemm/

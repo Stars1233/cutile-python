@@ -50,7 +50,7 @@ def copy(odata, idata, width: cl.Constant[int], height: cl.Constant[int]):
 
 
 @cl.kernel
-def copySharedMem(odata, idata, width: cl.Constant[int], height: cl.Constant[int]):
+def copy_smem(odata, idata, width: cl.Constant[int], height: cl.Constant[int]):
     tile = cl.shared_array(shape=(TILE_DIM, TILE_DIM), dtype=cl.float32)
     bx, by = cl.block_index(0), cl.block_index(1)
     tx, ty = cl.thread_index(0), cl.thread_index(1)
@@ -69,7 +69,7 @@ def copySharedMem(odata, idata, width: cl.Constant[int], height: cl.Constant[int
 
 
 @cl.kernel
-def transposeNaive(odata, idata, width: cl.Constant[int], height: cl.Constant[int]):
+def transpose_naive(odata, idata, width: cl.Constant[int], height: cl.Constant[int]):
     bx, by = cl.block_index(0), cl.block_index(1)
     tx, ty = cl.thread_index(0), cl.thread_index(1)
     xIndex = bx * TILE_DIM + tx
@@ -81,7 +81,7 @@ def transposeNaive(odata, idata, width: cl.Constant[int], height: cl.Constant[in
 
 
 @cl.kernel
-def transposeCoalesced(odata, idata, width: cl.Constant[int], height: cl.Constant[int]):
+def transpose_coalesced(odata, idata, width: cl.Constant[int], height: cl.Constant[int]):
     tile = cl.shared_array(shape=(TILE_DIM, TILE_DIM), dtype=cl.float32)
     bx, by = cl.block_index(0), cl.block_index(1)
     tx, ty = cl.thread_index(0), cl.thread_index(1)
@@ -99,7 +99,7 @@ def transposeCoalesced(odata, idata, width: cl.Constant[int], height: cl.Constan
 
 
 @cl.kernel
-def transposeNoBankConflicts(
+def transpose_no_bank_conflicts(
     odata, idata, width: cl.Constant[int], height: cl.Constant[int]
 ):
     tile = cl.shared_array(shape=(TILE_DIM, TILE_DIM + 1), dtype=cl.float32)
@@ -119,7 +119,7 @@ def transposeNoBankConflicts(
 
 
 @cl.kernel
-def transposeDiagonal(odata, idata, width: cl.Constant[int], height: cl.Constant[int]):
+def transpose_diagonal(odata, idata, width: cl.Constant[int], height: cl.Constant[int]):
     tile = cl.shared_array(shape=(TILE_DIM, TILE_DIM + 1), dtype=cl.float32)
     bx, by = cl.block_index(0), cl.block_index(1)
     tx, ty = cl.thread_index(0), cl.thread_index(1)
@@ -145,7 +145,7 @@ def transposeDiagonal(odata, idata, width: cl.Constant[int], height: cl.Constant
 
 
 @cl.kernel
-def transposeFineGrained(
+def transpose_fine_grained(
     odata, idata, width: cl.Constant[int], height: cl.Constant[int]
 ):
     block = cl.shared_array(shape=(TILE_DIM, TILE_DIM + 1), dtype=cl.float32)
@@ -162,7 +162,7 @@ def transposeFineGrained(
 
 
 @cl.kernel
-def transposeCoarseGrained(
+def transpose_coarse_grained(
     odata, idata, width: cl.Constant[int], height: cl.Constant[int]
 ):
     block = cl.shared_array(shape=(TILE_DIM, TILE_DIM + 1), dtype=cl.float32)
@@ -181,7 +181,7 @@ def transposeCoarseGrained(
         odata[index_out + i * height] = block[ty + i, tx]
 
 
-def computeTransposeGold(idata, size_x, size_y):
+def compute_transpose_gold(idata, size_x, size_y):
     gold = torch.empty_like(idata)
     for y in range(size_y):
         for x in range(size_x):
@@ -193,13 +193,13 @@ def computeTransposeGold(idata, size_x, size_y):
     "kernel",
     (
         copy,
-        copySharedMem,
-        transposeNaive,
-        transposeCoalesced,
-        transposeNoBankConflicts,
-        transposeCoarseGrained,
-        transposeFineGrained,
-        transposeDiagonal,
+        copy_smem,
+        transpose_naive,
+        transpose_coalesced,
+        transpose_no_bank_conflicts,
+        transpose_coarse_grained,
+        transpose_fine_grained,
+        transpose_diagonal,
     ),
 )
 def test_transpose(kernel):
@@ -208,13 +208,13 @@ def test_transpose(kernel):
     threads = (TILE_DIM, BLOCK_ROWS)
     h_idata = torch.arange(size_x * size_y, dtype=torch.float32)
     h_odata = torch.zeros_like(h_idata)
-    transposeGold = computeTransposeGold(h_idata, size_x, size_y)
+    transposeGold = compute_transpose_gold(h_idata, size_x, size_y)
     d_idata = h_idata.cuda()
     d_odata = h_odata.cuda()
 
-    if kernel == copy or kernel == copySharedMem:
+    if kernel == copy or kernel == copy_smem:
         gold = h_idata
-    elif kernel == transposeCoarseGrained or kernel == transposeFineGrained:
+    elif kernel == transpose_coarse_grained or kernel == transpose_fine_grained:
         # fine- and coarse-grained kernels are not full
         # transposes, so don't verify the results.
         gold = h_odata

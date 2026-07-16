@@ -554,7 +554,7 @@ def mha_kernel(
                         row_max = old_max
                     else:
                         correction = fast_exp2(correction_log2)
-                    max_vec[(qid, lane_in_group)] = correction
+                    max_vec[qid, lane_in_group] = correction
                 cl.barrier_sync_warp()
                 if cl.elect_sync():
                     cl.mbarrier_arrive(corr_arrived.get_element_pointer(qid))
@@ -610,8 +610,8 @@ def mha_kernel(
                 row_sum = row_sum * correction + block_sum
                 score_phase ^= 1
 
-            lse_vec[(qid, lane_in_group)] = row_max
-            max_vec[(qid, lane_in_group)] = row_sum
+            lse_vec[qid, lane_in_group] = row_max
+            max_vec[qid, lane_in_group] = row_sum
             cl.barrier_sync_warp()
             if cl.elect_sync():
                 cl.mbarrier_arrive(corr_arrived.get_element_pointer(qid))
@@ -641,7 +641,7 @@ def mha_kernel(
                     wait_mbarrier(
                         corr_arrived.get_element_pointer(qid), correction_phase
                     )
-                    correction = max_vec[(qid, lane_in_group)]
+                    correction = max_vec[qid, lane_in_group]
                     needs_rescale = cl._nvvm.vote_any_sync(
                         cl.int32(-1), correction < cl.float32(1.0)
                     )
@@ -686,8 +686,8 @@ def mha_kernel(
 
             for qid in cl.static_iter(range(2)):
                 wait_mbarrier(corr_arrived.get_element_pointer(qid), correction_phase)
-                row_sum = max_vec[(qid, lane_in_group)]
-                row_max = lse_vec[(qid, lane_in_group)]
+                row_sum = max_vec[qid, lane_in_group]
+                row_max = lse_vec[qid, lane_in_group]
                 if warp == 8 and cl.elect_sync():
                     cl.mbarrier_arrive(rescale_finished.get_element_pointer(qid))
                 invalid = row_sum == cl.float32(0.0) or row_sum != row_sum

@@ -32,7 +32,7 @@ MMA_K = 16
 
 def warp_reduce_max(value):
     for offset in cl.static_iter((16, 8, 4, 2, 1)):
-        value = cl._libdevice.fmaxf(value, cl.shfl_down_sync(value, offset))
+        value = cl.maximum(value, cl.shfl_down_sync(value, offset))
     return value
 
 
@@ -53,7 +53,7 @@ def block_reduce_max(value, warp_values, num_warps):
     if tid == 0:
         value = warp_values[0]
         for index in cl.static_iter(range(1, num_warps)):
-            value = cl._libdevice.fmaxf(value, warp_values[index])
+            value = cl.maximum(value, warp_values[index])
         warp_values[0] = value
     cl.barrier_sync_block()
     return warp_values[0]
@@ -96,7 +96,7 @@ def multicta_softmax_kernel(
 
     local_max = cl.float32(-float("inf"))
     for col in range(col_start, n, col_stride):
-        local_max = cl._libdevice.fmaxf(local_max, x[row, col])
+        local_max = cl.maximum(local_max, x[row, col])
     cta_max = block_reduce_max(local_max, warp_values, num_warps)
     if tid == 0:
         cluster_values[0] = cta_max
@@ -109,7 +109,7 @@ def multicta_softmax_kernel(
             peer_values = cl.map_shared_to_cluster(
                 cluster_values.get_base_pointer(), peer
             )
-            row_max = cl._libdevice.fmaxf(row_max, peer_values.load())
+            row_max = cl.maximum(row_max, peer_values.load())
         cluster_values[0] = row_max
     cl.barrier_sync_cluster()
     if tid == 0:
@@ -120,7 +120,7 @@ def multicta_softmax_kernel(
 
     local_sum = cl.float32(0.0)
     for col in range(col_start, n, col_stride):
-        value = cl._libdevice.expf(x[row, col] - row_max)
+        value = cl.exp(x[row, col] - row_max)
         out[row, col] = value
         local_sum += value
     cta_sum = block_reduce_sum(local_sum, warp_values, num_warps)

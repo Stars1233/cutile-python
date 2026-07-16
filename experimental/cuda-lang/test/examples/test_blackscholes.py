@@ -30,8 +30,8 @@ def cnd_gpu(d):
     a5 = 1.330274429
     rsqrt2pi = 0.39894228040143267793994605993438
 
-    k = 1.0 / (1.0 + 0.2316419 * cl._libdevice.fabsf(d))
-    cnd = rsqrt2pi * cl._libdevice.expf((-0.5) * d * d) * (
+    k = 1.0 / (1.0 + 0.2316419 * cl.abs(d))
+    cnd = rsqrt2pi * cl.exp((-0.5) * d * d) * (
         k * (a1 + k * (a2 + k * (a3 + k * (a4 + k * a5))))
     )
     if d > 0.0:
@@ -41,13 +41,13 @@ def cnd_gpu(d):
 
 @cl.function
 def black_scholes_body_gpu(s, x, t, r, v):
-    sqrt_t = 1.0 / cl._libdevice.rsqrtf(t)
-    d1 = (cl._libdevice.logf(s / x) + (r + 0.5 * v * v) * t) / (v * sqrt_t)
+    sqrt_t = 1.0 / cl.rsqrt(t)
+    d1 = (cl.log(s / x) + (r + 0.5 * v * v) * t) / (v * sqrt_t)
     d2 = d1 - v * sqrt_t
 
     cnd_d1 = cnd_gpu(d1)
     cnd_d2 = cnd_gpu(d2)
-    exp_rt = cl._libdevice.expf((-1.0) * r * t)
+    exp_rt = cl.exp((-1.0) * r * t)
 
     call_result = s * cnd_d1 - x * exp_rt * cnd_d2
     put_result = x * exp_rt * (1.0 - cnd_d2) - s * (1.0 - cnd_d1)

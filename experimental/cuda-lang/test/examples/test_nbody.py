@@ -66,7 +66,7 @@ def calculate_forces(
             ry = sh_positions[j, 1] - yi
             sqr_dist = rx * rx + ry * ry + eps_2
             sixth_dist = sqr_dist * sqr_dist * sqr_dist
-            s = sh_weights[j] * cl._libdevice.rsqrtf(sixth_dist)
+            s = sh_weights[j] * cl.rsqrt(sixth_dist)
             axi = axi + rx * s
             ayi = ayi + ry * s
 

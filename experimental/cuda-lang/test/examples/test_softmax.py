@@ -43,11 +43,11 @@ class SoftmaxForwardKernel1:
 
         maxval = cl.float32(-float("inf"))
         for j in range(c):
-            maxval = cl._libdevice.fmaxf(maxval, inp[base + j])
+            maxval = cl.maximum(maxval, inp[base + j])
 
         sumval = cl.float64(0.0)
         for j in range(c):
-            expval = cl._libdevice.expf(inp[base + j] - maxval)
+            expval = cl.exp(inp[base + j] - maxval)
             out[base + j] = expval
             sumval += cl.float64(expval)
 
@@ -105,8 +105,8 @@ class SoftmaxForwardKernel7:
             for u in cl.static_iter(range(unroll_factor)):
                 col = i + u * block_size + tid
                 if col < c:
-                    maxval = cl._libdevice.fmaxf(maxval, inp[row_base + col])
-        maxval = warp_reduce(maxval, cl._libdevice.fmaxf)
+                    maxval = cl.maximum(maxval, inp[row_base + col])
+        maxval = warp_reduce(maxval, cl.maximum)
 
         if lane_id == 0:
             maxvals[warp_id] = maxval
@@ -115,7 +115,7 @@ class SoftmaxForwardKernel7:
         if tid == 0:
             block_max = maxvals[0]
             for i in cl.static_iter(range(1, warps_per_block)):
-                block_max = cl._libdevice.fmaxf(block_max, maxvals[i])
+                block_max = cl.maximum(block_max, maxvals[i])
             maxvals[0] = block_max
         cl.barrier_sync_block()
 
@@ -126,7 +126,7 @@ class SoftmaxForwardKernel7:
             for u in cl.static_iter(range(unroll_factor)):
                 col = i + u * block_size + tid
                 if col < c:
-                    output = cl._libdevice.expf(inp[row_base + col] - offset)
+                    output = cl.exp(inp[row_base + col] - offset)
                     out[row_base + col] = output
                     sumval = sumval + output
         sumval = warp_reduce(sumval, operator.add)
