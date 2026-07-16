@@ -136,6 +136,11 @@ class CachePolicy(Enum):
     L2_EVICT_UNCHANGED = "L2::evict_unchanged"
 
 
+class PrefetchLevel(Enum):
+    L1 = auto()
+    L2 = auto()
+
+
 __all__ = (
     "MemorySpace",
     "MemoryScope",
@@ -158,4 +163,5 @@ __all__ = (
     "FenceProxyKind",
     "BarrierReductionKind",
     "CachePolicy",
+    "PrefetchLevel",
 )

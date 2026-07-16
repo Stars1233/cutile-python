@@ -28,6 +28,12 @@ from ._stub.cache_policy import (
     create_range_cache_policy,
     CachePolicy,
 )
+from ._stub.prefetch import (
+    PrefetchLevel,
+    prefetch,
+    prefetch_uniform,
+    prefetch_tensor_map,
+)
 from ._stub.math import (
     add,
     sub,
@@ -444,4 +450,8 @@ __all__ = (
     "create_fractional_cache_policy",
     "create_range_cache_policy",
     "CachePolicy",
+    "PrefetchLevel",
+    "prefetch",
+    "prefetch_uniform",
+    "prefetch_tensor_map",
 )

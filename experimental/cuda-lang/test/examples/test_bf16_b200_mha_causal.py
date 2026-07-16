@@ -249,10 +249,10 @@ def mha_kernel(
     )
 
     if tid == 0:
-        cl._nvvm.prefetch_tensormap(q_tmap.as_opaque_ptr())
-        cl._nvvm.prefetch_tensormap(k_tmap.as_opaque_ptr())
-        cl._nvvm.prefetch_tensormap(v_tmap.as_opaque_ptr())
-        cl._nvvm.prefetch_tensormap(o_tmap.as_opaque_ptr())
+        cl.prefetch_tensor_map(q_tmap)
+        cl.prefetch_tensor_map(k_tmap)
+        cl.prefetch_tensor_map(v_tmap)
+        cl.prefetch_tensor_map(o_tmap)
         for qid in cl.static_iter(range(2)):
             cl.mbarrier_initialize(q_arrived.get_element_pointer(qid), 1)
             cl.mbarrier_initialize(q_finished.get_element_pointer(qid), 1)
