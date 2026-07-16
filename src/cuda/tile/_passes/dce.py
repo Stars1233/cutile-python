@@ -5,9 +5,9 @@ import dataclasses
 from typing import Sequence, Set, Tuple, Dict, Any, Optional, List
 
 from cuda.tile._exception import Loc
-from cuda.tile._ir.ir import Block, Operation, IRContext, MemoryEffect, Var
+from cuda.tile._ir.ir import Block, Operation, IRContext, Var
 from cuda.tile._ir.control_flow_ops import (
-    Loop, Continue, Break, Return, MakeDummy, IfElse, EndBranch
+    Loop, Continue, Break, MakeDummy, IfElse, EndBranch
 )
 from cuda.tile._ir.ops import TileReduce, TileScan
 
@@ -204,7 +204,7 @@ def _build_dataflow_graph(graph: Dict[str, List[str] | Tuple[str, ...]],
 
 
 def _must_keep(op: Operation) -> bool:
-    return op.memory_effect == MemoryEffect.STORE or isinstance(op, Return)
+    return op.has_observable_effect
 
 
 def _find_used_variables(dataflow_graph: Dict[str, Sequence[str]], used: Set[str]):

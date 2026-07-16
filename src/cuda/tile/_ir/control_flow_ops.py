@@ -538,6 +538,10 @@ class Return(Operation, opcode="return", terminator=True):
     def _to_string_rhs(self) -> str:
         return "return"
 
+    @property
+    def has_observable_effect(self) -> bool:
+        return True
+
 
 def return_(value: Var | None):
     if value is not None and value.get_type() is not NONE:

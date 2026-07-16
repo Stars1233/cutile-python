@@ -6,6 +6,7 @@ import cuda.tile as ct
 from cuda.tile._cext import CallingConvention
 from cuda.tile._compile import compile_tile
 from cuda.tile._ir.control_flow_ops import Loop, Continue, Break, MakeDummy
+from cuda.tile._ir.ops import TileLoad
 from cuda.tile._ir import ir
 from cuda.tile.compilation import ArrayConstraint, KernelSignature
 
@@ -62,6 +63,23 @@ def test_unused_body_var():
     continue_op = loop.body[-1]
     assert isinstance(continue_op, Continue)
     assert isinstance(_get_defining_op(continue_op.values[t_idx], func_body), MakeDummy)
+
+
+def test_dead_acquire_load_is_kept():
+    def kernel(x):
+        ct.load(x, (0,), (1,), memory_order=ct.MemoryOrder.ACQUIRE,
+                memory_scope=ct.MemoryScope.DEVICE)
+
+    func_body = get_ir(kernel)
+    assert any(isinstance(op, TileLoad) for op in func_body.traverse())
+
+
+def test_dead_weak_load_is_removed():
+    def kernel(x):
+        ct.load(x, (0,), (1,))
+
+    func_body = get_ir(kernel)
+    assert not any(isinstance(op, TileLoad) for op in func_body.traverse())
 
 
 def test_unused_result_var():

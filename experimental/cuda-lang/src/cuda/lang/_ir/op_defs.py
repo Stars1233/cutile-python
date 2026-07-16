@@ -95,6 +95,10 @@ class LoadPointer(Operation, opcode="load_pointer", memory_effect=MemoryEffect.L
         MemoryOrder.ACQUIRE,
     )
 
+    @property
+    def has_observable_effect(self) -> bool:
+        return self.volatile or self.memory_order in (MemoryOrder.ACQUIRE, )
+
 
 @dataclass(eq=False)
 class ReinterpretPointerAsArray(Operation, opcode="reinterpret_ptr_as_array"):

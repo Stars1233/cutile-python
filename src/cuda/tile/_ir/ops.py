@@ -907,6 +907,10 @@ class TileLoad(Operation, opcode="tile_load", memory_effect=MemoryEffect.LOAD):
         MemoryScope.SYS,
     )
 
+    @property
+    def has_observable_effect(self) -> bool:
+        return self.memory_order in (MemoryOrder.ACQUIRE,)
+
     @override
     def generate_bytecode(self, ctx: BytecodeContext) -> tuple[bc.Value, bc.Value]:
         tile_type: TileTy = self.result_vars[0].get_type()

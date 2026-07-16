@@ -624,6 +624,12 @@ class Operation:
         return self._is_terminator
 
     @property
+    def has_observable_effect(self) -> bool:
+        # Whether removing or reordering this op would change observable
+        # behavior. Ops that write memory always do.
+        return self.memory_effect == MemoryEffect.STORE
+
+    @property
     def result_var(self) -> Var:
         if len(self.result_vars) != 1:
             raise ValueError(f"Operation {self.op} has {len(self.result_vars)} results")
