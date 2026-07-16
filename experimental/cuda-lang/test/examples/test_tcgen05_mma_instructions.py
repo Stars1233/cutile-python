@@ -114,14 +114,14 @@ def make_tcgen05_mma_kernel(entrypoint, is_sparse):
         if warp == MMA_WARP and cl.elect_sync():
             a_descriptor = cl.Tcgen05SharedMemoryDescriptor(
                 matrix_start_address=p3_to_u64(matrix_a.get_base_pointer()),
-                leading_dimension_offset=0,
-                stride_dimension_offset=8 * 128,
+                leading_dimension_byte_offset=0,
+                stride_dimension_byte_offset=8 * 128,
                 swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
             ).encode()
             b_descriptor = cl.Tcgen05SharedMemoryDescriptor(
                 matrix_start_address=p3_to_u64(matrix_b.get_base_pointer()),
-                leading_dimension_offset=0,
-                stride_dimension_offset=8 * 128,
+                leading_dimension_byte_offset=0,
+                stride_dimension_byte_offset=8 * 128,
                 swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
             ).encode()
             sparse_metadata = tmem + SPARSE_METADATA_COLUMN if is_sparse else None
@@ -203,7 +203,6 @@ def make_tcgen05_mma_kernel(entrypoint, is_sparse):
     return kernel
 
 
-@pytest.mark.xfail(strict=False)
 @pytest.mark.parametrize(
     "entrypoint,is_sparse,expected",
     (
