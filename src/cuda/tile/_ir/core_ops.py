@@ -351,6 +351,26 @@ def setitem_tuple_impl(object: Var, key: Var, value: Var):
     raise TileTypeError("Tuples are immutable: item assignment is not supported.")
 
 
+@impl(operator.getitem, overload=(DataclassTy, WILDCARD))
+async def getitem_dataclass_impl(object: Var[DataclassTy], key: Var) -> Var:
+    ty = object.get_type()
+    dunder = find_method(ty.cls, "__getitem__")
+    if dunder is NotImplemented:
+        raise TileTypeError(f"'{ty.cls.__qualname__}' object is not subscriptable")
+    from cuda.tile._passes.hir2ir import call_function
+    return await call_function(dunder, object, key)
+
+
+@impl(operator.setitem, overload=(DataclassTy, WILDCARD, WILDCARD))
+async def setitem_dataclass_impl(object: Var[DataclassTy], key: Var, value: Var) -> Var:
+    ty = object.get_type()
+    dunder = find_method(ty.cls, "__setitem__")
+    if dunder is NotImplemented:
+        raise TileTypeError(f"'{ty.cls.__qualname__}' object does not support item assignment")
+    from cuda.tile._passes.hir2ir import call_function
+    return await call_function(dunder, object, key, value)
+
+
 @comparison_operator_impl(_registry, TupleTy, TupleTy)
 async def comparison_operator_tuple_impl(fn: str, x: Var[TupleTy], y: Var[TupleTy]) -> Var:
     if fn not in ("eq", "ne"):

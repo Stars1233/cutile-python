@@ -540,3 +540,40 @@ def test_reject_call_no_dunder():
     x = torch.zeros((), dtype=torch.int32, device="cuda")
     with pytest.raises(TypeCheckingError, match="Cannot call an object of type NoCall"):
         ct.launch(torch.cuda.current_stream(), (1,), kern, (x,))
+
+
+def test_getitem_dunder():
+    @dataclass(frozen=True)
+    class WithGetitem:
+        x: int
+
+        def __getitem__(self, i):
+            return self.x * i
+
+    @ct.kernel
+    def kern(x):
+        d = WithGetitem(3)
+        res = d[7]
+        ct.scatter(x, (), res)
+
+    x = torch.zeros((), dtype=torch.int32, device="cuda")
+    ct.launch(torch.cuda.current_stream(), (1,), kern, (x,))
+    assert x.item() == 21
+
+
+def test_setitem_dunder():
+    @dataclass(frozen=True)
+    class WithSetitem:
+        x: ct.Array
+
+        def __setitem__(self, i, val):
+            ct.scatter(self.x, i, val * 10)
+
+    @ct.kernel
+    def kern(x):
+        d = WithSetitem(x)
+        d[1] = 5
+
+    x = torch.arange(4, dtype=torch.int32, device="cuda")
+    ct.launch(torch.cuda.current_stream(), (1,), kern, (x,))
+    assert x.tolist() == [0, 50, 2, 3]
