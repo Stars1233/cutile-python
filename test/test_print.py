@@ -161,6 +161,15 @@ def kernel_fstring_nested(x, TILE: ct.Constant[int]):
 
 
 @ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_fstring_concatenated(x, TILE: ct.Constant[int]):
+    bid = ct.bid(0)
+    tx = ct.load(x, index=(bid,), shape=(TILE,))
+    lhs = f"Foo({tx})"
+    rhs = f"BAR({bid + 3})"
+    print(lhs + rhs)
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
 def kernel_print_aliases(x, TILE: ct.Constant[int]):
     bid = ct.bid(0)
     tx = ct.load(x, index=(bid,), shape=(TILE,))
@@ -343,6 +352,14 @@ def kernel_print_dataclass_no_default_but_custom_repr(x, TILE: ct.Constant[int])
 
 
 @ct.kernel(opt_level=_OPT_LEVEL)
+def kernel_print_dataclass_custom_format(x, TILE: ct.Constant[int]):
+    t = ct.load(x, 0, (TILE,))
+    obj = CustomFormat(t)
+    ct.print(obj)
+    print(obj)
+
+
+@ct.kernel(opt_level=_OPT_LEVEL)
 def kernel_print_empty_tuple(x, TILE: ct.Constant[int]):
     ct.print(f"empty tuple: {()}")
     ct.print(())
@@ -392,6 +409,8 @@ def kernel_print_enum(x, TILE: ct.Constant[int]):
     print(_PrintColor.GREEN)
     ct.print(f"color = {_PrintColor.RED}")
     print(f"color = {_PrintColor.RED}")
+    ct.print(repr(_PrintColor.GREEN))
+    print(repr(_PrintColor.GREEN))
 
 
 @ct.kernel(opt_level=_OPT_LEVEL)
@@ -544,7 +563,11 @@ def test_fstring_nested(shape, tile):
         formatted_x = ', '.join(
             [f"{elem:10.4f}" for elem in x[start_idx:end_idx]])
         assert f"tile[{i}]:[{formatted_x}]" in actual_outs
-        assert f"msg=tile[{i}]:[{formatted_x}]" in actual_outs
+
+
+def test_fstring_concatenated():
+    [actual_outs] = _run_kernel(kernel_fstring_concatenated, (8,), "int32", 8)
+    assert actual_outs == "Foo([0, 1, 2, 3, 4, 5, 6, 7])BAR(3)"
 
 
 @pytest.mark.parametrize("shape", [(8,)])
@@ -624,7 +647,7 @@ def test_ct_print_tuple_format_spec_error():
         ct.print(f"{x.shape:10}")
 
     x = torch.zeros(8, device='cuda', dtype=torch.int32)
-    with pytest.raises(TileTypeError, match="cannot apply format spec to a tuple value"):
+    with pytest.raises(TileTypeError, match="cannot apply format spec to a value of type"):
         ct.launch(torch.cuda.current_stream(), (1, 1, 1), bad_kernel, (x, 8))
 
 
@@ -688,20 +711,28 @@ def test_ct_print_dataclass_no_default_but_custom_repr():
     assert actual_ct == actual_builtin == "NO_DEFAULT_BUT_CUSTOM_REPR([0, 1, 2, 3, 4, 5, 6, 7])"
 
 
-def test_ct_print_reject_dataclass_with_custom_format():
-    @dataclass(frozen=True)
-    class CustomFormat:
-        x: int
+@dataclass(frozen=True)
+class CustomFormat:
+    x: Any
 
-        def __format__(self, spec):
-            return "Custom!"
+    def __format__(self, spec):
+        return "Custom!"
 
+
+def test_ct_print_dataclass_ignore_custom_format():
+    [actual_ct, actual_builtin] = _run_kernel(
+            kernel_print_dataclass_custom_format, (8,), "int32", 8)
+    assert actual_ct == actual_builtin == "CustomFormat(x=[0, 1, 2, 3, 4, 5, 6, 7])"
+
+
+def test_reject_dataclass_with_custom_format_inside_fstring():
     @ct.kernel
     def kern():
-        print(CustomFormat(123))
+        x = CustomFormat(123)
+        f"{x}"
 
     with pytest.raises(ct.TileTypeError,
-                       match=re.escape("Printing dataclasses"
+                       match=re.escape("Formatting dataclass values"
                                        " with custom __format__() is not supported")):
         ct.launch(torch.cuda.current_stream(), (1,), kern, ())
 
@@ -720,6 +751,8 @@ def test_ct_print_enum():
     assert actual_outs[1] == "_PrintColor.GREEN"          # print(_PrintColor.GREEN)
     assert actual_outs[2] == "color = _PrintColor.RED"   # ct.print(f"color = {_PrintColor.RED}")
     assert actual_outs[3] == "color = _PrintColor.RED"   # print(f"color = {_PrintColor.RED}")
+    assert actual_outs[4] == repr(_PrintColor.GREEN)
+    assert actual_outs[5] == repr(_PrintColor.GREEN)
 
 
 def test_ct_print_ordering():

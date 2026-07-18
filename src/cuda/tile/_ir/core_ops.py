@@ -23,7 +23,7 @@ from cuda.tile._ir.ir import Operation, attribute, Var, Builder, make_aggregate,
     MemoryEffect, add_operation_variadic
 from cuda.tile._ir.op_impl import ImplRegistry, require_dataclass_type, require_constant_str, \
     OverloadNotFoundError, WILDCARD, require_signed_integer_scalar_type, require_constant_slice, \
-    require_constant_int, PrintfValidator
+    require_constant_int, PrintfValidator, ensure_string_or_formatted_string
 from cuda.tile._ir.scope import Scope
 from cuda.tile._ir.type import Type, DTypeSpec, TensorLikeTy, TupleTy, TupleValue, Symbol, \
     DataclassInfo, DataclassTy, DataclassValue, BoundMethodValue, BoundMethodTy, InvalidType, \
@@ -156,6 +156,165 @@ def len_overload_dispatcher(x: Var):
         yield (type(ty),)
     except OverloadNotFoundError:
         raise TileTypeError(f"Object of type {ty} has no len()")
+
+
+@overload_dispatcher(str)
+def str_overload_dispatcher(x: Var):
+    ty = x.get_type()
+    try:
+        yield (type(ty),)
+    except OverloadNotFoundError:
+        raise TileTypeError(f"Object of type {ty} has no str()")
+
+
+@impl(str, overload=(WILDCARD,))
+async def str_fallback_impl(x: Var):
+    if x.is_constant():
+        return loosely_typed_const(str(x.get_constant()))
+
+    from cuda.tile._passes.hir2ir import call_function
+    return await call_function(repr, x)
+
+
+@impl(str, overload=(StringTy,))
+@impl(str, overload=(FormattedStringTy,))
+def str_str_impl(x: Var[StringTy]):
+    return x
+
+
+@impl(str, overload=(DataclassTy,))
+async def str_dataclass_impl(x: Var[DataclassTy]):
+    from cuda.tile._passes.hir2ir import call_function
+
+    cls = x.get_type().cls
+    method = find_method(cls, "__str__")
+    if method is object.__str__ or method is NotImplemented:
+        # Fall back to repr()
+        return await call_function(repr, x)
+
+    res = await call_function(method, x)
+    if not isinstance(res.get_type(), StringTy | FormattedStringTy):
+        raise TypeCheckingError(f"Expected {cls.__name__}.__str__()"
+                                f" to return a string, got {res.get_type()}")
+    return res
+
+
+@overload_dispatcher(repr)
+def repr_overload_dispatcher(x: Var):
+    ty = x.get_type()
+    try:
+        yield (type(ty),)
+    except OverloadNotFoundError:
+        raise TileTypeError(f"Object of type {ty} has no repr()")
+
+
+@impl(repr, overload=(WILDCARD,))
+def repr_fallback_impl(x: Var):
+    if x.is_constant():
+        return loosely_typed_const(repr(x.get_constant()))
+    return loosely_typed_const(f"<object of type {x.get_type()}>")
+
+
+@impl(repr, overload=(FormattedStringTy,))
+def repr_formatted_str_impl(x: Var[FormattedStringTy]):
+    val = x.get_aggregate()
+    assert isinstance(val, FormattedStringValue)
+    have_single_quote = have_double_quote = False
+    for piece in val.format.pieces:
+        if isinstance(piece, str):
+            if "'" in piece:
+                have_single_quote = True
+            if '"' in piece:
+                have_double_quote = True
+    quote = '"' if have_single_quote and not have_double_quote else "'"
+
+    builder = FormattedStringBuilder()
+    builder.append_literal_piece(quote)
+
+    for piece in val.format.pieces:
+        if isinstance(piece, FormattedPiece):
+            builder.append_formatted_piece(val.values[piece.value_idx], piece.format_spec)
+        else:
+            assert isinstance(piece, str)
+            builder.append_literal_piece(_str_escape_for_repr(piece, quote))
+
+    builder.append_literal_piece(quote)
+    return builder.build()
+
+
+def _str_escape_for_repr(s: str, quote: str) -> str:
+    # HACK: Add the other kind of quote to force Python to pick the quote we want
+    other_quote = "'" if quote == '"' else '"'
+    r = repr(other_quote + s)
+    assert r.startswith(quote)
+    assert r.endswith(quote)
+    r = r[1:-1]
+    # The extra quote we added could have been escaped
+    if r.startswith("\\"):
+        r = r[1:]
+    assert r.startswith(other_quote)
+    return r[1:]
+
+
+@impl(repr, overload=(TensorLikeTy,))
+def repr_tensorlike_impl(x: Var[TensorLikeTy]):
+    if x.is_constant():
+        return loosely_typed_const(str(x.get_constant()))
+
+    builder = FormattedStringBuilder()
+    builder.append_formatted_piece(x, None)
+    return builder.build()
+
+
+@impl(repr, overload=(TupleTy,))
+async def repr_tuple_impl(x: Var[TupleTy]):
+    from cuda.tile._passes.hir2ir import call_function
+    agg = x.get_aggregate()
+    assert isinstance(agg, TupleValue)
+    builder = FormattedStringBuilder()
+    builder.append_literal_piece("(")
+    comma = ""
+    for item in agg.items:
+        r = await call_function(repr, item)
+        builder.append_literal_piece(comma)
+        builder.append_string_var(r)
+        comma = ", "
+    builder.append_literal_piece(",)" if len(agg.items) == 1 else ")")
+    return builder.build()
+
+
+@impl(repr, overload=(DataclassTy,))
+async def repr_dataclass_impl(x: Var[DataclassTy]):
+    from cuda.tile._passes.hir2ir import call_function
+    cls = x.get_type().cls
+
+    # If __repr__ is the default generated implementation, emulate it
+    if dataclass_has_default_repr(cls):
+        agg = x.get_aggregate()
+        assert isinstance(agg, DataclassValue)
+        builder = FormattedStringBuilder()
+        builder.append_literal_piece(f"{cls.__qualname__}(")
+        comma = ""
+        for f, item in zip(dataclasses.fields(cls), agg.items, strict=True):
+            if not f.repr:
+                continue
+            r = await call_function(repr, item)
+            builder.append_literal_piece(f"{comma}{f.name}=")
+            builder.append_string_var(r)
+            comma = ", "
+        builder.append_literal_piece(")")
+        return builder.build()
+
+    method = find_method(cls, "__repr__")
+    if method is object.__repr__ or method is NotImplemented:
+        # Disabled repr: resort to the Python object-like default, but without an object ID.
+        return loosely_typed_const(f"<{cls.__qualname__} object>")
+
+    res = await call_function(method, x)
+    if not isinstance(res.get_type(), StringTy | FormattedStringTy):
+        raise TypeCheckingError(f"Expected {cls.__name__}.__repr__()"
+                                f" to return a string, got {res.get_type()}")
+    return res
 
 
 @overload_dispatcher(hir_stubs.enter_context)
@@ -841,176 +1000,128 @@ class TilePrintf(Operation, opcode="tile_printf", memory_effect=MemoryEffect.STO
 
 @impl(print)
 async def print_impl(args: tuple[Var, ...], sep: Var, end: Var) -> None:
-    format_parts = []
-    leaf_vars = []
+    from cuda.tile._passes.hir2ir import call_function
 
-    def _get_string_quotes(has_single_quote: bool, has_double_quote: bool) -> str:
-        return "'" if not has_single_quote or has_double_quote else '"'
+    sep = ensure_string_or_formatted_string(sep)
+    end = ensure_string_or_formatted_string(end)
 
-    async def _expand_var(var: Var | str, format_spec: str | None = None,
-                          use_repr: bool = False, escape_in_str: str | None = None):
-        if isinstance(var, str) or isinstance(ty := var.get_type(), StringTy):
-            str_val = var if isinstance(var, str) else ty.value
-            escaped = PrintfValidator.escape_str(str_val)
-            if use_repr:
-                string_quote = _get_string_quotes("'" in escaped, '"' in escaped)
-                escaped = escaped.replace(string_quote, f"\\{string_quote}")
-                format_parts.append(f"{string_quote}{escaped}{string_quote}")
-            else:
-                if escape_in_str is not None:
-                    escaped = escaped.replace(escape_in_str, f"\\{escape_in_str}")
-                format_parts.append(escaped)
-        elif isinstance(ty, FormattedStringTy):
-            if use_repr:
-                string_quote = _get_string_quotes(ty.has_single_quote, ty.has_double_quote)
-                format_parts.append(string_quote)
-            else:
-                string_quote = None
-            val = var.get_aggregate()
-            for piece in ty.format.pieces:
-                if isinstance(piece, str):
-                    await _expand_var(piece, escape_in_str=string_quote)
-                else:
-                    await _expand_var(val.values[piece.value_idx], piece.format_spec,
-                                      escape_in_str=string_quote)
-            if use_repr:
-                format_parts.append(string_quote)
-        elif isinstance(ty, TupleTy):
-            if format_spec is not None:
-                raise TileTypeError(
-                    "f-string: cannot apply format spec to a tuple value",
-                    var.loc)
-
-            agg = var.get_aggregate()
-            format_parts.append('(')
-            for i, item in enumerate(agg.items):
-                await _expand_var(item, use_repr=True)
-                if i < len(agg.items) - 1:
-                    format_parts.append(', ')
-            format_parts.append(',)' if len(agg.items) == 1 else ')')
-        elif isinstance(ty, DataclassTy):
-            if format_spec is not None:
-                raise TileTypeError("f-string: cannot apply format spec to a dataclass instance",
-                                    var.loc)
-
-            custom_format_dunder = find_method(ty.cls, "__format__")
-            if (custom_format_dunder is not NotImplemented
-                    and custom_format_dunder is not object.__format__):
-                raise TypeCheckingError("Printing dataclasses with custom __format__()"
-                                        " is not supported")
-
-            custom_method = NotImplemented
-
-            # Try a custom "__str__" first, if applicable
-            if not use_repr:
-                custom_method = find_method(ty.cls, "__str__")
-                if custom_method is object.__str__:
-                    custom_method = NotImplemented
-
-            # Try a "__repr__" next
-            if custom_method is NotImplemented:
-                # If __repr__ is the default generated implementation, emulate it
-                if dataclass_has_default_repr(ty.cls):
-                    agg = var.get_aggregate()
-                    assert isinstance(agg, DataclassValue)
-                    format_parts.append(PrintfValidator.escape_str(f"{ty.cls.__qualname__}("))
-                    comma = ""
-                    for f, item in zip(dataclasses.fields(ty.cls), agg.items, strict=True):
-                        if not f.repr:
-                            continue
-
-                        format_parts.append(PrintfValidator.escape_str(f"{comma}{f.name}="))
-                        await _expand_var(item, use_repr=True)
-                        comma = ", "
-                    format_parts.append(")")
-                    return
-
-                # Else look for a custom __repr__().
-                custom_method = find_method(ty.cls, "__repr__")
-                if custom_method is object.__repr__:
-                    custom_method = NotImplemented
-
-            if custom_method is NotImplemented:
-                # Disabled str/repr -- resort to the Python object-like default,
-                # but without an object ID.
-                format_parts.append(PrintfValidator.escape_str(
-                        f"<{ty.cls.__qualname__} object>"))
-                return
-
-            # Call the custom __str__()/__repr__()
-            from cuda.tile._passes.hir2ir import call_function
-            res = await call_function(custom_method, var)
-            if not isinstance(res.get_type(), StringTy | FormattedStringTy):
-                method_name = "__repr__" if use_repr else "__str__"
-                raise TypeCheckingError(f"Expected {ty.cls.__name__}.{method_name}()"
-                                        f" to return a string, got {res.get_type()}")
-            await _expand_var(res)
-        elif isinstance(ty, TensorLikeTy):
-            if format_spec is not None:
-                format_parts.append(PrintfValidator.apply_python_spec(
-                    format_spec, ty.tensor_dtype()))
-            else:
-                format_parts.append(PrintfValidator.infer_format(ty.tensor_dtype()))
-            leaf_vars.append(var)
-        elif isinstance(ty, DTypeSpec):
-            format_parts.append(str(ty.dtype))
-        elif isinstance(ty, EnumTy):
-            member = var.get_constant()
-            format_parts.append(f"{ty.enum_ty.__name__}.{member.name}")
-        else:
-            raise TileTypeError(f"Can't print value of type {ty}")
-
+    builder = FormattedStringBuilder()
     for i, arg_var in enumerate(args):
         if i > 0:
-            format_parts.append(PrintfValidator.escape_str(require_constant_str(sep)))
-        await _expand_var(arg_var)
-    format_parts.append(PrintfValidator.escape_str(require_constant_str(end)))
+            builder.append_string_var(sep)
+        arg_str = await call_function(str, arg_var)
+        builder.append_string_var(arg_str)
+    builder.append_string_var(end)
 
-    final_format = ''.join(format_parts)
-    add_operation_variadic(TilePrintf, (TokenTy(),), format=final_format, args=tuple(leaf_vars))
+    format_parts = []
+    for piece in builder.pieces:
+        if isinstance(piece, str):
+            format_parts.append(PrintfValidator.escape_str(piece))
+        else:
+            assert isinstance(piece, FormattedPiece)
+            val = builder.values[piece.value_idx]
+            ty = val.get_type()
+            assert isinstance(ty, TensorLikeTy)
+            if piece.format_spec is not None:
+                format_parts.append(PrintfValidator.apply_python_spec(
+                    piece.format_spec, ty.tensor_dtype()))
+            else:
+                format_parts.append(PrintfValidator.infer_format(ty.tensor_dtype()))
+
+    add_operation_variadic(TilePrintf, (TokenTy(),), format="".join(format_parts),
+                           args=tuple(builder.values))
+
+
+class FormattedStringBuilder:
+    def __init__(self):
+        self.pieces = []
+        self.values = []
+
+    def append_formatted_piece(self, value: Var, format_spec: str | None):
+        self.pieces.append(FormattedPiece(len(self.values), format_spec))
+        self.values.append(value)
+
+    def append_literal_piece(self, s: str):
+        assert isinstance(s, str)
+        if s == "":
+            return
+
+        if len(self.pieces) > 0 and isinstance(self.pieces[-1], str):
+            self.pieces[-1] += s
+        else:
+            self.pieces.append(s)
+
+    def append_string_var(self, var: Var[StringTy | FormattedStringTy]):
+        ty = var.get_type()
+        if isinstance(ty, StringTy):
+            self.append_literal_piece(ty.value)
+        else:
+            assert isinstance(ty, FormattedStringTy), str(ty)
+            value = var.get_aggregate()
+            assert isinstance(value, FormattedStringValue)
+            for piece in value.format.pieces:
+                if isinstance(piece, FormattedPiece):
+                    self.append_formatted_piece(value.values[piece.value_idx], piece.format_spec)
+                else:
+                    self.append_literal_piece(piece)
+
+    def build(self) -> Var:
+        if len(self.pieces) == 0:
+            return loosely_typed_const("")
+        elif len(self.pieces) == 1 and isinstance(self.pieces[0], str):
+            return loosely_typed_const(self.pieces[0])
+        else:
+            format = StringFormat(tuple(self.pieces))
+            ty = FormattedStringTy(format, tuple(v.get_type() for v in self.values))
+            return make_aggregate(FormattedStringValue(format, tuple(self.values)), ty)
+
+
+def string_concat(*chunks: Var[StringTy | FormattedStringTy]) -> Var[FormattedStringTy]:
+    builder = FormattedStringBuilder()
+    for chunk in chunks:
+        builder.append_string_var(chunk)
+    return builder.build()
+
+
+@impl(operator.add, overload=(StringTy, StringTy))
+@impl(operator.add, overload=(StringTy, FormattedStringTy))
+@impl(operator.add, overload=(FormattedStringTy, FormattedStringTy))
+@impl(operator.add, overload=(FormattedStringTy, StringTy))
+def string_concat_impl(x: Var[StringTy | FormattedStringTy], y: Var[StringTy | FormattedStringTy]):
+    return string_concat(x, y)
 
 
 @impl(hir_stubs.build_formatted_string)
-def build_formatted_string_impl(format: StringFormat, values: tuple[Var, ...]) -> Var:
-    new_pieces = []
-    new_values = []
-    has_single_quote = False
-    has_double_quote = False
+async def build_formatted_string(format: StringFormat, values: tuple[Var, ...]) -> Var:
+    builder = FormattedStringBuilder()
 
-    def _update_has_quote_flags(s: str):
-        nonlocal has_single_quote, has_double_quote
-        if "'" in s:
-            has_single_quote = True
-        if '"' in s:
-            has_double_quote = True
+    for piece in format.pieces:
+        if isinstance(piece, str):
+            builder.append_literal_piece(piece)
+            continue
 
-    def _build_formatted_string(fmt: StringFormat, vals: tuple[Var, ...]):
-        for piece in fmt.pieces:
-            if isinstance(piece, str):
-                new_pieces.append(piece)
-                _update_has_quote_flags(piece)
-            else:
-                val_var = vals[piece.value_idx]
-                val_ty = val_var.get_type()
-                if isinstance(val_ty, FormattedStringTy):
-                    if piece.format_spec is not None:
-                        raise TileTypeError(
-                            "f-string: cannot apply format spec to a formatted string value",
-                            val_var.loc)
-                    inner_val = val_var.get_aggregate()
-                    assert isinstance(inner_val, FormattedStringValue)
-                    _build_formatted_string(val_ty.format, inner_val.values)
-                else:
-                    new_pieces.append(FormattedPiece(len(new_values), piece.format_spec))
-                    new_values.append(val_var)
-                    if isinstance(val_ty, StringTy):
-                        _update_has_quote_flags(val_ty.value)
+        value = values[piece.value_idx]
+        val_ty = value.get_type()
+        if isinstance(val_ty, TensorLikeTy):
+            builder.append_formatted_piece(value, piece.format_spec)
+            continue
 
-    _build_formatted_string(format, values)
-    new_fmt = StringFormat(tuple(new_pieces))
-    ty = FormattedStringTy(new_fmt, tuple(v.get_type() for v in new_values),
-                           has_single_quote, has_double_quote)
-    return make_aggregate(FormattedStringValue(new_fmt, tuple(new_values)), ty)
+        if isinstance(val_ty, DataclassTy):
+            custom_format_dunder = find_method(val_ty.cls, "__format__")
+            if (custom_format_dunder is not NotImplemented
+                    and custom_format_dunder is not object.__format__):
+                raise TypeCheckingError("Formatting dataclass values with custom __format__()"
+                                        " is not supported")
 
+        if piece.format_spec is not None:
+            raise TileTypeError(
+                f"f-string: cannot apply format spec to a value of type {val_ty}",
+                value.loc)
+
+        from cuda.tile._passes.hir2ir import call_function
+        value = await call_function(str, value)
+        builder.append_string_var(value)
+
+    return builder.build()
 
 # ===========================================================================================

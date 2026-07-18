@@ -384,8 +384,6 @@ class StringFormat:
 class FormattedStringTy(Type):
     format: "StringFormat"
     value_types: tuple
-    has_single_quote: bool = False
-    has_double_quote: bool = False
 
     def is_aggregate(self) -> bool:
         return True
@@ -416,7 +414,7 @@ def size_to_bytecode(s: Optional[int]) -> int:
 
 @dataclass
 class FormattedStringValue(AggregateValue):
-    format: "Any"  # StringFormat from type.py
+    format: "StringFormat"
     values: tuple["Var"]
 
     def as_tuple(self) -> tuple["Var"]:

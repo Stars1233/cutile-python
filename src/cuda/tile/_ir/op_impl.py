@@ -27,7 +27,8 @@ from .typing_support import datatype, get_signature
 from .ir import Var, Builder
 from .type import TiledViewTy, TupleTy, TileTy, DTypeSpec, EnumTy, StringTy, ArrayTy, SliceType, \
     ListTy, LooselyTypedScalar, RangeIterType, FunctionTy, ClosureTy, BoundMethodTy, \
-    DTypeConstructor, Type, RawArrayMemoryTy, DataclassTy, TupleValue, PointerInfoTy, TensorLikeTy
+    DTypeConstructor, Type, RawArrayMemoryTy, DataclassTy, TupleValue, PointerInfoTy, \
+    TensorLikeTy, FormattedStringTy
 
 
 def _verify_params_match(stub_sig: inspect.Signature, func_sig: inspect.Signature):
@@ -349,6 +350,13 @@ def require_optional_constant_str(var: Var) -> Optional[str]:
     if var.is_constant() and var.get_constant() is None:
         return None
     return require_constant_str(var)
+
+
+def ensure_string_or_formatted_string(var: Var) -> Var[StringTy | FormattedStringTy]:
+    ty = var.get_type()
+    if not isinstance(ty, StringTy | FormattedStringTy):
+        raise make_type_checking_error(f"Expected a string, but given value has type {ty}", var)
+    return var
 
 
 def require_constant_slice(var: Var) -> slice:

@@ -120,6 +120,25 @@ def test_string_comparison():
     compile(kernel, ())
 
 
+def test_string_concat():
+    def kernel():
+        a = "foo"
+        b = "bar"
+        c = a + b
+        ct.static_assert(c == "foobar")
+
+    compile(kernel, ())
+
+
+def test_int_constant_converted_to_str():
+    def kernel():
+        a = 123
+        s = str(a)
+        ct.static_assert(s == "123")
+
+    compile(kernel, ())
+
+
 def test_none_as_constant():
 
     def kernel():
