@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from test.util import compile_kernel
 import operator
 
 import pytest
@@ -399,16 +400,28 @@ def test_vector_getitem():
 
 
 def test_vector_setitem():
-    @cl.kernel
     def kernel():
-        with cl.local_array(4, cl.int32) as arr:
-            v = arr.get_base_pointer().load(count=4)
-            v[0] = 1
+        v = cl.shared_array(1, cl.int8).get_base_pointer().load(count=2)
+        v[0] = 1
 
-    with pytest.raises(
-        TypeCheckingError, match="Vectors are immutable: item assignment is not supported"
-    ):
-        cl.compile_simt(kernel, [KernelSignature([])])
+    compile_kernel(
+        kernel,
+        raises=pytest.raises(TypeCheckingError, match="Vectors are immutable"),
+    )
+
+
+def test_vector_with_item():
+    @cl.kernel
+    def kernel(original, updated):
+        original_vector = original.get_base_pointer().load(count=4, alignment=16)
+        updated_vector = original_vector.with_item(2, 42)
+        updated.get_base_pointer().store(updated_vector, alignment=16)
+
+    a = torch.arange(4, dtype=torch.int32, device="cuda")
+    b = torch.arange(4, dtype=torch.int32, device="cuda")
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (a, b))
+    assert a.cpu().tolist() == [0, 1, 2, 3]
+    assert b.cpu().tolist() == [0, 1, 42, 3]
 
 
 def test_vector_from_tuple():

@@ -131,6 +131,18 @@ class Vector(Generic[T]):
     @stub
     def __setitem__(self, key, value): ...
 
+    @stub
+    def with_item(self, index: int, value: T) -> "Vector[T]":
+        """Return a new vector with one element replaced.
+
+        Vectors have value semantics, so this operation does not modify the
+        original vector. ``index`` must select an element of the vector.
+
+        Args:
+            index: Index in vector to replace.
+            value: New value.
+        """
+
 
 class Pointer(Generic[T]):
     """Typed address into a CUDA memory space with low-level load and store operations."""

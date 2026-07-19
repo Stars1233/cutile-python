@@ -9,6 +9,7 @@ from cuda.tile._ir.op_impl import (
     require_dtype_spec,
 )
 from cuda.tile._ir.cast_ops import implicit_cast
+from cuda.tile._ir.core_ops import bind_method
 from cuda.tile._ir.ops import strictly_typed_const
 from cuda.tile._ir.ops_utils import promote_dtypes
 from cuda.tile._ir.type import LooselyTypedScalar
@@ -35,7 +36,7 @@ def vector_undef(res_type: Type):
     )
 
 
-def vector_setitem(vector: Var[VectorTy], key: int | Var[ScalarTy], value: Var[ScalarTy]):
+def vector_with_item(vector: Var[VectorTy], key: int | Var[ScalarTy], value: Var[ScalarTy]):
     ty = require_vector_type(vector)
     if isinstance(key, int):
         key = strictly_typed_const(key, ScalarTy(datatype.int32))
@@ -101,7 +102,7 @@ def vector_constructor_impl(elements: tuple[Var, ...], dtype: Var) -> Var[Vector
     res = vector_undef(VectorTy(element_dtype, len(elements)))
     for index, element in enumerate(elements):
         value = implicit_cast(element, element_dtype, f"Vector() element {index}")
-        res = vector_setitem(res, index, value)
+        res = vector_with_item(res, index, value)
     return res
 
 
@@ -130,20 +131,31 @@ def vector_elementwise_apply(
         )
 
     res = vector_undef(VectorTy(element_type.dtype, length))
-    res = vector_setitem(res, 0, first_element)
+    res = vector_with_item(res, 0, first_element)
     for i in range(1, length):
         element = apply_one(i)
-        res = vector_setitem(res, i, element)
+        res = vector_with_item(res, i, element)
 
     return res
 
 
-# the user can't call __setitem__ in kernel code because the semantics might be
-# confusing. We could expose an insertelement-like operation that maps to the
-# vector_setitem utility though.
 @impl(operator.setitem, overload=(VectorTy, WILDCARD, WILDCARD))
 def vector_setitem_impl(object: Var[VectorTy], key: Var, value: Var):
-    raise TypeCheckingError("Vectors are immutable: item assignment is not supported")
+    raise TypeCheckingError(
+        "Vectors are immutable. Consider calling vector.with_item() instead"
+    )
+
+
+@impl(getattr, overload=(VectorTy, "with_item"))
+def getattr_vector_with_item(object: Var[VectorTy], name: Var):
+    return bind_method(object, Vector.with_item)
+
+
+@impl(Vector.with_item)
+def vector_with_item_impl(
+    self: Var[VectorTy], index: Var[ScalarTy], value: Var[ScalarTy]
+) -> Var[VectorTy]:
+    return vector_with_item(self, index, value)
 
 
 @impl(operator.getitem, overload=(VectorTy, WILDCARD))
