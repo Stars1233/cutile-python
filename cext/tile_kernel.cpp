@@ -771,10 +771,15 @@ static ArraySpecializationBits compute_array_specialization_bits(
             bool is_shape_byte_aligned = shape_bitwidth % BYTE_BITWIDTH == 0;
             bool is_shape_divisible_by_16 = shape % DIVISOR_16 == 0;
 
-            if (is_stride_byte_aligned && is_stride_16_byte_divisible)
+            // A size-one axis has no address contribution for dense indexing.
+            // Keep its physical stride dynamic, but preserve the 16-byte
+            // alignment specialization used by layout/vectorization analysis.
+            bool is_singleton_stride_one = shape == 1 && stride == 1;
+            if ((is_stride_byte_aligned && is_stride_16_byte_divisible) ||
+                    is_singleton_stride_one)
                 ret.stride_16byte_divisible |= 1u << i;
 
-            if (stride == 1)
+            if (stride == 1 && !is_singleton_stride_one)
                 ret.stride_one |= 1u << i;
 
             if (is_shape_byte_aligned && is_shape_divisible_by_16)
