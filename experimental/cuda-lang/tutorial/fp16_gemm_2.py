@@ -221,14 +221,14 @@ def _kernel(a, b, c, bias, has_bias: cl.Constant[bool]):
 
                 a_desc = cl.Tcgen05SharedMemoryDescriptor(
                     matrix_start_address=_p3_to_u64(a_smem_ptr),
-                    leading_dimension_offset=16,
-                    stride_dimension_offset=8 * 128,
+                    leading_dimension_byte_offset=16,
+                    stride_dimension_byte_offset=8 * 128,
                     swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
                 ).encode()
                 b_desc = cl.Tcgen05SharedMemoryDescriptor(
                     matrix_start_address=_p3_to_u64(b_smem_ptr),
-                    leading_dimension_offset=16,
-                    stride_dimension_offset=8 * 128,
+                    leading_dimension_byte_offset=16,
+                    stride_dimension_byte_offset=8 * 128,
                     swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
                 ).encode()
 

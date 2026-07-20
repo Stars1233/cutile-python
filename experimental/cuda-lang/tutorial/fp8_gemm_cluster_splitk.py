@@ -437,14 +437,14 @@ def _kernel(
         ).encode()
         a_descriptor_base = cl.Tcgen05SharedMemoryDescriptor(
             matrix_start_address=_p3_to_u64(a_smem_base),
-            leading_dimension_offset=16,
-            stride_dimension_offset=1024,
+            leading_dimension_byte_offset=16,
+            stride_dimension_byte_offset=1024,
             swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
         ).encode()
         b_descriptor_base = cl.Tcgen05SharedMemoryDescriptor(
             matrix_start_address=_p3_to_u64(b_smem_base),
-            leading_dimension_offset=16,
-            stride_dimension_offset=1024,
+            leading_dimension_byte_offset=16,
+            stride_dimension_byte_offset=1024,
             swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
         ).encode()
         a_stage_offset = num_bytes_a >> 4
