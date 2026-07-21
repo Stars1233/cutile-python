@@ -146,12 +146,12 @@ def load_tmem_bf16_subtile(registers, register_offset, tmem, warp, column, width
         count=width,
     )
     cl.tcgen05_wait_load()
-    for pair in cl.static_iter(range(width // 2)):
+    for pair in cl.static_iter(range(len(values) // 2)):
         lo = cl.bitcast(values[pair * 2], cl.float32)
         hi = cl.bitcast(values[pair * 2 + 1], cl.float32)
-        packed = cl._nvvm.ff2bf16x2_rn(hi, lo)
-        registers[register_offset + pair * 2] = packed[0]
-        registers[register_offset + pair * 2 + 1] = packed[1]
+        packed_lo, packed_hi = tuple(cl._nvvm.ff2bf16x2_rn(hi, lo))
+        registers[register_offset + pair * 2] = packed_lo
+        registers[register_offset + pair * 2 + 1] = packed_hi
 
 
 def store_bf16_register_subtile(dst, registers, register_offset, row, width):

@@ -47,43 +47,33 @@ DYNAMIC_STORAGE_BYTES = (
 )
 
 
-def fast_exp2(value):
-    (result,) = cl._inline_ptx(
-        "ex2.approx.ftz.f32 %0, %1;",
-        ("=f", cl.float32),
-        ("f", value),
-    )
-    return result
-
-
-def fast_log2(value):
-    return cl._nvvm.lg2_approx_ftz_f(value)
-
-
 def max_vector32(values, current):
-    for i in cl.static_iter(range(32)):
+    for i in cl.static_iter(range(len(values))):
         current = cl.maximum(current, cl.bitcast(values[i], cl.float32))
     return current
 
 
 def probability_vector(values, scale, offset):
     exps = tuple(
-        fast_exp2(cl.bitcast(values[i], cl.float32) * scale + offset)
-        for i in cl.static_iter(range(32))
+        cl.exp2(cl.bitcast(values[i], cl.float32) * scale + offset)
+        for i in cl.static_iter(range(len(values)))
     )
     total = exps[0]
     for exp in cl.static_iter(exps[1:]):
         total += exp
     as_bf16 = tuple(
         cl._nvvm.ff2bf16x2_rn(exps[2 * i + 1], exps[2 * i])
-        for i in cl.static_iter(range(16))
+        for i in cl.static_iter(range(len(exps) // 2))
     )
     as_i32 = tuple(cl.bitcast(value, cl.int32) for value in cl.static_iter(as_bf16))
     return cl.Vector(*as_i32), total
 
 
 def scale_vector16(values, scale):
-    floats = tuple(cl.bitcast(values[i], cl.float32) for i in cl.static_iter(range(16)))
+    floats = tuple(
+        cl.bitcast(values[i], cl.float32)
+        for i in cl.static_iter(range(len(values)))
+    )
     scaled = tuple(value * scale for value in cl.static_iter(floats))
     ints = tuple(cl.bitcast(value, cl.int32) for value in cl.static_iter(scaled))
     return cl.Vector(*ints)
@@ -94,7 +84,7 @@ def store_output_pairs(o_smem, values, inv_norm, row, column):
         o_smem.get_base_pointer(),
         cl.pointer_dtype(cl.uint32, cl.MemorySpace.SHARED),
     )
-    for i in cl.static_iter(range(8)):
+    for i in cl.static_iter(range(len(values) // 2)):
         lo = cl.bitcast(values[2 * i], cl.float32) * inv_norm
         hi = cl.bitcast(values[2 * i + 1], cl.float32) * inv_norm
         packed = cl.bitcast(cl._nvvm.ff2bf16x2_rn(hi, lo), cl.uint32)
@@ -544,7 +534,7 @@ def mha_kernel(
                     if correction_log2 >= cl.float32(-8.0):
                         row_max = old_max
                     else:
-                        correction = fast_exp2(correction_log2)
+                        correction = cl.exp2(correction_log2)
                     max_vec[qid, lane_in_group] = correction
                 cl.barrier_sync_warp()
                 if cl.elect_sync():
@@ -682,8 +672,10 @@ def mha_kernel(
                 if warp == 8 and cl.elect_sync():
                     cl.mbarrier_arrive(rescale_finished.get_element_pointer(qid))
                 invalid = row_sum == cl.float32(0.0) or row_sum != row_sum
-                inv_norm = cl._nvvm.rcp_approx_ftz_f(
-                    cl.float32(1.0) if invalid else row_sum
+                inv_norm = cl.truediv(
+                    cl.float32(1.0),
+                    cl.float32(1.0) if invalid else row_sum,
+                    approx=True,
                 )
                 cl.mbarrier_wait_parity(tile_arrived.get_element_pointer(qid), end_phase)
                 cl.copy_async_bulk_wait_group(0, read=True)
@@ -727,7 +719,9 @@ def mha_kernel(
                 lse_value = cl.float32(-float("inf"))
                 if not invalid:
                     scale = cl.float32(SCALE_LOG2)
-                    lse_value = (row_max * scale + fast_log2(row_sum)) * cl.float32(LN2)
+                    lse_value = (
+                        row_max * scale + cl.log2(row_sum, approx=True)
+                    ) * cl.float32(LN2)
                 m_tile = m_base + rank * 2 + qid
                 lse_index = (
                     (batch_idx * heads + head_idx) * q_sequence

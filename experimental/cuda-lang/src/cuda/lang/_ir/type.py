@@ -200,6 +200,9 @@ class SymbolicVector(Symbol, Vector):
     def element_count(self) -> int:
         return self._var.get_type().length
 
+    def __len__(self) -> int:
+        return self.element_count
+
     def __repr__(self):
         return f"<vector[{self.element_dtype}, count={self.element_count}]>"
 

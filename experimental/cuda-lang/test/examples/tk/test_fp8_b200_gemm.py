@@ -122,9 +122,13 @@ def store_bf16_tmem_tile(dst, tmem_base, warp, column, row, output_column, n):
         lane_offset=warp * WARP_SIZE,
         column_offset=column,
     )
-    regs = cl.tcgen05_load(cl.Tcgen05LoadStoreShape.SHAPE_32X32B, tmem, count=16)
+    regs = cl.tcgen05_load(
+        cl.Tcgen05LoadStoreShape.SHAPE_32X32B,
+        tmem,
+        count=16,
+    )
     cl.tcgen05_wait_load()
-    for pair in cl.static_iter(range(8)):
+    for pair in cl.static_iter(range(len(regs) // 2)):
         lo = cl.bitcast(regs[pair * 2], cl.float32)
         hi = cl.bitcast(regs[pair * 2 + 1], cl.float32)
         packed = cl._nvvm.ff2bf16x2_rn(hi, lo)
@@ -144,7 +148,7 @@ def store_bf16_tmem_subtile(dst, tmem_base, warp, column, row, width):
             count=32,
         )
         cl.tcgen05_wait_load()
-        for pair in cl.static_iter(range(16)):
+        for pair in cl.static_iter(range(len(regs) // 2)):
             lo = cl.bitcast(regs[pair * 2], cl.float32)
             hi = cl.bitcast(regs[pair * 2 + 1], cl.float32)
             packed = cl._nvvm.ff2bf16x2_rn(hi, lo)

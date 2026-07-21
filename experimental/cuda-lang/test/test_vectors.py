@@ -102,6 +102,20 @@ def test_vector_tuple_len(length):
     assert output.cpu().item() == length
 
 
+@pytest.mark.parametrize("length", (2, 4))
+def test_vector_len_in_static_iter(length):
+    @cl.kernel
+    def kernel(input, output):
+        vector = input.get_base_pointer().load(count=length, alignment=16)
+        for index in cl.static_iter(range(len(vector))):
+            output[index] = vector[index]
+
+    input = torch.arange(4, dtype=torch.int32, device="cuda")
+    output = torch.zeros(length, dtype=torch.int32, device="cuda")
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (input, output))
+    assert output.cpu().tolist() == list(range(length))
+
+
 def test_tuple_rejects_non_iterable():
     def kernel():
         tuple(1)

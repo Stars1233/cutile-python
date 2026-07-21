@@ -272,7 +272,7 @@ def make_tcgen05_mma_kernel(
                 count=OUTPUT_COLUMNS,
             )
             cl.tcgen05_wait_load()
-            for column in cl.static_iter(range(OUTPUT_COLUMNS)):
+            for column in cl.static_iter(range(len(registers))):
                 output[tid * OUTPUT_COLUMNS + column] = cl.bitcast(
                     registers[column], cl.float32
                 )
