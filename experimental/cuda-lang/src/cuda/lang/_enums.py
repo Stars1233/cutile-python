@@ -141,6 +141,22 @@ class PrefetchLevel(Enum):
     L2 = auto()
 
 
+class MatrixLoadShape(Enum):
+    M8N8 = "m8n8"
+    M8N16 = "m8n16"
+    M16N16 = "m16n16"
+
+
+class MatrixStoreShape(Enum):
+    M8N8 = "m8n8"
+    M16N8 = "m16n8"
+
+
+class MatrixLoadSourceFormat(Enum):
+    B6X16_P32 = "b6x16_p32"
+    B4X16_P64 = "b4x16_p64"
+
+
 __all__ = (
     "MemorySpace",
     "MemoryScope",
@@ -164,4 +180,7 @@ __all__ = (
     "BarrierReductionKind",
     "CachePolicy",
     "PrefetchLevel",
+    "MatrixStoreShape",
+    "MatrixLoadShape",
+    "MatrixLoadSourceFormat",
 )

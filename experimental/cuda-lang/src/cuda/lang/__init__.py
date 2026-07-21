@@ -34,6 +34,15 @@ from ._stub.prefetch import (
     prefetch_uniform,
     prefetch_tensor_map,
 )
+from ._stub.load_store_matrix import (
+    load_matrix,
+    store_matrix,
+)
+from ._enums import (
+    MatrixLoadShape,
+    MatrixLoadSourceFormat,
+    MatrixStoreShape,
+)
 from ._stub.math import (
     add,
     sub,
@@ -464,4 +473,9 @@ __all__ = (
     "prefetch",
     "prefetch_uniform",
     "prefetch_tensor_map",
+    "load_matrix",
+    "store_matrix",
+    "MatrixLoadShape",
+    "MatrixLoadSourceFormat",
+    "MatrixStoreShape",
 )

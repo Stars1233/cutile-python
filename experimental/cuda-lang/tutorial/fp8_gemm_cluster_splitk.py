@@ -8,17 +8,11 @@ inputs and output. The physical tensors use K-major A/B and M-major C layouts.
 
 CUDA Lang notes beyond the preceding tutorial samples:
 
-* CUDA Lang does not yet expose public wrappers for the byte-oriented
-  ``stmatrix.m16n8`` operations used by the FP8 epilogue. The small STSM helper
-  calls the corresponding ``cl._nvvm`` intrinsics. Public FP32-to-FP8 casts
-  currently fail during IR-to-MLIR lowering, so the helper also uses the packed
-  ``ff_to_e4m3x2_rn`` intrinsic.
+* Public FP32-to-FP8 casts currently fail during IR-to-MLIR lowering. The FP8
+  packing helper uses the packed ``ff_to_e4m3x2_rn`` intrinsic.
 * CUDA Lang does not yet expose the DSMEM transaction-counted
   ``st.async.shared::cluster.mbarrier::complete_tx::bytes.v4.b32`` operation.
   The split-K handoff helper emits that instruction with ``cl._inline_ptx``.
-* CUDA Lang's tensor-map builder does not currently accept FP8 element types.
-  TMA transports these tensors as bytes, so the launch passes zero-copy UINT8
-  views with identical shapes, strides, addresses, and underlying FP8 bits.
 * The source guards TMA stores by epilogue warp but omits the required elected
   lane. CUDA Lang's public TMA-store operation follows the single-thread issue
   contract, so this port adds ``elect_sync()``; issuing from all 32 lanes causes
@@ -172,7 +166,7 @@ def _store_fp8_stmatrix(
     swizzle_shift,
     lane,
 ):
-    """Convert one LDTM pass to E4M3 and issue the matching STSM shape."""
+    """Convert one LDTM pass to E4M3 and store the matrix fragments."""
     if repetitions == 4:
         r0 = _pack_e4m3x4(values, 0)
         r1 = _pack_e4m3x4(values, 4)
@@ -181,8 +175,11 @@ def _store_fp8_stmatrix(
         n_in_box = lane
         offset = n_in_box * tile_m + m_base
         offset = offset ^ (((offset >> swizzle_shift) & swizzle_mask) << 4)
-        cl._nvvm.stmatrix_sync_aligned_m16n8_x4_trans_b8(
-            smem + offset, r0, r1, r2, r3
+        cl.store_matrix(
+            smem + offset,
+            cl.Vector(r0, r1, r2, r3),
+            shape=cl.MatrixStoreShape.M16N8,
+            transpose=True,
         )
     elif repetitions == 2:
         r0 = _pack_e4m3x4(values, 0)
@@ -190,15 +187,23 @@ def _store_fp8_stmatrix(
         n_in_box = lane % 16
         offset = n_in_box * tile_m + m_base
         offset = offset ^ (((offset >> swizzle_shift) & swizzle_mask) << 4)
-        cl._nvvm.stmatrix_sync_aligned_m16n8_x2_trans_b8(
-            smem + offset, r0, r1
+        cl.store_matrix(
+            smem + offset,
+            cl.Vector(r0, r1),
+            shape=cl.MatrixStoreShape.M16N8,
+            transpose=True,
         )
     else:
         r0 = _pack_e4m3x4(values, 0)
         n_in_box = lane % 16
         offset = n_in_box * tile_m + m_base
         offset = offset ^ (((offset >> swizzle_shift) & swizzle_mask) << 4)
-        cl._nvvm.stmatrix_sync_aligned_m16n8_x1_trans_b8(smem + offset, r0)
+        cl.store_matrix(
+            smem + offset,
+            r0,
+            shape=cl.MatrixStoreShape.M16N8,
+            transpose=True,
+        )
 
 
 def _st_async_v4_b32(dst, values, base, mbar):

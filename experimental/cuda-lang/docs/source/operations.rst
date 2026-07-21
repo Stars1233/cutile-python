@@ -171,6 +171,25 @@ Warp shuffle
     shfl_xor_sync
 
 
+Warp Matrix Load and Store
+--------------------------
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+    load_matrix
+    store_matrix
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+   :template: autosummary/class_no_init.rst
+
+    MatrixLoadShape
+    MatrixStoreShape
+    MatrixLoadSourceFormat
+
+
 .. _operations-tensor-map:
 
 TensorMap

@@ -157,6 +157,7 @@ from .op_impl.copy_async_impl import copy_async_impl_registry
 from .op_impl.barrier_impl import barrier_impl_registry
 from .op_impl.mbarrier_impl import mbarrier_impl_registry
 from .op_impl.inline_ptx_impl import inline_ptx_impl_registry
+from .op_impl.matrix_impl import matrix_impl_registry
 
 cuda_lang_impl_registry = ImplRegistry()
 cuda_lang_impl_registry.update(core_impl_registry())
@@ -174,6 +175,7 @@ cuda_lang_impl_registry.update(pointer_impl_registry())
 cuda_lang_impl_registry.update(copy_async_impl_registry())
 cuda_lang_impl_registry.update(barrier_impl_registry())
 cuda_lang_impl_registry.update(mbarrier_impl_registry())
+cuda_lang_impl_registry.update(matrix_impl_registry())
 
 impl = cuda_lang_impl_registry.impl
 
