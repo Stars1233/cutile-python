@@ -66,32 +66,6 @@ _DEFAULT_MNKL = (256, 256, 256, 1)
 _DEFAULT_TOLERANCE = 1.0e-1
 
 
-def _wait_mbarrier(mbar: cl.Pointer[Any], phase: cl.int32) -> None:
-    while not cl.mbarrier_try_wait_parity(mbar, phase, time_hint=10_000_000):
-        pass
-
-
-def _p3_to_u32(pointer: cl.Pointer[Any]) -> cl.uint32:
-    return cl.bitcast(pointer, cl.uint32)
-
-
-def _tmem_offset(
-    base: cl.Pointer[Any], lane_offset: int = 0, column_offset: int = 0
-) -> cl.Pointer[Any]:
-    return cl.tcgen05_tmem_offset(
-        base, lane_offset=lane_offset, column_offset=column_offset
-    )
-
-
-def _tmem_add_columns(
-    base: cl.Pointer[Any], column_offset: int
-) -> cl.Pointer[Any]:
-    """Add columns to an already packed TMEM address, matching CuTe DSL."""
-    pointer_dtype = cl.pointer_dtype(base.pointee_dtype, cl.MemorySpace.TENSOR)
-    address = cl.bitcast(base, cl.uint32)
-    return cl.bitcast(address + column_offset, pointer_dtype)
-
-
 def _as_float32_vector_128(regs: cl.Vector[Any]) -> cl.Vector[cl.float32]:
     return cl.Vector(
         *tuple(
@@ -223,7 +197,7 @@ def _kernel(
             empty_bar = ab_empty.get_element_pointer(stage)
             full_bar = ab_full.get_element_pointer(stage)
             if cl.elect_sync():
-                _wait_mbarrier(empty_bar, empty_phase)
+                cl.mbarrier_wait_parity(empty_bar, empty_phase)
                 if is_leader:
                     cl.mbarrier_arrive_expect_transaction(
                         full_bar,
@@ -305,7 +279,7 @@ def _kernel(
 
             full_bar = ab_full.get_element_pointer(stage)
             empty_bar = ab_empty.get_element_pointer(stage)
-            _wait_mbarrier(full_bar, full_phase)
+            cl.mbarrier_wait_parity(full_bar, full_phase)
 
             a_stage = a_smem.get_element_pointer((stage, 0))
             b_stage = b_smem.get_element_pointer((stage, 0))
@@ -313,25 +287,25 @@ def _kernel(
             sfb_stage = sfb_smem.get_element_pointer((stage, 0))
 
             sfa_desc = cl.Tcgen05SharedMemoryDescriptor(
-                matrix_start_address=_p3_to_u32(sfa_stage),
+                matrix_start_address=sfa_stage,
                 leading_dimension_byte_offset=16,
                 stride_dimension_byte_offset=128,
                 swizzle_mode=cl.SwizzleMode.SWIZZLE_NONE,
             ).encode()
             sfb_desc = cl.Tcgen05SharedMemoryDescriptor(
-                matrix_start_address=_p3_to_u32(sfb_stage),
+                matrix_start_address=sfb_stage,
                 leading_dimension_byte_offset=16,
                 stride_dimension_byte_offset=128,
                 swizzle_mode=cl.SwizzleMode.SWIZZLE_NONE,
             ).encode()
             a_desc = cl.Tcgen05SharedMemoryDescriptor(
-                matrix_start_address=_p3_to_u32(a_stage),
+                matrix_start_address=a_stage,
                 leading_dimension_byte_offset=16,
                 stride_dimension_byte_offset=8 * 128,
                 swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
             ).encode()
             b_desc = cl.Tcgen05SharedMemoryDescriptor(
-                matrix_start_address=_p3_to_u32(b_stage),
+                matrix_start_address=b_stage,
                 leading_dimension_byte_offset=16,
                 stride_dimension_byte_offset=8 * 128,
                 swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
@@ -341,15 +315,17 @@ def _kernel(
             # reloads the allocated address here, then advances the packed
             # addresses by constant column offsets inside the K-tile loop.
             scale_tmem_base = tmem_storage[0]
-            sfa_tmem_base = _tmem_offset(
+            sfa_tmem_base = cl.tcgen05_tmem_offset(
                 scale_tmem_base, column_offset=SFA_TMEM_COLUMN
             )
-            sfb_tmem_base = _tmem_offset(
+            sfb_tmem_base = cl.tcgen05_tmem_offset(
                 scale_tmem_base, column_offset=SFB_TMEM_COLUMN
             )
 
             for copy_idx in cl.static_iter(range(4)):
-                scale_a = _tmem_add_columns(sfa_tmem_base, copy_idx * 4)
+                scale_a = cl.tcgen05_tmem_offset(
+                    sfa_tmem_base, column_offset=copy_idx * 4
+                )
                 if cl.elect_sync():
                     cl.tcgen05_copy(
                         scale_a,
@@ -360,7 +336,9 @@ def _kernel(
                     )
 
             for copy_idx in cl.static_iter(range(8)):
-                scale_b = _tmem_add_columns(sfb_tmem_base, copy_idx * 4)
+                scale_b = cl.tcgen05_tmem_offset(
+                    sfb_tmem_base, column_offset=copy_idx * 4
+                )
                 smem_increment = 32 * (copy_idx // 2) + 128 * (copy_idx % 2)
                 if cl.elect_sync():
                     cl.tcgen05_copy(
@@ -372,8 +350,12 @@ def _kernel(
                     )
 
             for k_block in cl.static_iter(range(BLOCK_K // MMA_K)):
-                scale_a = _tmem_add_columns(sfa_tmem_base, k_block * 4)
-                scale_b = _tmem_add_columns(sfb_tmem_base, k_block * 8)
+                scale_a = cl.tcgen05_tmem_offset(
+                    sfa_tmem_base, column_offset=k_block * 4
+                )
+                scale_b = cl.tcgen05_tmem_offset(
+                    sfb_tmem_base, column_offset=k_block * 8
+                )
                 if cl.elect_sync():
                     cl.tcgen05_mma_block_scale(
                         cl.Tcgen05MMABlockScaleKind.MXF4NVF4,
@@ -408,7 +390,7 @@ def _kernel(
             barrier_id=TMEM_BARRIER_ID,
         )
         tmem_base = tmem_storage[0]
-        _wait_mbarrier(acc_full.get_base_pointer(), 0)
+        cl.mbarrier_wait_parity(acc_full.get_base_pointer(), 0)
         row = coord_m + tid
         vsize = VEC_BYTES // 2
         # c.shape metadata is i32; explicit i64 dimensions let NVVM fuse the
@@ -422,7 +404,7 @@ def _kernel(
 
         for half in cl.static_iter(range(BLOCK_N // 128)):
             column = half * 128
-            tmem = _tmem_offset(
+            tmem = cl.tcgen05_tmem_offset(
                 tmem_base,
                 lane_offset=warp * WARP_SIZE,
                 column_offset=column,
@@ -451,7 +433,7 @@ def _kernel(
             tmem_dealloc.get_base_pointer(), peer_rank
         )
         cl.mbarrier_arrive(peer_mbar, scope=cl.MbarrierScope.BLOCK)
-        _wait_mbarrier(tmem_dealloc.get_base_pointer(), 0)
+        cl.mbarrier_wait_parity(tmem_dealloc.get_base_pointer(), 0)
         cl.tcgen05_deallocate(
             tmem_storage[0], TMEM_COLUMNS, cta_group=cl.CTAGroup.CTA_2
         )
@@ -481,10 +463,6 @@ def _validate_mnkl(mnkl: tuple[int, int, int, int]) -> None:
         raise ValueError(f"N must be a multiple of {BLOCK_N} (got {n})")
     if k % BLOCK_K:
         raise ValueError(f"K must be a multiple of {BLOCK_K} (got {k})")
-
-
-def _ceil_div(value: int, divisor: int) -> int:
-    return (value + divisor - 1) // divisor
 
 
 def to_blocked(scale: torch.Tensor) -> torch.Tensor:
@@ -544,7 +522,7 @@ def prepare_tensors(m: int, n: int, k: int, batch: int = 1, **_):
     a_ref = a_storage.view(torch.float4_e2m1fn_x2).permute(1, 2, 0)
     b_ref = b_storage.view(torch.float4_e2m1fn_x2).permute(1, 2, 0)
 
-    sf_k = _ceil_div(k, SF_VECTOR_SIZE)
+    sf_k = cl.cdiv(k, SF_VECTOR_SIZE)
     sfa_ref, sfa = _make_scale_tensors(batch, m, sf_k)
     sfb_ref, sfb = _make_scale_tensors(batch, n, sf_k)
     c = torch.empty((batch, m, n), dtype=torch.float16, device="cuda").permute(

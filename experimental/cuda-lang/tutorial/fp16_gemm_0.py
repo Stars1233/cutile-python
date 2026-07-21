@@ -27,7 +27,7 @@ CuTe DSL -> CUDA Lang API mapping used here:
 * ``prims.mbarrier_init``, ``mbarrier_arrive_expect_tx``, and
   ``mbarrier_try_wait_parity`` map to ``cl.mbarrier_initialize``,
   ``cl.mbarrier_arrive_expect_transaction``, and
-  ``cl.mbarrier_try_wait_parity``. The full/empty/accumulator barrier topology
+  ``cl.mbarrier_wait_parity``. The full/empty/accumulator barrier topology
   and phase progression are preserved.
 * ``prims.Tcgen05InstrDesc.build`` and ``Tcgen05SmemDesc.build`` map to
   ``cl.Tcgen05InstructionDescriptor`` and
@@ -72,24 +72,6 @@ VEC_BYTES = 32
 
 _DEFAULT_MNK = (128, 128, 64)
 _DEFAULT_TOLERANCE = 1.0e-1
-
-
-def _wait_mbarrier(mbar, phase):
-    while not cl.mbarrier_try_wait_parity(mbar, phase, time_hint=10_000_000):
-        pass
-
-
-def _p3_to_u64(pointer):
-    return cl.uint64(cl.bitcast(pointer, cl.uint32))
-
-
-def _tmem_pointer_for_warp(tmem_base, warp, column):
-    pointer_dtype = cl.pointer_dtype(tmem_base.pointee_dtype, cl.MemorySpace.TENSOR)
-    address = cl.bitcast(tmem_base, cl.uint32)
-    row = (address >> 16) + cl.uint32(warp * WARP_SIZE)
-    return cl.bitcast(
-        (row << 16) | cl.uint32(column & 0xFFFF), pointer_dtype
-    )
 
 
 def _as_float32_vector(regs):
@@ -186,7 +168,7 @@ def _kernel(
         ab_full_phase = 0
         scale_d = False
         for k_tile in range(cl.cdiv(k, BLOCK_K)):
-            _wait_mbarrier(ab_empty.get_base_pointer(), ab_empty_phase)
+            cl.mbarrier_wait_parity(ab_empty.get_base_pointer(), ab_empty_phase)
             ab_empty_phase = ab_empty_phase ^ 1
 
             # The elected lane issues both TMA loads and contributes the single
@@ -210,17 +192,17 @@ def _kernel(
                     ab_full.get_base_pointer(),
                 )
 
-            _wait_mbarrier(ab_full.get_base_pointer(), ab_full_phase)
+            cl.mbarrier_wait_parity(ab_full.get_base_pointer(), ab_full_phase)
             ab_full_phase = ab_full_phase ^ 1
 
             a_desc = cl.Tcgen05SharedMemoryDescriptor(
-                matrix_start_address=_p3_to_u64(a_smem.get_base_pointer()),
+                matrix_start_address=a_smem,
                 leading_dimension_byte_offset=16,
                 stride_dimension_byte_offset=8 * 128,
                 swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
             ).encode()
             b_desc = cl.Tcgen05SharedMemoryDescriptor(
-                matrix_start_address=_p3_to_u64(b_smem.get_base_pointer()),
+                matrix_start_address=b_smem,
                 leading_dimension_byte_offset=16,
                 stride_dimension_byte_offset=8 * 128,
                 swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
@@ -251,7 +233,7 @@ def _kernel(
 
         cl.tcgen05_relinquish_allocation_permit(cta_group=cl.CTAGroup.CTA_1)
 
-    _wait_mbarrier(acc_full.get_base_pointer(), 0)
+    cl.mbarrier_wait_parity(acc_full.get_base_pointer(), 0)
 
     # Each thread owns one row. Match the source's four 32-column TMEM loads.
     # This epilogue has no partial-vector store fallback, so the host requires
@@ -262,7 +244,11 @@ def _kernel(
     if has_bias:
         bias_value = cl.float32(bias[row])
     for column in cl.static_iter(range(0, BLOCK_N, 32)):
-        tmem = _tmem_pointer_for_warp(tmem_base, warp, column)
+        tmem = cl.tcgen05_tmem_offset(
+            tmem_base,
+            lane_offset=warp * WARP_SIZE,
+            column_offset=column,
+        )
         regs = cl.tcgen05_load(
             cl.Tcgen05LoadStoreShape.SHAPE_32X32B, tmem, count=32
         )

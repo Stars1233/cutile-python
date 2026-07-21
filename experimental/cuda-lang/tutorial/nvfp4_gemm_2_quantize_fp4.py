@@ -84,21 +84,6 @@ _DEFAULT_TOLERANCE = 1.0e-1
 _DEFAULT_FP4_PAYLOAD_ATOL = 1.05
 
 
-def _wait_mbarrier(mbar, phase):
-    while not cl.mbarrier_try_wait_parity(mbar, phase, time_hint=10_000_000):
-        pass
-
-
-def _wait_mbarrier_cluster(mbar, phase):
-    while not cl.mbarrier_try_wait_parity(
-        mbar,
-        phase,
-        scope=cl.MbarrierScope.CLUSTER,
-        time_hint=10_000_000,
-    ):
-        pass
-
-
 def _initial_work_tile():
     return (
         cl.block_index(0) // CLUSTER_M,
@@ -118,7 +103,11 @@ def _work_tile_from_clc_token(token):
 def _consume_clc_response(clc_barriers, clc_tokens, iteration):
     slot = iteration % SCHEDULER_PIPELINE_STAGES
     phase = (iteration // SCHEDULER_PIPELINE_STAGES) & 1
-    _wait_mbarrier_cluster(clc_barriers.get_element_pointer(slot), phase)
+    cl.mbarrier_wait_parity(
+        clc_barriers.get_element_pointer(slot),
+        phase,
+        scope=cl.MbarrierScope.CLUSTER,
+    )
     token = clc_tokens.get_element_pointer(slot).load()
     tile_m, tile_n, tile_l, has_work = _work_tile_from_clc_token(token)
     cl.fence_proxy(
@@ -137,16 +126,6 @@ def _release_clc_response(scheduler_consumed, iteration, count=1):
         leader_barrier,
         count=count,
         scope=cl.MbarrierScope.BLOCK,
-    )
-
-
-def _p3_to_u64(pointer):
-    return cl.uint64(cl.bitcast(pointer, cl.uint32))
-
-
-def _tmem_offset(base, lane_offset=0, column_offset=0):
-    return cl.tcgen05_tmem_offset(
-        base, lane_offset=lane_offset, column_offset=column_offset
     )
 
 
@@ -201,29 +180,23 @@ def _quantize_fp4_block(values, base, alpha):
         ),
         dtype=cl.float32,
     )
-    absolute = cl.Vector(
-        *tuple(
-            cl._libdevice.fabsf(scaled[i])
-            for i in cl.static_iter(range(OUTPUT_SCALE_BLOCK_N))
-        ),
-        dtype=cl.float32,
-    )
+    absolute = cl.abs(scaled)
     reduce8 = tuple(
-        cl._libdevice.fmaxf(absolute[2 * i], absolute[2 * i + 1])
+        cl.maximum(absolute[2 * i], absolute[2 * i + 1])
         for i in cl.static_iter(range(8))
     )
     reduce4 = tuple(
-        cl._libdevice.fmaxf(reduce8[2 * i], reduce8[2 * i + 1])
+        cl.maximum(reduce8[2 * i], reduce8[2 * i + 1])
         for i in cl.static_iter(range(4))
     )
     reduce2 = tuple(
-        cl._libdevice.fmaxf(reduce4[2 * i], reduce4[2 * i + 1])
+        cl.maximum(reduce4[2 * i], reduce4[2 * i + 1])
         for i in cl.static_iter(range(2))
     )
-    amax = cl._libdevice.fmaxf(reduce2[0], reduce2[1])
+    amax = cl.maximum(reduce2[0], reduce2[1])
     inv_scale = cl.float32(FP4_MAX) / amax
     normalized = scaled * inv_scale
-    scale = cl._nvvm.rcp_rn_f(inv_scale)
+    scale = cl.truediv(cl.float32(1.0), inv_scale)
     return (
         scale,
         _pack_fp32x8_to_e2m1x8(normalized, 0),
@@ -392,7 +365,7 @@ def _kernel(
             slot = scheduler_iteration % SCHEDULER_PIPELINE_STAGES
             ring_phase = (scheduler_iteration // SCHEDULER_PIPELINE_STAGES) & 1
             if is_leader and scheduler_iteration >= SCHEDULER_PIPELINE_STAGES:
-                _wait_mbarrier(
+                cl.mbarrier_wait_parity(
                     scheduler_consumed.get_element_pointer(slot),
                     ring_phase ^ 1,
                 )
@@ -409,7 +382,11 @@ def _kernel(
                     scope=cl.MbarrierScope.CLUSTER,
                     memory_order=cl.MemoryOrder.RELAXED,
                 )
-            _wait_mbarrier_cluster(clc_barrier, ring_phase)
+            cl.mbarrier_wait_parity(
+                clc_barrier,
+                ring_phase,
+                scope=cl.MbarrierScope.CLUSTER,
+            )
             token = clc_token.load()
             tile_m, tile_n, tile_l, scheduler_has_work = _work_tile_from_clc_token(
                 token
@@ -444,7 +421,7 @@ def _kernel(
                 # Match CuTe: re-elect for each divergent collective region
                 # instead of carrying one elected lane across K iterations.
                 if cl.elect_sync():
-                    _wait_mbarrier(empty_bar, empty_phase)
+                    cl.mbarrier_wait_parity(empty_bar, empty_phase)
                     if is_leader:
                         cl.mbarrier_arrive_expect_transaction(
                             full_bar,
@@ -538,8 +515,10 @@ def _kernel(
                 # makes the first accumulator window immediately available;
                 # each epilogue arrival releases the next alternating window.
                 acc_empty_phase = (tile_iteration + 1) & 1
-                _wait_mbarrier(acc_empty.get_base_pointer(), acc_empty_phase)
-                acc_tmem = _tmem_offset(
+                cl.mbarrier_wait_parity(
+                    acc_empty.get_base_pointer(), acc_empty_phase
+                )
+                acc_tmem = cl.tcgen05_tmem_offset(
                     tmem_base,
                     column_offset=((tile_iteration & 1) * ACC_WINDOW_STRIDE_COLUMNS),
                 )
@@ -551,32 +530,32 @@ def _kernel(
 
                     full_bar = ab_full.get_element_pointer(stage)
                     empty_bar = ab_empty.get_element_pointer(stage)
-                    _wait_mbarrier(full_bar, full_phase)
+                    cl.mbarrier_wait_parity(full_bar, full_phase)
 
                     a_stage = a_smem.get_element_pointer((stage, 0))
                     b_stage = b_smem.get_element_pointer((stage, 0))
                     sfa_stage = sfa_smem.get_element_pointer((stage, 0))
                     sfb_stage = sfb_smem.get_element_pointer((stage, 0))
                     sfa_desc = cl.Tcgen05SharedMemoryDescriptor(
-                        matrix_start_address=_p3_to_u64(sfa_stage),
+                        matrix_start_address=sfa_stage,
                         leading_dimension_byte_offset=16,
                         stride_dimension_byte_offset=128,
                         swizzle_mode=cl.SwizzleMode.SWIZZLE_NONE,
                     ).encode()
                     sfb_desc = cl.Tcgen05SharedMemoryDescriptor(
-                        matrix_start_address=_p3_to_u64(sfb_stage),
+                        matrix_start_address=sfb_stage,
                         leading_dimension_byte_offset=16,
                         stride_dimension_byte_offset=128,
                         swizzle_mode=cl.SwizzleMode.SWIZZLE_NONE,
                     ).encode()
                     a_desc = cl.Tcgen05SharedMemoryDescriptor(
-                        matrix_start_address=_p3_to_u64(a_stage),
+                        matrix_start_address=a_stage,
                         leading_dimension_byte_offset=16,
                         stride_dimension_byte_offset=8 * 128,
                         swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
                     ).encode()
                     b_desc = cl.Tcgen05SharedMemoryDescriptor(
-                        matrix_start_address=_p3_to_u64(b_stage),
+                        matrix_start_address=b_stage,
                         leading_dimension_byte_offset=16,
                         stride_dimension_byte_offset=8 * 128,
                         swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
@@ -585,7 +564,7 @@ def _kernel(
                     if scale_bulk_copy:
                         for copy_idx in cl.static_iter(range(4)):
                             cl.tcgen05_copy(
-                                _tmem_offset(
+                                cl.tcgen05_tmem_offset(
                                     tmem_base,
                                     column_offset=(SFA_BULK_TMEM_COLUMN + copy_idx * 4),
                                 ),
@@ -597,7 +576,7 @@ def _kernel(
                         for copy_idx in cl.static_iter(range(8)):
                             smem_increment = 32 * (copy_idx // 2) + 128 * (copy_idx % 2)
                             cl.tcgen05_copy(
-                                _tmem_offset(
+                                cl.tcgen05_tmem_offset(
                                     tmem_base,
                                     column_offset=(SFB_BULK_TMEM_COLUMN + copy_idx * 4),
                                 ),
@@ -609,20 +588,20 @@ def _kernel(
 
                     for k_block in cl.static_iter(range(BLOCK_K // MMA_K)):
                         if scale_bulk_copy:
-                            scale_a = _tmem_offset(
+                            scale_a = cl.tcgen05_tmem_offset(
                                 tmem_base,
                                 column_offset=(SFA_BULK_TMEM_COLUMN + k_block * 4),
                             )
-                            scale_b = _tmem_offset(
+                            scale_b = cl.tcgen05_tmem_offset(
                                 tmem_base,
                                 column_offset=(SFB_BULK_TMEM_COLUMN + k_block * 8),
                             )
                         else:
-                            scale_a = _tmem_offset(
+                            scale_a = cl.tcgen05_tmem_offset(
                                 tmem_base,
                                 column_offset=SFA_INTERLEAVED_TMEM_COLUMN,
                             )
-                            scale_b = _tmem_offset(
+                            scale_b = cl.tcgen05_tmem_offset(
                                 tmem_base,
                                 column_offset=SFB_INTERLEAVED_TMEM_COLUMN,
                             )
@@ -635,7 +614,7 @@ def _kernel(
                             )
                             for sfb_block in cl.static_iter(range(2)):
                                 cl.tcgen05_copy(
-                                    _tmem_offset(
+                                    cl.tcgen05_tmem_offset(
                                         tmem_base,
                                         column_offset=(
                                             SFB_INTERLEAVED_TMEM_COLUMN + sfb_block * 4
@@ -696,7 +675,9 @@ def _kernel(
         acc_full_phase = cl.int32(0)
 
         while has_work:
-            _wait_mbarrier(acc_full.get_base_pointer(), acc_full_phase)
+            cl.mbarrier_wait_parity(
+                acc_full.get_base_pointer(), acc_full_phase
+            )
             acc_full_phase ^= 1
             acc_window = tile_iteration & 1
             coord_m = tile_m * BLOCK_M + rank * CTA_M
@@ -708,7 +689,7 @@ def _kernel(
                     BLOCK_N // EPILOGUE_CHUNK_COLUMNS - 1 - block_idx
                 ) + acc_window * block_idx
                 column = chunk * EPILOGUE_CHUNK_COLUMNS
-                tmem = _tmem_offset(
+                tmem = cl.tcgen05_tmem_offset(
                     tmem_base,
                     lane_offset=epi_warp * WARP_SIZE,
                     column_offset=(acc_window * ACC_WINDOW_STRIDE_COLUMNS + column),
@@ -839,7 +820,7 @@ def _kernel(
             tmem_dealloc.get_base_pointer(), rank ^ 1
         )
         cl.mbarrier_arrive(peer_dealloc, scope=cl.MbarrierScope.BLOCK)
-        _wait_mbarrier(tmem_dealloc.get_base_pointer(), 0)
+        cl.mbarrier_wait_parity(tmem_dealloc.get_base_pointer(), 0)
         cl.tcgen05_deallocate(
             tmem_storage[0], TMEM_COLUMNS, cta_group=cl.CTAGroup.CTA_2
         )
@@ -869,10 +850,6 @@ def _validate_mnkl(mnkl: tuple[int, int, int, int]) -> None:
         raise ValueError(f"N must be a multiple of {BLOCK_N} (got {n})")
     if k % BLOCK_K:
         raise ValueError(f"K must be a multiple of {BLOCK_K} (got {k})")
-
-
-def _ceil_div(value: int, divisor: int) -> int:
-    return (value + divisor - 1) // divisor
 
 
 def to_blocked(scale: torch.Tensor) -> torch.Tensor:
@@ -931,7 +908,7 @@ def prepare_tensors(
     a_ref = a_storage.view(torch.float4_e2m1fn_x2).permute(1, 2, 0)
     b_ref = b_storage.view(torch.float4_e2m1fn_x2).permute(1, 2, 0)
 
-    sf_k = _ceil_div(k, SF_VECTOR_SIZE)
+    sf_k = cl.cdiv(k, SF_VECTOR_SIZE)
     sfa_ref, sfa = _make_scale_tensors(batch, m, sf_k)
     sfb_ref, sfb = _make_scale_tensors(batch, n, sf_k)
     alpha = torch.randn((batch,), dtype=torch.float32, device="cuda")

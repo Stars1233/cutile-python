@@ -128,26 +128,12 @@ def _compute_schedule(
     )
 
 
-def _wait_mbarrier(mbar, phase):
-    while not cl.mbarrier_try_wait_parity(
-        mbar, phase, time_hint=10_000_000
-    ):
-        pass
-
-
-def _p3_to_u64(pointer):
-    return cl.uint64(cl.bitcast(pointer, cl.uint32))
-
-
-def _tmem_pointer(base, lane_offset, column_offset):
-    pointer_dtype = cl.pointer_dtype(base.pointee_dtype, cl.MemorySpace.TENSOR)
-    address = cl.bitcast(base, cl.uint32)
-    offset = (cl.uint32(lane_offset) << 16) + cl.uint32(column_offset)
-    return cl.bitcast(address + offset, pointer_dtype)
-
-
 def _load_tmem(base, lane_offset, column_offset, repetitions):
-    tmem = _tmem_pointer(base, lane_offset, column_offset)
+    tmem = cl.tcgen05_tmem_offset(
+        base,
+        lane_offset=lane_offset,
+        column_offset=column_offset,
+    )
     regs = cl.tcgen05_load(
         cl.Tcgen05LoadStoreShape.SHAPE_16X256B,
         tmem,
@@ -381,7 +367,7 @@ def _kernel(
             empty_stage = ab_empty.get_element_pointer(stage)
             full_stage = ab_full.get_element_pointer(stage)
             if not peek_empty:
-                _wait_mbarrier(empty_stage, empty_phase)
+                cl.mbarrier_wait_parity(empty_stage, empty_phase)
 
             if cl.elect_sync():
                 cl.mbarrier_arrive_expect_transaction(
@@ -436,13 +422,13 @@ def _kernel(
             m=tile_m,
         ).encode()
         a_descriptor_base = cl.Tcgen05SharedMemoryDescriptor(
-            matrix_start_address=_p3_to_u64(a_smem_base),
+            matrix_start_address=a_smem_base,
             leading_dimension_byte_offset=16,
             stride_dimension_byte_offset=1024,
             swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
         ).encode()
         b_descriptor_base = cl.Tcgen05SharedMemoryDescriptor(
-            matrix_start_address=_p3_to_u64(b_smem_base),
+            matrix_start_address=b_smem_base,
             leading_dimension_byte_offset=16,
             stride_dimension_byte_offset=1024,
             swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
@@ -459,7 +445,7 @@ def _kernel(
         for _ in range(local_k_count):
             full_stage = ab_full.get_element_pointer(stage)
             if not peek_full:
-                _wait_mbarrier(full_stage, full_phase)
+                cl.mbarrier_wait_parity(full_stage, full_phase)
 
             a_descriptor = a_descriptor_base + cl.uint64(
                 stage * a_stage_offset
@@ -514,7 +500,7 @@ def _kernel(
         swizzle_mask = tile_m // 16 - 1
         swizzle_shift = 7
 
-        _wait_mbarrier(acc_full_ptr, 0)
+        cl.mbarrier_wait_parity(acc_full_ptr, 0)
 
         if cluster_size == 1:
             for subtile in range(subtile_count):
@@ -597,7 +583,7 @@ def _kernel(
                 )
 
                 if batch_idx >= REDUCTION_STAGES:
-                    _wait_mbarrier(
+                    cl.mbarrier_wait_parity(
                         y_reduce_empty.get_element_pointer(buffer_idx),
                         empty_phase,
                     )
@@ -676,7 +662,7 @@ def _kernel(
                             y_reduce_full.get_element_pointer(buffer_idx),
                             peer_count * reduction_chunk_elems * 4,
                         )
-                    _wait_mbarrier(
+                    cl.mbarrier_wait_parity(
                         y_reduce_full.get_element_pointer(buffer_idx),
                         full_phase,
                     )

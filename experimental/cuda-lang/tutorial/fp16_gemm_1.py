@@ -49,24 +49,6 @@ _DEFAULT_MNK = (256, 256, 64)
 _DEFAULT_TOLERANCE = 1.0e-1
 
 
-def _wait_mbarrier(mbar, phase):
-    while not cl.mbarrier_try_wait_parity(mbar, phase, time_hint=10_000_000):
-        pass
-
-
-def _p3_to_u64(pointer):
-    return cl.uint64(cl.bitcast(pointer, cl.uint32))
-
-
-def _tmem_pointer_for_warp(tmem_base, warp, column):
-    pointer_dtype = cl.pointer_dtype(tmem_base.pointee_dtype, cl.MemorySpace.TENSOR)
-    address = cl.bitcast(tmem_base, cl.uint32)
-    row = (address >> 16) + cl.uint32(warp * WARP_SIZE)
-    return cl.bitcast(
-        (row << 16) | cl.uint32(column & 0xFFFF), pointer_dtype
-    )
-
-
 def _as_float32_vector(regs):
     """Interpret the 32 TMEM load registers as one FP32 vector."""
     return cl.Vector(
@@ -180,7 +162,7 @@ def _kernel(a, b, c, bias, has_bias: cl.Constant[bool]):
         scale_d = False
 
         for k_tile in range(cl.cdiv(k, BLOCK_K)):
-            _wait_mbarrier(ab_empty_ptr, ab_empty_phase)
+            cl.mbarrier_wait_parity(ab_empty_ptr, ab_empty_phase)
             ab_empty_phase = ab_empty_phase ^ 1
 
             # Both CTAs contribute their A and B transfers to the leader's
@@ -222,17 +204,17 @@ def _kernel(a, b, c, bias, has_bias: cl.Constant[bool]):
                 )
 
             if is_leader:
-                _wait_mbarrier(ab_full_ptr, ab_full_phase)
+                cl.mbarrier_wait_parity(ab_full_ptr, ab_full_phase)
                 ab_full_phase = ab_full_phase ^ 1
 
                 a_desc = cl.Tcgen05SharedMemoryDescriptor(
-                    matrix_start_address=_p3_to_u64(a_smem_ptr),
+                    matrix_start_address=a_smem_ptr,
                     leading_dimension_byte_offset=16,
                     stride_dimension_byte_offset=8 * 128,
                     swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
                 ).encode()
                 b_desc = cl.Tcgen05SharedMemoryDescriptor(
-                    matrix_start_address=_p3_to_u64(b_smem_ptr),
+                    matrix_start_address=b_smem_ptr,
                     leading_dimension_byte_offset=16,
                     stride_dimension_byte_offset=8 * 128,
                     swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
@@ -268,7 +250,7 @@ def _kernel(a, b, c, bias, has_bias: cl.Constant[bool]):
     if warp == 0:
         cl.tcgen05_relinquish_allocation_permit(cta_group=cl.CTAGroup.CTA_2)
 
-    _wait_mbarrier(acc_full_ptr, 0)
+    cl.mbarrier_wait_parity(acc_full_ptr, 0)
 
     # Each CTA stores its own 128-row half. Its TMEM base is already the base
     # for that CTA's half of the CTA_2 allocation.
@@ -276,7 +258,11 @@ def _kernel(a, b, c, bias, has_bias: cl.Constant[bool]):
     row = off_m + tid
     # No partial vector stores: run() requires N to be divisible by vsize.
     for column in cl.static_iter(range(0, TILE_N, 32)):
-        tmem = _tmem_pointer_for_warp(tmem_base, warp, column)
+        tmem = cl.tcgen05_tmem_offset(
+            tmem_base,
+            lane_offset=warp * WARP_SIZE,
+            column_offset=column,
+        )
         regs = cl.tcgen05_load(
             cl.Tcgen05LoadStoreShape.SHAPE_32X32B, tmem, count=32
         )

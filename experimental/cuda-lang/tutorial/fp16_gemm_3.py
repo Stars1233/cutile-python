@@ -23,10 +23,6 @@ Additional CuTe DSL -> CUDA Lang notes beyond ``fp16_gemm_2.py``:
   device's SM count and divides by the number of CTAs per cluster. This gives
   the same value for the source's two-CTA cluster on B200, without adding a
   dummy compile step.
-* CUDA Lang does not currently expose a public high-level tensor-map prefetch
-  wrapper, so the sample uses the low-level NVVM prefetch intrinsic to preserve
-  the source's MMA-warp tensor-map prefetch.
-
 The implementation otherwise retains the source's warp roles, cluster shape,
 pipeline stages, data movement, barrier phases, CTA_2 MMA sequence, staged TMEM
 epilogue, peer deallocation synchronization, and vector stores.
@@ -67,22 +63,6 @@ TMA_COPY_BYTES = (A_STAGE_ELEMS + B_STAGE_ELEMS) * 2 * CLUSTER_M
 
 _DEFAULT_MNK = (256, 256, 256)
 _DEFAULT_TOLERANCE = 1.0e-1
-
-
-def _wait_mbarrier(mbar, phase):
-    while not cl.mbarrier_try_wait_parity(mbar, phase, time_hint=10_000_000):
-        pass
-
-
-def _p3_to_u64(pointer):
-    return cl.uint64(cl.bitcast(pointer, cl.uint32))
-
-
-def _tmem_pointer(base, lane_offset, column_offset):
-    pointer_dtype = cl.pointer_dtype(base.pointee_dtype, cl.MemorySpace.TENSOR)
-    address = cl.bitcast(base, cl.uint32)
-    offset = (cl.uint32(lane_offset) << 16) + cl.uint32(column_offset)
-    return cl.bitcast(address + offset, pointer_dtype)
 
 
 def _as_float32_vector(regs):
@@ -228,8 +208,8 @@ def _kernel(a, b, c, bias, k: cl.Constant[int], has_bias: cl.Constant[bool]):
     )
 
     if warp == MMA_WARP:
-        cl._nvvm.prefetch_tensormap(a_tmap.as_opaque_ptr())
-        cl._nvvm.prefetch_tensormap(b_tmap.as_opaque_ptr())
+        cl.prefetch_tensor_map(a_tmap)
+        cl.prefetch_tensor_map(b_tmap)
 
     ab_full = cl.shared_array(AB_STAGES, cl.mbarrier, alignment=8)
     ab_empty = cl.shared_array(AB_STAGES, cl.mbarrier, alignment=8)
@@ -305,7 +285,7 @@ def _kernel(a, b, c, bias, k: cl.Constant[int], has_bias: cl.Constant[bool]):
                 coord_m = mma_tile_m * TILE_M + rank * CTA_M
                 coord_n = mma_tile_n * TILE_N + rank * CTA_N
 
-                _wait_mbarrier(ab_empty_stage, current_ab_empty_phase)
+                cl.mbarrier_wait_parity(ab_empty_stage, current_ab_empty_phase)
 
                 if is_leader and cl.elect_sync():
                     cl.mbarrier_arrive_expect_transaction(
@@ -354,7 +334,9 @@ def _kernel(a, b, c, bias, k: cl.Constant[int], has_bias: cl.Constant[bool]):
                 tail_stage = 0
                 tail_phase = tail_phase ^ 1
         if cl.elect_sync():
-            _wait_mbarrier(ab_empty.get_element_pointer(tail_stage), tail_phase)
+            cl.mbarrier_wait_parity(
+                ab_empty.get_element_pointer(tail_stage), tail_phase
+            )
 
     elif warp == MMA_WARP:
         cl.barrier_sync_block(
@@ -381,10 +363,13 @@ def _kernel(a, b, c, bias, k: cl.Constant[int], has_bias: cl.Constant[bool]):
                 acc_empty_phase = acc_empty_phase ^ 1
 
             if is_leader:
-                _wait_mbarrier(acc_empty_stage, current_acc_empty_phase)
+                cl.mbarrier_wait_parity(
+                    acc_empty_stage, current_acc_empty_phase
+                )
 
-                tmem_for_mma = _tmem_pointer(
-                    tmem_base, 0, current_acc_stage * TILE_N
+                tmem_for_mma = cl.tcgen05_tmem_offset(
+                    tmem_base,
+                    column_offset=current_acc_stage * TILE_N,
                 )
                 scale_d = False
                 for k_tile in range(cl.cdiv(k, BLOCK_K)):
@@ -398,18 +383,20 @@ def _kernel(a, b, c, bias, k: cl.Constant[int], has_bias: cl.Constant[bool]):
                         ab_stage_idx = 0
                         ab_full_phase = ab_full_phase ^ 1
 
-                    _wait_mbarrier(ab_full_stage, current_ab_full_phase)
+                    cl.mbarrier_wait_parity(
+                        ab_full_stage, current_ab_full_phase
+                    )
 
                     a_stage = a_smem.get_element_pointer((current_ab_stage, 0))
                     b_stage = b_smem.get_element_pointer((current_ab_stage, 0))
                     a_desc = cl.Tcgen05SharedMemoryDescriptor(
-                        matrix_start_address=_p3_to_u64(a_stage),
+                        matrix_start_address=a_stage,
                         leading_dimension_byte_offset=16,
                         stride_dimension_byte_offset=8 * 128,
                         swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
                     ).encode()
                     b_desc = cl.Tcgen05SharedMemoryDescriptor(
-                        matrix_start_address=_p3_to_u64(b_stage),
+                        matrix_start_address=b_stage,
                         leading_dimension_byte_offset=16,
                         stride_dimension_byte_offset=8 * 128,
                         swizzle_mode=cl.SwizzleMode.SWIZZLE_128B,
@@ -453,7 +440,7 @@ def _kernel(a, b, c, bias, k: cl.Constant[int], has_bias: cl.Constant[bool]):
                     tail_stage = 0
                     tail_phase = tail_phase ^ 1
             if cl.elect_sync():
-                _wait_mbarrier(
+                cl.mbarrier_wait_parity(
                     acc_empty.get_element_pointer(tail_stage), tail_phase
                 )
 
@@ -496,15 +483,15 @@ def _kernel(a, b, c, bias, k: cl.Constant[int], has_bias: cl.Constant[bool]):
             coordc_m = mma_tile_m * TILE_M + rank * CTA_M
             coordc_n = mma_tile_n * TILE_N
 
-            _wait_mbarrier(acc_full_stage, current_acc_full_phase)
+            cl.mbarrier_wait_parity(acc_full_stage, current_acc_full_phase)
 
             row = coordc_m + tid
             for subtile in cl.static_iter(range(TILE_N // 32)):
                 column = subtile * 32
-                tmem = _tmem_pointer(
+                tmem = cl.tcgen05_tmem_offset(
                     tmem_base,
-                    warp * WARP_SIZE,
-                    current_acc_stage * TILE_N + column,
+                    lane_offset=warp * WARP_SIZE,
+                    column_offset=current_acc_stage * TILE_N + column,
                 )
                 regs = cl.tcgen05_load(
                     cl.Tcgen05LoadStoreShape.SHAPE_32X32B,
@@ -542,7 +529,7 @@ def _kernel(a, b, c, bias, k: cl.Constant[int], has_bias: cl.Constant[bool]):
             peer_rank = rank ^ 1
             peer_mbar = cl.map_shared_to_cluster(tmem_dealloc_ptr, peer_rank)
             cl.mbarrier_arrive(peer_mbar, scope=cl.MbarrierScope.BLOCK)
-            _wait_mbarrier(tmem_dealloc_ptr, 0)
+            cl.mbarrier_wait_parity(tmem_dealloc_ptr, 0)
             cl.tcgen05_deallocate(
                 tmem_base,
                 TMEM_COLS,
