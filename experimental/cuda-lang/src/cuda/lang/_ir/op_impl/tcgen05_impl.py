@@ -138,9 +138,13 @@ def tcgen05_tmem_offset_impl(
     column_offset = implicit_cast(column_offset, datatype.int32, "column offset")
 
     int32_type = ScalarTy(datatype.int32)
+    address = add_operation(BitCast, int32_type, x=pointer)
+    if lane_offset.is_constant() and lane_offset.get_constant() == 0:
+        address = binary_arithmetic_tensorlike("add", address, column_offset)
+        return add_operation(BitCast, pointer_type, x=address)
+
     field_mask = strictly_typed_const(0xFFFF, int32_type)
     field_shift = strictly_typed_const(16, int32_type)
-    address = add_operation(BitCast, int32_type, x=pointer)
 
     lane = bitwise_shift_tensorlike("rshift", address, field_shift)
     column = binary_bitwise_tensorlike("and_", address, field_mask)

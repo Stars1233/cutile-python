@@ -136,6 +136,62 @@ def test_tmem_offset():
     compile_kernel(kernel, assert_in_ptx="tcgen05.st.sync.aligned.32x32b.x1.b32")
 
 
+def test_tmem_offset_with_lane_offset():
+    @cl.kernel
+    def kernel(out):
+        tmem_dtype = cl.pointer_dtype(cl.int8, cl.MemorySpace.TENSOR)
+        smem = cl.shared_array(1, tmem_dtype, alignment=4)
+        tmem = cl.tcgen05_tmem_offset(
+            smem[0],
+            lane_offset=5,
+            column_offset=7,
+        )
+        # Use the TMEM value so that the compiler does not remove it.
+        out[cl.bitcast(tmem, cl.int32)] = 1
+
+    compile_kernel(
+        kernel,
+        signature=KernelSignature([make_symbolic_tensor(1, cl.int32)]),
+        filecheck_nvvm="""
+        CHECK: ptrtoint
+        CHECK-NEXT: ashr i32
+        CHECK-NEXT: and i32
+        CHECK-NEXT: add i32
+        CHECK-NEXT: add i32
+        CHECK-NEXT: shl i32
+        CHECK-NEXT: or i32
+        CHECK-NEXT: inttoptr
+        """,
+    )
+
+
+def test_tmem_offset_without_lane_offset():
+    """Ensure we don't do extra pointer arithmetic when the lane offset is
+    statically zero."""
+
+    @cl.kernel
+    def kernel(out):
+        tmem_dtype = cl.pointer_dtype(cl.int8, cl.MemorySpace.TENSOR)
+        smem = cl.shared_array(1, tmem_dtype, alignment=4)
+        tmem = cl.tcgen05_tmem_offset(
+            smem[0],
+            lane_offset=0,
+            column_offset=7,
+        )
+        # Use the TMEM value so that the compiler does not remove it.
+        out[cl.bitcast(tmem, cl.int32)] = 1
+
+    compile_kernel(
+        kernel,
+        signature=KernelSignature([make_symbolic_tensor(1, cl.int32)]),
+        filecheck_nvvm="""
+        CHECK: ptrtoint
+        CHECK-NEXT: add i32
+        CHECK-NEXT: inttoptr
+        """,
+    )
+
+
 def test_tmem_offset_requires_tensor_pointer():
     @cl.kernel
     def kernel():

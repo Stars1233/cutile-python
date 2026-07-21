@@ -47,8 +47,9 @@ def compile_kernel(
     assert_not_in_mlir=None,
     assert_in_nvvm=None,
     assert_not_in_nvvm=None,
-    filecheck_ptx=None,
     filecheck_mlir=None,
+    filecheck_nvvm=None,
+    filecheck_ptx=None,
     raises=None,
     **compile_simt_kwargs,
 ):
@@ -60,8 +61,9 @@ def compile_kernel(
         assert assert_not_in_mlir is None, message
         assert assert_in_nvvm is None, message
         assert assert_not_in_nvvm is None, message
-        assert filecheck_ptx is None, message
         assert filecheck_mlir is None, message
+        assert filecheck_nvvm is None, message
+        assert filecheck_ptx is None, message
 
         with raises:
             cl.compile_simt(kernel, [signature], **compile_simt_kwargs)
@@ -71,15 +73,14 @@ def compile_kernel(
     compiled = cl.compile_simt(
         kernel,
         [signature],
-        keep_ptx=True,
         keep_mlir=True,
-        keep_nvvm=assert_in_nvvm is not None or assert_not_in_nvvm is not None,
+        keep_nvvm=True,
+        keep_ptx=True,
         **compile_simt_kwargs,
     )
     assert compiled.mlir
+    assert compiled.nvvm
     assert compiled.ptx
-    if assert_in_nvvm is not None or assert_not_in_nvvm is not None:
-        assert compiled.nvvm
 
     def tuple_or_str_check(check, scrutinee, predicate=lambda x, y: x in y):
         match check:
@@ -112,13 +113,17 @@ def compile_kernel(
     tuple_or_str_check(assert_in_nvvm, compiled.nvvm, is_in)
     tuple_or_str_check(assert_not_in_nvvm, compiled.nvvm, is_not_in)
 
-    if filecheck_ptx is not None:
-        assert isinstance(filecheck_ptx, str)
-        filecheck(compiled.ptx, filecheck_ptx)
-
     if filecheck_mlir is not None:
         assert isinstance(filecheck_mlir, str)
         filecheck(compiled.mlir, filecheck_mlir)
+
+    if filecheck_nvvm is not None:
+        assert isinstance(filecheck_nvvm, str)
+        filecheck(compiled.nvvm, filecheck_nvvm)
+
+    if filecheck_ptx is not None:
+        assert isinstance(filecheck_ptx, str)
+        filecheck(compiled.ptx, filecheck_ptx)
 
     return compiled
 
