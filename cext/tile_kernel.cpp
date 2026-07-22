@@ -2540,7 +2540,8 @@ static Result<PreparedLaunch> prepare_launch(
         Py_ssize_t num_pyargs,
         bool capture_kernel_image,
         bool stage_list_args,
-        StreamBufferTransaction& tx) {
+        StreamBufferTransaction& tx,
+        ContextGuard& ctx_guard) {
 
     LaunchHelperPtr helper = launch_helper_get();
 
@@ -2622,7 +2623,6 @@ static Result<PreparedLaunch> prepare_launch(
             kernel_item = kernel_map.insert(std::move(helper->constants), std::move(*res));
     }
 
-    ContextGuard ctx_guard(driver);
     if (!maybe_switch_context(driver, helper->cuda_context, ctx_guard))
         return ErrorRaised;
 
@@ -2661,15 +2661,12 @@ static Status launch(const DriverApi* driver,
                      PyObject* const* pyargs,
                      Py_ssize_t num_pyargs
                      ) {
+    ContextGuard ctx_guard(driver);
     StreamBufferTransaction tx;
     Result<PreparedLaunch> prep = prepare_launch(
             driver, dispatcher_pyobj, launch_stream, pyargs, num_pyargs,
-            /*capture_kernel_image=*/false, /*stage_list_args=*/true, tx);
+            /*capture_kernel_image=*/false, /*stage_list_args=*/true, tx, ctx_guard);
     if (!prep.is_ok()) return ErrorRaised;
-
-    ContextGuard ctx_guard(driver);
-    if (!maybe_switch_context(driver, prep->helper->cuda_context, ctx_guard))
-        return ErrorRaised;
 
     CUlaunchConfig config = {
       .gridDimX = grid.dims[0],
@@ -2708,10 +2705,6 @@ static Result<double> benchmark(const DriverApi* driver,
                                 CUkernel kernel,
                                 unsigned dynamic_smem_bytes,
                                 LaunchHelper& helper) {
-    ContextGuard bench_ctx(driver);
-    if (!maybe_switch_context(driver, ctx, bench_ctx))
-        return ErrorRaised;
-
 #define CU_CHECK(name, expr) \
     do { \
         CUresult res = (expr); \
@@ -3337,11 +3330,12 @@ static PyObject* cuda_tile_benchmark(PyObject* mod, PyObject* const* args, Py_ss
     Result<const DriverApi*> driver = get_driver_api();
     if (!driver.is_ok()) return nullptr;
 
+    ContextGuard ctx_guard(*driver);
     StreamBufferTransaction tx;
     Result<PreparedLaunch> prep = prepare_launch(
             *driver, launch_args.dispatcher, launch_args.stream,
             launch_args.kernel_args, launch_args.num_kernel_args,
-            /*capture_kernel_image=*/false, /*stage_list_args=*/true, tx);
+            /*capture_kernel_image=*/false, /*stage_list_args=*/true, tx, ctx_guard);
     if (!prep.is_ok()) return nullptr;
 
     Result<double> elapsed_us = benchmark(
@@ -3369,11 +3363,12 @@ static PyObject* cuda_tile_export_ipc_benchmark_payload(PyObject*, PyObject* con
     Result<const DriverApi*> driver = get_driver_api();
     if (!driver.is_ok()) return nullptr;
 
+    ContextGuard ctx_guard(*driver);
     StreamBufferTransaction tx;
     Result<PreparedLaunch> prep = prepare_launch(
             *driver, launch_args.dispatcher, launch_args.stream,
             launch_args.kernel_args, launch_args.num_kernel_args,
-            /*capture_kernel_image=*/true, /*stage_list_args=*/false, tx);
+            /*capture_kernel_image=*/true, /*stage_list_args=*/false, tx, ctx_guard);
     if (!prep.is_ok()) return nullptr;
 
     LaunchHelper& helper = *prep->helper;
@@ -3394,10 +3389,6 @@ static PyObject* cuda_tile_export_ipc_benchmark_payload(PyObject*, PyObject* con
     Py_ssize_t symbol_size;
     const char* symbol = PyUnicode_AsUTF8AndSize(kernel_image.symbol.get(), &symbol_size);
     if (!symbol) return nullptr;
-
-    ContextGuard ctx_guard(*driver);
-    if (!maybe_switch_context(*driver, helper.cuda_context, ctx_guard))
-        return nullptr;
 
     CUdevice device;
     CUresult res = (*driver)->cuCtxGetDevice(&device);
