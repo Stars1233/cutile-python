@@ -180,20 +180,7 @@ def _quantize_fp4_block(values, base, alpha):
         ),
         dtype=cl.float32,
     )
-    absolute = cl.abs(scaled)
-    reduce8 = tuple(
-        cl.maximum(absolute[2 * i], absolute[2 * i + 1])
-        for i in cl.static_iter(range(8))
-    )
-    reduce4 = tuple(
-        cl.maximum(reduce8[2 * i], reduce8[2 * i + 1])
-        for i in cl.static_iter(range(4))
-    )
-    reduce2 = tuple(
-        cl.maximum(reduce4[2 * i], reduce4[2 * i + 1])
-        for i in cl.static_iter(range(2))
-    )
-    amax = cl.maximum(reduce2[0], reduce2[1])
+    amax = cl.abs(scaled).reduce(cl.VectorReduction.max)
     inv_scale = cl.float32(FP4_MAX) / amax
     normalized = scaled * inv_scale
     scale = cl.truediv(cl.float32(1.0), inv_scale)

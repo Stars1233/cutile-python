@@ -7,6 +7,7 @@ from typing import Generic, TypeVar, Literal
 from cuda.tile import MemoryOrder, DType
 from cuda.tile._execution import stub
 from cuda.tile._memory_model import MemorySpace
+from .._enums import VectorReduction
 from .._stub import math as cl_math
 
 
@@ -153,18 +154,36 @@ class Vector(Generic[T]):
             dtype: Target data type of the result vector.
         """
 
+    @stub
+    def reduce(
+        self,
+        op: VectorReduction,
+        /,
+        *,
+        propagate_nan: bool = False,
+        reassociate: bool = False,
+    ) -> T:
+        """Reduce vector ``self`` to a scalar.
+
+        Args:
+            op: Operation to apply to the vector elements.
+            propagate_nan: For floating-point min and max, return NaN if any
+                element is NaN.
+            reassociate: Permit the compiler to change the operation order.
+        """
+
 
 class Pointer(Generic[T]):
     """Typed address into a CUDA memory space with low-level load and store operations."""
 
     @stub
     def load(
-            self,
-            *,
-            count: int | None = None,
-            alignment: int | None = None,
-            volatile: bool = False,
-            memory_order: MemoryOrder | None = None,
+        self,
+        *,
+        count: int | None = None,
+        alignment: int | None = None,
+        volatile: bool = False,
+        memory_order: MemoryOrder | None = None,
     ) -> T | Vector[T]:
         """
         Low-level API to read from memory.

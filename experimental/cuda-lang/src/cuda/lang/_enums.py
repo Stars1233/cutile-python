@@ -129,6 +129,18 @@ class BarrierReductionKind(Enum):
     OR = auto()
 
 
+class VectorReduction(Enum):
+    """Operations that reduce a vector to one scalar."""
+
+    add = "add"
+    mul = "mul"
+    bitwise_and = "bitwise_and"
+    bitwise_or = "bitwise_or"
+    bitwise_xor = "bitwise_xor"
+    max = "max"
+    min = "min"
+
+
 class CachePolicy(Enum):
     L2_EVICT_LAST = "L2::evict_last"
     L2_EVICT_NORMAL = "L2::evict_normal"
@@ -178,6 +190,7 @@ __all__ = (
     "Tcgen05WaitKind",
     "FenceProxyKind",
     "BarrierReductionKind",
+    "VectorReduction",
     "CachePolicy",
     "PrefetchLevel",
     "MatrixStoreShape",

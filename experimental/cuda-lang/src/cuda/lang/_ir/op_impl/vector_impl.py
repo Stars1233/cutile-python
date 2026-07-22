@@ -6,6 +6,8 @@ from typing import Callable
 from cuda.tile._ir.op_impl import (
     WILDCARD,
     ImplRegistry,
+    require_constant_bool,
+    require_constant_enum,
     require_dtype_spec,
 )
 from cuda.tile._ir.arithmetic_ops import astype
@@ -16,8 +18,9 @@ from cuda.tile._ir.ops_utils import promote_dtypes
 from cuda.tile._ir.type import LooselyTypedScalar
 from cuda.lang._exception import InternalError, TypeCheckingError
 import cuda.lang._datatype as datatype
+from cuda.lang._enums import VectorReduction
 from ..type_checking_helpers import require_vector_type, require_scalar_type
-from ..op_defs import RawMLIROperation, VectorGetItem
+from ..op_defs import RawMLIROperation, VectorGetItem, VectorReduce
 from ..type import ScalarTy, Type, VectorTy
 from ..._stub.types import Vector
 from ..ir import Var, add_operation
@@ -184,6 +187,67 @@ def getattr_vector_astype(object: Var[VectorTy], name: Var):
 @impl(Vector.astype)
 def vector_astype_impl(self: Var[VectorTy], dtype: Var) -> Var[VectorTy]:
     return astype(self, require_dtype_spec(dtype))
+
+
+@impl(getattr, overload=(VectorTy, "reduce"))
+def getattr_vector_reduce(object: Var[VectorTy], name: Var):
+    return bind_method(object, Vector.reduce)
+
+
+@impl(Vector.reduce)
+def vector_reduce_impl(
+    self: Var[VectorTy], op: Var, propagate_nan: Var, reassociate: Var
+) -> Var[ScalarTy]:
+    vector_type = require_vector_type(self)
+    kind = require_constant_enum(op, VectorReduction)
+    propagate_nan_value = require_constant_bool(propagate_nan)
+    reassociate_value = require_constant_bool(reassociate)
+    dtype = vector_type.element_dtype
+
+    if propagate_nan_value and kind not in (
+        VectorReduction.max,
+        VectorReduction.min,
+    ):
+        raise TypeCheckingError(
+            "propagate_nan is valid only for min and max reductions"
+        )
+
+    bitwise_kinds = (
+        VectorReduction.bitwise_and,
+        VectorReduction.bitwise_or,
+        VectorReduction.bitwise_xor,
+    )
+    if datatype.is_boolean(dtype):
+        supported = kind in bitwise_kinds
+    elif datatype.is_integral(dtype):
+        supported = True
+    elif datatype.is_unrestricted_float(dtype):
+        supported = kind not in bitwise_kinds
+    else:
+        supported = False
+
+    if not supported:
+        raise TypeCheckingError(
+            f"Vector reduction {kind.value} does not support {dtype}"
+        )
+
+    if reassociate_value and not (
+        datatype.is_unrestricted_float(dtype)
+        and kind in (VectorReduction.add, VectorReduction.mul)
+    ):
+        raise TypeCheckingError(
+            "reassociate is valid only for floating-point add and multiply "
+            "vector reductions"
+        )
+
+    return add_operation(
+        VectorReduce,
+        ScalarTy(dtype),
+        x=self,
+        kind=kind,
+        propagate_nan=propagate_nan_value,
+        reassociate=reassociate_value,
+    )
 
 
 @impl(operator.getitem, overload=(VectorTy, WILDCARD))

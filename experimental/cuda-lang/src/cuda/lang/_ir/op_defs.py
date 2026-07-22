@@ -10,6 +10,7 @@ import cuda.lang._mlir as mlir
 from cuda.tile._memory_model import MemoryOrder
 from cuda.tile._ir.ir import MemoryEffect
 import cuda.lang._datatype as datatype
+from cuda.lang._enums import VectorReduction
 from .ir import Operation, Var, attribute, operand
 from .type import VectorTy, ScalarTy
 
@@ -58,6 +59,14 @@ class VectorGetItem(
 ):
     x: Var[VectorTy] = operand()
     index: Var[ScalarTy] = operand()
+
+
+@dataclass(eq=False)
+class VectorReduce(Operation, opcode="vector_reduce"):
+    x: Var[VectorTy] = operand()
+    kind: VectorReduction = attribute()
+    propagate_nan: bool = attribute(default=False)
+    reassociate: bool = attribute(default=False)
 
 
 @dataclass(eq=False)

@@ -102,6 +102,7 @@ from ._stub.types import (
     Vector,
     Pointer,
 )
+from ._enums import VectorReduction
 from ._stub.copy_async import (
     TMALoadMode,
     TMAStoreMode,
@@ -338,6 +339,7 @@ __all__ = (
     "Pointer",
     "Scalar",
     "Vector",
+    "VectorReduction",
     "MemorySpace",
     "MemoryScope",
     "MemoryOrder",

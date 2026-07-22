@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Callable, ClassVar, Literal, Sequence, get_type_hints
 
 from cuda.lang._compiler_options import CompilerOptions
+from cuda.lang._enums import VectorReduction
 from cuda.lang._ir import ir, ops
 from cuda.lang import _mlir as mlir
 from cuda.tile._memory_model import MemoryOrder, MemoryScope
@@ -963,6 +964,109 @@ def lower_vector_getitem(
     position = context.get_var(operation.index)
     element = mlir.llvm.add_ExtractElementOp(vector=vector, position=position)
     return [element]
+
+
+@mlir_op_lowering
+def lower_vector_reduce(
+    context: MLIRLoweringContext, operation: ops.VectorReduce
+) -> Sequence[mlir.Value]:
+    vector = context.get_var(operation.x)
+    result_type = ir_type_to_mlir_type(operation.result_var.get_type())
+    vector_type = operation.x.get_type()
+    assert isinstance(vector_type, ir_type.VectorTy)
+    dtype = vector_type.element_dtype
+
+    match operation.kind:
+        case VectorReduction.add if datatype.is_integral(dtype):
+            result = mlir.llvm.add_vector_reduce_add(
+                res_type=result_type,
+                in_=vector,
+            )
+        case VectorReduction.add:
+            start = mlir_constant_of_type(result_type, 0.0)
+            result = mlir.llvm.add_vector_reduce_fadd(
+                res_type=result_type,
+                start_value=start,
+                input=vector,
+                fastmathFlags=(
+                    mlir.llvm.FastmathFlags.reassoc
+                    if operation.reassociate
+                    else mlir.llvm.FastmathFlags(0)
+                ),
+            )
+        case VectorReduction.mul if datatype.is_integral(dtype):
+            result = mlir.llvm.add_vector_reduce_mul(
+                res_type=result_type,
+                in_=vector,
+            )
+        case VectorReduction.mul:
+            start = mlir_constant_of_type(result_type, 1.0)
+            result = mlir.llvm.add_vector_reduce_fmul(
+                res_type=result_type,
+                start_value=start,
+                input=vector,
+                fastmathFlags=(
+                    mlir.llvm.FastmathFlags.reassoc
+                    if operation.reassociate
+                    else mlir.llvm.FastmathFlags(0)
+                ),
+            )
+        case VectorReduction.bitwise_and:
+            result = mlir.llvm.add_vector_reduce_and(
+                res_type=result_type,
+                in_=vector,
+            )
+        case VectorReduction.bitwise_or:
+            result = mlir.llvm.add_vector_reduce_or(
+                res_type=result_type,
+                in_=vector,
+            )
+        case VectorReduction.bitwise_xor:
+            result = mlir.llvm.add_vector_reduce_xor(
+                res_type=result_type,
+                in_=vector,
+            )
+        case VectorReduction.max if datatype.is_float(dtype):
+            builder = (
+                mlir.llvm.add_vector_reduce_fmaximum
+                if operation.propagate_nan
+                else mlir.llvm.add_vector_reduce_fmax
+            )
+            result = builder(res_type=result_type, in_=vector)
+        case VectorReduction.max if datatype.is_signed(dtype):
+            result = mlir.llvm.add_vector_reduce_smax(
+                res_type=result_type,
+                in_=vector,
+            )
+        case VectorReduction.max:
+            result = mlir.llvm.add_vector_reduce_umax(
+                res_type=result_type,
+                in_=vector,
+            )
+        case VectorReduction.min if datatype.is_float(dtype):
+            builder = (
+                mlir.llvm.add_vector_reduce_fminimum
+                if operation.propagate_nan
+                else mlir.llvm.add_vector_reduce_fmin
+            )
+            result = builder(res_type=result_type, in_=vector)
+        case VectorReduction.min if datatype.is_signed(dtype):
+            result = mlir.llvm.add_vector_reduce_smin(
+                res_type=result_type,
+                in_=vector,
+            )
+        case VectorReduction.min:
+            result = mlir.llvm.add_vector_reduce_umin(
+                res_type=result_type,
+                in_=vector,
+            )
+        case _:
+            raise InternalError(
+                f"Unable to lower vector reduction {operation.kind.value} "
+                f"for {dtype}"
+            )
+
+    return [result]
 
 
 @mlir_op_lowering(host=False)

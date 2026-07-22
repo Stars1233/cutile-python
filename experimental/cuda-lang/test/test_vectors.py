@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from test.util import compile_kernel
+from test.util import compile_kernel, make_symbolic_tensor
 import operator
 
 import pytest
@@ -11,7 +11,7 @@ import torch
 import cuda.lang as cl
 from cuda.lang._datatype import to_torch_dtype
 from cuda.lang._exception import TypeCheckingError, InvalidValueError
-from cuda.lang.compilation import KernelSignature
+from cuda.lang.compilation import KernelSignature, ScalarConstraint
 
 
 @pytest.mark.parametrize("volatile", [True, False])
@@ -503,3 +503,279 @@ def test_vector_from_tuple():
     tensor = torch.zeros(4, dtype=torch.int32, device='cuda')
     cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (tensor,))
     assert tensor.cpu().tolist() == [0, 1, 2, 3]
+
+
+@pytest.mark.parametrize(
+    "dtype,op,propagate_nan,kind",
+    (
+        (cl.int32, cl.VectorReduction.add, False, "add"),
+        (cl.int32, cl.VectorReduction.mul, False, "mul"),
+        (cl.int32, cl.VectorReduction.bitwise_and, False, "and"),
+        (cl.int32, cl.VectorReduction.bitwise_or, False, "or"),
+        (cl.int32, cl.VectorReduction.bitwise_xor, False, "xor"),
+        (cl.int32, cl.VectorReduction.max, False, "smax"),
+        (cl.int32, cl.VectorReduction.min, False, "smin"),
+        (cl.uint32, cl.VectorReduction.max, False, "umax"),
+        (cl.uint32, cl.VectorReduction.min, False, "umin"),
+        (cl.float32, cl.VectorReduction.add, False, "fadd"),
+        (cl.float32, cl.VectorReduction.mul, False, "fmul"),
+        (cl.float32, cl.VectorReduction.max, False, "fmax"),
+        (cl.float32, cl.VectorReduction.min, False, "fmin"),
+        (cl.float32, cl.VectorReduction.max, True, "fmaximum"),
+        (cl.float32, cl.VectorReduction.min, True, "fminimum"),
+    ),
+)
+def test_vector_reduce_mlir(dtype, op, propagate_nan, kind):
+    @cl.kernel
+    def kernel(output):
+        vector = cl.Vector(1, 2, 3, 4, dtype=dtype)
+        output[0] = vector.reduce(op, propagate_nan=propagate_nan)
+
+    compile_kernel(
+        kernel,
+        signature=KernelSignature((make_symbolic_tensor(1, dtype),)),
+        assert_in_mlir=f'llvm.intr.vector.reduce.{kind}',
+    )
+
+
+@pytest.mark.parametrize(
+    "op,mlir_op",
+    (
+        (cl.VectorReduction.add, "fadd"),
+        (cl.VectorReduction.mul, "fmul"),
+    ),
+)
+def test_vector_reduce_reassociate_mlir(op, mlir_op):
+    mlir_op = 'llvm.intr.vector.reduce.' + mlir_op
+
+    @cl.kernel
+    def kernel(output):
+        vector = cl.Vector(2.0, 3.0, 4.0)
+        output[0] = vector.reduce(op, reassociate=True)
+
+    compile_kernel(
+        kernel,
+        signature=KernelSignature((make_symbolic_tensor(1, cl.float32),)),
+        assert_in_mlir=(mlir_op, "fastmath <reassoc>"),
+    )
+
+
+@pytest.mark.parametrize(
+    "dtype,op,values,expected",
+    (
+        (cl.int32, cl.VectorReduction.add, (2, -3, 4, 5), 8),
+        (cl.int32, cl.VectorReduction.mul, (2, -3, 4, 5), -120),
+        (cl.int32, cl.VectorReduction.bitwise_and, (15, 7, 3, 11), 3),
+        (cl.int32, cl.VectorReduction.bitwise_or, (8, 4, 2, 1), 15),
+        (cl.int32, cl.VectorReduction.bitwise_xor, (8, 4, 2, 1), 15),
+        (cl.int32, cl.VectorReduction.max, (2, -3, 4, 5), 5),
+        (cl.int32, cl.VectorReduction.min, (2, -3, 4, 5), -3),
+        (cl.uint32, cl.VectorReduction.max, (2, 3, 4, 5), 5),
+        (cl.uint32, cl.VectorReduction.min, (2, 3, 4, 5), 2),
+        (cl.float32, cl.VectorReduction.add, (2, -3, 4, 5), 8),
+        (cl.float32, cl.VectorReduction.mul, (2, -3, 4, 5), -120),
+        (cl.float32, cl.VectorReduction.max, (2, -3, 4, 5), 5),
+        (cl.float32, cl.VectorReduction.min, (2, -3, 4, 5), -3),
+        (cl.bool_, cl.VectorReduction.bitwise_and, (True, True, False, True), False),
+        (cl.bool_, cl.VectorReduction.bitwise_or, (False, False, True, False), True),
+        (cl.bool_, cl.VectorReduction.bitwise_xor, (True, False, True, True), True),
+    ),
+)
+def test_vector_reduce(dtype, op, values, expected):
+    @cl.kernel
+    def kernel(output):
+        vector = cl.Vector(
+            dtype(values[0]),
+            dtype(values[1]),
+            dtype(values[2]),
+            dtype(values[3]),
+        )
+        output[0] = vector.reduce(op)
+
+    output = torch.zeros(1, dtype=to_torch_dtype(dtype), device="cuda")
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (output,))
+    assert output.cpu().item() == expected
+
+
+@pytest.mark.parametrize("op", (cl.VectorReduction.max, cl.VectorReduction.min))
+def test_vector_reduce_propagate_nan(op):
+    @cl.kernel
+    def kernel(output):
+        vector = cl.Vector(float("nan"), 3.0, 2.0)
+        output[0] = vector.reduce(op)
+        output[1] = vector.reduce(op, propagate_nan=True)
+
+    output = torch.zeros(2, dtype=torch.float32, device="cuda")
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (output,))
+    got = output.cpu()
+    assert got[0].item() == (3.0 if op is cl.VectorReduction.max else 2.0)
+    assert torch.isnan(got[1])
+
+
+def test_vector_reduce_signed_zero():
+    @cl.kernel
+    def kernel(output):
+        vector = cl.Vector(-0.0, 0.0)
+        output[0] = vector.reduce(cl.VectorReduction.max, propagate_nan=True)
+        output[1] = vector.reduce(cl.VectorReduction.min, propagate_nan=True)
+
+    output = torch.zeros(2, dtype=torch.float32, device="cuda")
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (output,))
+    got = output.cpu()
+    assert not torch.signbit(got[0])
+    assert torch.signbit(got[1])
+
+
+def test_vector_reduce_float_order():
+    @cl.kernel
+    def kernel(output):
+        add_values = cl.Vector(1.0e20, -1.0e20, 1.0)
+        mul_values = cl.Vector(1.0e20, 1.0e20, 1.0e-20, 1.0e-20)
+        output[0] = add_values.reduce(cl.VectorReduction.add)
+        output[1] = mul_values.reduce(cl.VectorReduction.mul)
+
+    output = torch.zeros(2, dtype=torch.float32, device="cuda")
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (output,))
+    got = output.cpu()
+    assert got[0].item() == 1.0
+    assert torch.isinf(got[1])
+
+
+def test_vector_reduce_integer_overflow():
+    @cl.kernel
+    def kernel(output):
+        vector = cl.Vector(cl.int8(120), cl.int8(120))
+        output[0] = vector.reduce(cl.VectorReduction.add)
+
+    output = torch.zeros(1, dtype=torch.int8, device="cuda")
+    cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (output,))
+    assert output.cpu().item() == -16
+
+
+@pytest.mark.parametrize(
+    "dtype,op",
+    (
+        (cl.bool_, cl.VectorReduction.add),
+        (cl.bool_, cl.VectorReduction.mul),
+        (cl.bool_, cl.VectorReduction.max),
+        (cl.bool_, cl.VectorReduction.min),
+        (cl.float32, cl.VectorReduction.bitwise_and),
+        (cl.float32, cl.VectorReduction.bitwise_or),
+        (cl.float32, cl.VectorReduction.bitwise_xor),
+    ),
+)
+def test_vector_reduce_rejects_unsupported_dtype(dtype, op):
+    def kernel():
+        cl.Vector(dtype(1), dtype(2)).reduce(op)
+
+    compile_kernel(
+        kernel,
+        raises=pytest.raises(
+            TypeCheckingError,
+            match=f"Vector reduction {op.value} does not support {dtype}",
+        ),
+    )
+
+
+@pytest.mark.parametrize('op', (
+    cl.VectorReduction.add,
+    cl.VectorReduction.mul,
+    cl.VectorReduction.bitwise_and,
+    cl.VectorReduction.bitwise_or,
+    cl.VectorReduction.bitwise_xor,
+))
+def test_vector_reduce_rejects_invalid_propagate_nan(op):
+    def kernel():
+        cl.Vector(1.0, 2.0).reduce(op, propagate_nan=True)
+
+    compile_kernel(
+        kernel,
+        raises=pytest.raises(
+            TypeCheckingError,
+            match="propagate_nan is valid only for min and max",
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "dtype,op",
+    (
+        (cl.int32, cl.VectorReduction.add),
+        (cl.int32, cl.VectorReduction.mul),
+        (cl.int32, cl.VectorReduction.bitwise_and),
+        (cl.float32, cl.VectorReduction.max),
+        (cl.float32, cl.VectorReduction.min),
+    ),
+)
+def test_vector_reduce_rejects_invalid_reassociate(dtype, op):
+    def kernel():
+        cl.Vector(dtype(1), dtype(2)).reduce(op, reassociate=True)
+
+    compile_kernel(
+        kernel,
+        raises=pytest.raises(
+            TypeCheckingError,
+            match=(
+                "reassociate is valid only for floating-point add and multiply "
+                "vector reductions"
+            ),
+        ),
+    )
+
+
+def test_vector_reduce_rejects_wrong_enum():
+    def kernel():
+        cl.Vector(1, 2).reduce(cl.BarrierReductionKind.AND)
+
+    compile_kernel(
+        kernel,
+        raises=pytest.raises(TypeCheckingError, match="Expected VectorReduction"),
+    )
+
+
+def test_vector_reduce_requires_constant_op():
+    @cl.kernel
+    def kernel(condition):
+        if condition:
+            op = cl.VectorReduction.max
+        else:
+            op = cl.VectorReduction.min
+        cl.Vector(1, 2).reduce(op)
+
+    compile_kernel(
+        kernel,
+        signature=KernelSignature([ScalarConstraint(cl.bool_)]),
+        raises=pytest.raises(
+            TypeCheckingError, match="Expected VectorReduction constant"
+        ),
+    )
+
+
+def test_vector_reduce_requires_constant_propagate_nan():
+    @cl.kernel
+    def kernel(propagate_nan):
+        cl.Vector(1.0, 2.0).reduce(
+            cl.VectorReduction.max,
+            propagate_nan=propagate_nan,
+        )
+
+    compile_kernel(
+        kernel,
+        signature=KernelSignature([ScalarConstraint(cl.bool_)]),
+        raises=pytest.raises(TypeCheckingError, match="Expected a boolean constant"),
+    )
+
+
+def test_vector_reduce_requires_constant_reassociate():
+    @cl.kernel
+    def kernel(reassociate):
+        cl.Vector(1.0, 2.0).reduce(
+            cl.VectorReduction.add,
+            reassociate=reassociate,
+        )
+
+    compile_kernel(
+        kernel,
+        signature=KernelSignature([ScalarConstraint(cl.bool_)]),
+        raises=pytest.raises(TypeCheckingError, match="Expected a boolean constant"),
+    )

@@ -92,6 +92,7 @@ from .op_defs import (  # noqa: F401
     ForeignFunction,
     TensorMapAsOpaquePtr,
     VectorGetItem,
+    VectorReduce,
     StorePointer,
     LoadPointer,
     ReinterpretPointerAsArray,
@@ -882,4 +883,5 @@ __all__ = (
     "RawMLIROperation",
     "ForeignFunction",
     "VectorGetItem",
+    "VectorReduce",
 )
