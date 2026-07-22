@@ -75,6 +75,22 @@ class Array(TileArray, Generic[T]):
 
         Args:
             indices: Scalar or tuple index of the element to load.
+            count: How many elements to load. A value greater than one yields
+                a vector, 1 or None yields a scalar.
+            alignment: Inform the compiler that the address being loaded from
+                is aligned to at least this many bytes.
+                The user is responsible for ensuring aligned loads occur only
+                on appropriately aligned pointers.
+                If alignment is None, do not give the compiler any alignment
+                hints.
+            volatile: If True, the compiler will not modify the number of times
+                this load is performed nor the order of execution with respect
+                to other volatile operations.
+            memory_order: When memory_order is specified, the load is atomic.
+                If alignment is None, the natural alignment of the loaded type
+                (its size in bytes) is used.
+                Atomic loads require a pointee type with a bit width that
+                is a power of two greater than or equal to one byte.
 
         Returns:
             The loaded scalar, or a vector of ``count`` elements when ``count``
@@ -108,6 +124,20 @@ class Array(TileArray, Generic[T]):
         Args:
             indices: Scalar or tuple index of the element to store to.
             value: Scalar or vector value to store.
+            alignment: Inform the compiler that the address being loaded from
+                is aligned to at least this many bytes.
+                The user is responsible for ensuring aligned loads occur only
+                on appropriately aligned pointers.
+                If alignment is None, do not give the compiler any alignment
+                hints.
+            volatile: If True, the compiler will not modify the number of times
+                this load is performed nor the order of execution with respect
+                to other volatile operations.
+            memory_order: When memory_order is specified, the load is atomic.
+                If alignment is None, the natural alignment of the loaded type
+                (its size in bytes) is used.
+                Atomic loads require a pointee type with a bit width that
+                is a power of two greater than or equal to one byte.
         """
         self.get_element_pointer(indices).store(
             value,

@@ -172,6 +172,9 @@ class Vector(Generic[T]):
             reassociate: Permit the compiler to change the operation order.
         """
 
+    @stub
+    def __len__(self): ...
+
 
 class Pointer(Generic[T]):
     """Typed address into a CUDA memory space with low-level load and store operations."""

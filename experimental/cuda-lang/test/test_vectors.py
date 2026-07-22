@@ -767,7 +767,6 @@ def test_vector_reduce_requires_constant_propagate_nan():
 
 
 def test_vector_reduce_requires_constant_reassociate():
-    @cl.kernel
     def kernel(reassociate):
         cl.Vector(1.0, 2.0).reduce(
             cl.VectorReduction.add,
@@ -779,3 +778,145 @@ def test_vector_reduce_requires_constant_reassociate():
         signature=KernelSignature([ScalarConstraint(cl.bool_)]),
         raises=pytest.raises(TypeCheckingError, match="Expected a boolean constant"),
     )
+
+
+class TestVectorSlice:
+    def _transform_vector(self, function):
+
+        @cl.kernel
+        def kernel(inp: cl.Array, out: cl.Array):
+            v = inp.load_element(0, count=8)
+            v2 = function(v)
+            out.store_element(0, v2)
+
+        inp = torch.arange(8, dtype=torch.int8).cuda()
+        out = torch.zeros(8, dtype=torch.int8).cuda()
+        cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, (inp, out))
+        expect = function(list(range(8)))
+        out = out.cpu().tolist()
+        assert out[: len(expect)] == expect
+        assert all(map(lambda x: x == 0, out[len(expect):]))
+
+    def test_start_stop_step(self):
+        def f(v):
+            return v[1:8:2]
+
+        self._transform_vector(f)
+
+    def test_start_stop_nostep(self):
+        def f(v):
+            return v[1:6]
+
+        self._transform_vector(f)
+
+    def test_start_nostop_nostep(self):
+        def f(v):
+            return v[1:]
+
+        self._transform_vector(f)
+
+    def test_nostart_nostop_nostep(self):
+        def f(v):
+            return v[:]
+
+        self._transform_vector(f)
+
+    def test_nostart_stop_nostep(self):
+        def f(v):
+            return v[:4]
+
+        self._transform_vector(f)
+
+    def test_nostart_stop_step(self):
+        def f(v):
+            return v[:6:2]
+
+        self._transform_vector(f)
+
+    def test_nostart_nostop_step(self):
+        def f(v):
+            return v[::2]
+
+        self._transform_vector(f)
+
+    def test_negative_step(self):
+        def f(v):
+            return v[::-2]
+
+        self._transform_vector(f)
+
+    def test_negative_start_stop(self):
+        def f(v):
+            return v[-5:-1]
+
+        self._transform_vector(f)
+
+    def test_same_result_type(self):
+        @cl.kernel
+        def kernel():
+            v = cl.Vector(0, 1, 2, 3, 4, 5, 6, 7, dtype=cl.int8)
+            reversed: cl.Vector = v[::-1]
+            check = reversed.dtype == cl.int8
+            cl.static_assert(check)
+            cl.static_assert(reversed.element_count == 8)
+            halved: cl.Vector = v[: len(v) // 2]
+
+            check = halved.dtype == cl.int8
+            cl.static_assert(check)
+            cl.static_assert(halved.element_count == 4)
+
+        cl.launch(torch.cuda.current_stream(), (1,), (1,), kernel, ())
+
+    def test_reject_dynamic_slice_start(self):
+        def kernel():
+            dyn = cl.shared_array(1, cl.int8)[0]
+            cl.Vector(0, 1, 2, 3)[dyn:]
+
+        compile_kernel(
+            kernel,
+            raises=pytest.raises(
+                TypeCheckingError, match="Non-constant slices are not supported"
+            ),
+        )
+
+    def test_reject_dynamic_slice_stop(self):
+        def kernel():
+            dyn = cl.shared_array(1, cl.int8)[0]
+            cl.Vector(0, 1, 2, 3)[:dyn]
+
+        compile_kernel(
+            kernel,
+            raises=pytest.raises(
+                TypeCheckingError, match="Non-constant slices are not supported"
+            ),
+        )
+
+    def test_reject_dynamic_slice_step(self):
+        def kernel():
+            dyn = cl.shared_array(1, cl.int8)[0]
+            cl.Vector(0, 1, 2, 3)[::dyn]
+
+        compile_kernel(
+            kernel,
+            raises=pytest.raises(
+                TypeCheckingError, match="Non-constant slices are not supported"
+            ),
+        )
+
+    def test_reject_0_step(self):
+        def kernel():
+            cl.Vector(0, 1, 2, 3)[::0]
+
+        compile_kernel(
+            kernel,
+            raises=pytest.raises(InvalidValueError, match="Slice step cannot be zero"),
+        )
+
+    def test_reject_float_slice(self):
+        def kernel():
+            cl.Vector(0, 1, 2, 3)[1.0:]
+
+        compile_kernel(
+            kernel,
+            raises=pytest.raises(Exception, match="slice indices must be integers"),
+        )

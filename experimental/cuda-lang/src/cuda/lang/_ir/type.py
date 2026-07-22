@@ -32,6 +32,7 @@ from cuda.tile._ir.type import (
     Symbol,
     SymbolicArray,
     SymbolicClosure,
+    SliceType,
 )
 import cuda.tile._datatype as datatype
 from cuda.tile._datatype import DType, PointerInfo
@@ -340,4 +341,5 @@ __all__ = (
     "SymbolicVector",
     "SymbolicScalar",
     "SymbolicPointer",
+    "SliceType",
 )

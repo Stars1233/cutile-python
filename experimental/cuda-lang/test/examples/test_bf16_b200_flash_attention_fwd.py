@@ -75,7 +75,7 @@ def tcgen05_load16(address):
     # return tuple(tcgen05_load16_vector(address))
 
 
-def max_vector32(values, current):
+def max_vector32(values: cl.Vector, current):
     for i in cl.static_iter(range(len(values))):
         asf32 = cl.bitcast(values[i], cl.float32)
         current = cl.maximum(current, asf32)

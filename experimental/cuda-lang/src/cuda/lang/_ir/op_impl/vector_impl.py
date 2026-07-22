@@ -9,19 +9,20 @@ from cuda.tile._ir.op_impl import (
     require_constant_bool,
     require_constant_enum,
     require_dtype_spec,
+    require_constant_slice,
 )
 from cuda.tile._ir.arithmetic_ops import astype
 from cuda.tile._ir.cast_ops import implicit_cast
 from cuda.tile._ir.core_ops import bind_method, build_tuple, loosely_typed_const
-from cuda.tile._ir.ops import strictly_typed_const
+from cuda.tile._ir.ops import strictly_typed_const, slice_impl
 from cuda.tile._ir.ops_utils import promote_dtypes
 from cuda.tile._ir.type import LooselyTypedScalar
-from cuda.lang._exception import InternalError, TypeCheckingError
+from cuda.lang._exception import InternalError, TypeCheckingError, InvalidValueError
 import cuda.lang._datatype as datatype
 from cuda.lang._enums import VectorReduction
 from ..type_checking_helpers import require_vector_type, require_scalar_type
 from ..op_defs import RawMLIROperation, VectorGetItem, VectorReduce
-from ..type import ScalarTy, Type, VectorTy
+from ..type import ScalarTy, Type, VectorTy, SliceType
 from ..._stub.types import Vector
 from ..ir import Var, add_operation
 
@@ -108,6 +109,33 @@ def vector_constructor_impl(elements: tuple[Var, ...], dtype: Var) -> Var[Vector
         value = implicit_cast(element, element_dtype, f"Vector() element {index}")
         res = vector_with_item(res, index, value)
     return res
+
+
+impl(slice)(slice_impl)
+
+
+@impl(operator.getitem, overload=(VectorTy, SliceType))
+def vector_slice_impl(object: Var[VectorTy], key: Var[SliceType]):
+    s = require_constant_slice(key)
+    vt = require_vector_type(object)
+
+    if s.step == 0:
+        raise InvalidValueError("Slice step cannot be zero")
+
+    start, stop, step = s.indices(vt.length)
+    indices = tuple(range(start, stop, step))
+    if len(indices) == 0:
+        raise InvalidValueError(
+            "Slice is invalid because slice would result in length-0 vector"
+        )
+
+    new_vt = VectorTy(vt.element_dtype, length=len(indices))
+    vector = vector_undef(new_vt)
+    for dst_index, src_index in enumerate(indices):
+        item = vector_getitem(object, loosely_typed_const(src_index))
+        vector = vector_with_item(vector, loosely_typed_const(dst_index), item)
+
+    return vector
 
 
 @impl(tuple, overload=(VectorTy,))
