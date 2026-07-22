@@ -57,6 +57,15 @@ def _find_loop_with_extract(block) -> Loop:
     return ops[0]
 
 
+def _find_loop_without_sqrt(block) -> Loop:
+    ops = [op for op in block.traverse()
+           if isinstance(op, Loop)
+           and not any(isinstance(inner_op, Unary) and inner_op.fn == "sqrt"
+                       for inner_op in op.body)]
+    assert len(ops) == 1
+    return ops[0]
+
+
 def _find_first_ifelse(block) -> IfElse:
     for op in block.traverse():
         if isinstance(op, IfElse):
@@ -174,6 +183,19 @@ def ifelse_carry_no(x, a, t):
         ct.store(x, i, val)
 
 
+@ct.kernel
+def carried_from_nested_loop_no(x, a, t):
+    bid = ct.bid(0)
+    for i in range(x.shape[0]):
+        k = ct.sqrt(i)
+        val = 10.0
+        # Can't hoist this loop out of the outer loop because the "continue"
+        # operation yield `k` which is not invariant of the outer loop.
+        for j in range(bid):
+            val = k + k
+        ct.store(x, i, val)
+
+
 def make_cases(tuples):
     return [pytest.param(kernel, op_finder, expected_x, id=kernel._pyfunc.__name__)
             for kernel, op_finder, expected_x in tuples]
@@ -192,6 +214,7 @@ def make_cases(tuples):
     (entire_loop_yes, _find_loop_with_extract, [11.0, 11.0, 11.0]),
     (ifelse_cond_indvar_no, _find_ifelse_with_sqrt, [0.0, 0.0, 2.0]),
     (ifelse_carry_no, _find_first_ifelse, [1.0, 2.0, 3.0]),
+    (carried_from_nested_loop_no, _find_loop_without_sqrt, [10.0, 10.0, 10.0])
 ]))
 def test_hoisting(kernel, op_finder, expected_x):
     kernel_name = kernel._pyfunc.__name__

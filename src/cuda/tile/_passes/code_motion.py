@@ -113,6 +113,8 @@ def _hoist(block: Block, stack: list[_StackItem], def_depth: dict[str, int], is_
             # together with its containing loop.
             ret.mobility = min(ret.mobility, _BlockMobility.CAN_MOVE_WITH_LOOP)
             depinfo.must_stay = True
+            for v in op.values:
+                depinfo.update(def_depth[v.name], depth)
         elif isinstance(op, EndBranch):
             depinfo.must_stay = True
             for v in op.outputs:
