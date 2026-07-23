@@ -177,7 +177,51 @@ class Vector(Generic[T]):
 
 
 class Pointer(Generic[T]):
-    """Typed address into a CUDA memory space with low-level load and store operations."""
+    """Address in a CUDA memory space.
+
+    A typed pointer identifies the data type at its address. An opaque pointer
+    does not identify a data type. Pointer arithmetic and memory access require
+    a typed pointer.
+    Pointer offsets are given in element counts, not in bytes.
+    """
+
+    @stub
+    def __add__(self, other):
+        """Return a pointer that is ``other`` elements after this pointer.
+
+        Args:
+            other: Integral scalar that gives the element offset.
+        """
+
+    @stub
+    def __sub__(self, other):
+        """Return a pointer that is ``other`` elements before this pointer.
+
+        Args:
+            other: Integral scalar that gives the element offset.
+        """
+
+    @stub
+    def __getitem__(self, index):
+        """Load one value at an element offset from this pointer.
+
+        ``self[index]`` is equivalent to ``(self + index).load()``.
+
+        Args:
+            index: Integral scalar that gives the element offset.
+        """
+
+    @stub
+    def __setitem__(self, index, value):
+        """Store one value at an element offset from this pointer.
+
+        ``self[index] = value`` is equivalent to
+        ``(self + index).store(value)``.
+
+        Args:
+            index: Integral scalar that gives the element offset.
+            value: Value to store.
+        """
 
     @stub
     def load(
@@ -188,81 +232,81 @@ class Pointer(Generic[T]):
         volatile: bool = False,
         memory_order: MemoryOrder | None = None,
     ) -> T | Vector[T]:
-        """
-        Low-level API to read from memory.
+        """Load one or more consecutive values from this address.
+
+        This operation is valid only for a typed pointer.
 
         Args:
-            count: If count is provided, a vector will be returned.
-                For best performance, vector loads should be aligned to the
-                number of bytes in the vector.
-            alignment: Inform the compiler that the address being loaded from
-                is aligned to at least this many bytes.
-                The user is responsible for ensuring aligned loads occur only
-                on appropriately aligned pointers.
-                If alignment is None, do not give the compiler any alignment
-                hints.
-            volatile: If True, the compiler will not modify the number of times
-                this load is performed nor the order of execution with respect
-                to other volatile operations.
-            memory_order: When memory_order is specified, the load is atomic.
-                If alignment is None, the natural alignment of the loaded type
-                (its size in bytes) is used.
-                Atomic loads require a pointee type with a bit width that
-                is a power of two greater than or equal to one byte.
+            count: Compile-time number of values to load. ``None`` and ``1``
+                return a scalar. A value greater than ``1`` returns a vector.
+                For best performance, align a vector load to the total size of
+                the vector in bytes.
+            alignment: Minimum byte alignment that the compiler can assume.
+                The value must be a positive power of two. The address must
+                have this alignment. If the value is ``None``, the compiler
+                does not get an alignment hint. For an atomic load, the
+                default is the natural alignment of the pointee data type.
+            volatile: If ``True``, the compiler preserves this load and its
+                order relative to other volatile operations.
+            memory_order: Memory order for the load. ``None`` and
+                ``MemoryOrder.WEAK`` select a non-atomic load.
+                ``MemoryOrder.RELAXED`` and ``MemoryOrder.ACQUIRE`` select an
+                atomic load. An atomic load must load one value. The pointee
+                size must be a power-of-two number of bytes.
         """
 
     @stub
     def store(
-            self,
-            value: T | Vector[T],
-            *,
-            alignment: int | None = None,
-            volatile: bool = False,
-            memory_order: Literal[MemoryOrder.RELAXED,
-                                  MemoryOrder.RELEASE, MemoryOrder.WEAK] | None = None,
+        self,
+        value: T | Vector[T],
+        *,
+        alignment: int | None = None,
+        volatile: bool = False,
+        memory_order: Literal[
+            MemoryOrder.RELAXED, MemoryOrder.RELEASE, MemoryOrder.WEAK
+        ]
+        | None = None,
     ) -> None:
-        """
-        Low-level API to store to memory.
+        """Store one or more consecutive values at this address.
+
+        This operation is valid only for a typed pointer. A scalar value stores
+        one value. A vector stores all its elements in consecutive locations.
 
         Args:
-            value: Scalar or vector to be stored to the given address.
-            alignment: Inform the compiler that the address being stored to
-                is aligned to at least this many bytes.
-                The user is responsible for ensuring aligned loads occur only
-                on appropriately aligned pointers.
-                If alignment is None, do not give the compiler any alignment
-                hints.
-            volatile: If True, the compiler will not modify the number of times
-                this store is performed nor the order of execution with respect
-                to other volatile operations.
-            memory_order: When memory_order is specified, the store is atomic.
-                If alignment is None, the natural alignment of the stored type
-                (its size in bytes) is used.
-                Atomic stores require a pointee type with a bit width that
-                is a power of two greater than or equal to one byte.
-                Only relaxed, release, and weak are valid memory orders on
-                stores.
+            value: Scalar or vector to store. The value must be compatible with
+                the pointee data type.
+            alignment: Minimum byte alignment that the compiler can assume.
+                The value must be a positive power of two. The address must
+                have this alignment. If the value is ``None``, the compiler
+                does not get an alignment hint. For an atomic store, the
+                default is the natural alignment of the pointee data type.
+            volatile: If ``True``, the compiler preserves this store and its
+                order relative to other volatile operations.
+            memory_order: Memory order for the store. ``None`` and
+                ``MemoryOrder.WEAK`` select a non-atomic store.
+                ``MemoryOrder.RELAXED`` and ``MemoryOrder.RELEASE`` select an
+                atomic store. An atomic store must store one value. The pointee
+                size must be a power-of-two number of bytes.
         """
 
     @property
     @stub
     def opaque(self) -> bool:
-        """
-        Whether the pointer is opaque, i.e. doesn't point to a value of a specific data type.
-        This is a compile-time constant boolean.
+        """Whether the pointer has no pointee data type.
+
+        This value is a compile-time constant.
         """
 
     @property
     @stub
     def pointee_dtype(self) -> DType:
-        """
-        Data type of the value that this pointer points to.
-        Raises a compilation error if the pointer is opaque.
+        """Data type of the value at this address.
+
+        Access to this property causes a compilation error if the pointer is
+        opaque.
         """
 
     @property
     @stub
     def memory_space(self) -> MemorySpace:
-        """
-        Memory space of this pointer.
-        """
+        """CUDA memory space of this pointer."""

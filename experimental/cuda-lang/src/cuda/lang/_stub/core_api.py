@@ -45,16 +45,30 @@ class Array(TileArray, Generic[T]):
     def strides(self): ...
 
     @stub
-    def get_base_pointer(self) -> "Pointer[T]": ...
+    def get_base_pointer(self) -> "Pointer[T]":
+        """Retrieve the base pointer for this array."""
+        ...
 
     @stub
-    def get_element_pointer(self, indices: int | tuple[int, ...]) -> "Pointer[T]": ...
+    def get_element_pointer(self, indices: int | tuple[int, ...]) -> "Pointer[T]":
+        """Retrieve a pointer to the array element accessed by ``indices``.
+        Equivalent to &array[index] in CUDA C++, but valid for arrays of any
+        rank."""
+        ...
 
     @stub
-    def __setitem__(self, indices: int | tuple[int, ...], value: T): ...
+    def __setitem__(self, indices: int | tuple[int, ...], value: T):
+        """Assign ``value`` to index given by ``indices``.
+        Equivalent to ``self.get_element_pointer(indices).store(value).
+        """
+        ...
 
     @stub
-    def __getitem__(self, indices: int | tuple[int, ...]) -> T: ...
+    def __getitem__(self, indices: int | tuple[int, ...]) -> T:
+        """Retriev value given by ``indices``.
+        Equivalent to ``self.get_element_pointer(indices).load().
+        """
+        ...
 
 
 @stub(host=True)
